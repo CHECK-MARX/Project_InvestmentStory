@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
 
 namespace InvestmentStory.App.ViewModels;
 
@@ -15,6 +16,7 @@ public sealed class StockListViewModel : ObservableObject
     private readonly Action _refreshAll;
     private readonly Action _refreshMissing;
     private readonly List<StockSnapshot> _allSnapshots = new();
+    private readonly HashSet<int> _dividendStockIds = new();
     private StockRowViewModel? _selectedRow;
     private string _selectedFilter = "現在保有のみ";
     private string _message = string.Empty;
@@ -45,7 +47,7 @@ public sealed class StockListViewModel : ObservableObject
     }
 
     public ObservableCollection<StockRowViewModel> Rows { get; } = new();
-    public string[] Filters { get; } = { "現在保有のみ", "過去保有を含む", "配当履歴のみ銘柄", "全件" };
+    public string[] Filters { get; } = { "現在保有のみ", "過去保有銘柄", "配当銘柄", "成長銘柄" };
     public ICommand NewCommand { get; }
     public RelayCommand EditCommand { get; }
     public RelayCommand DetailCommand { get; }
@@ -87,10 +89,22 @@ public sealed class StockListViewModel : ObservableObject
         }
     }
 
-    public void Update(IEnumerable<StockSnapshot> snapshots)
+    public void Update(IEnumerable<StockSnapshot> snapshots, IEnumerable<DividendPayment>? dividendPayments = null)
     {
         _allSnapshots.Clear();
         _allSnapshots.AddRange(snapshots);
+        _dividendStockIds.Clear();
+        if (dividendPayments is not null)
+        {
+            foreach (var stockId in dividendPayments
+                         .Where(x => !string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
+                         .Select(x => x.StockId)
+                         .Distinct())
+            {
+                _dividendStockIds.Add(stockId);
+            }
+        }
+
         RebuildRows();
     }
 
@@ -113,11 +127,27 @@ public sealed class StockListViewModel : ObservableObject
         return SelectedFilter switch
         {
             "現在保有のみ" => position.CurrentHolding.CurrentShares > 0m && !isDividendOnly,
-            "過去保有を含む" => !isDividendOnly,
-            "配当履歴のみ銘柄" => isDividendOnly,
-            "全件" => true,
+            "過去保有銘柄" => position.CurrentHolding.CurrentShares <= 0m && !isDividendOnly,
+            "配当銘柄" => HasDividend(position),
+            "成長銘柄" => !HasDividend(position) && !isDividendOnly,
             _ => position.CurrentHolding.CurrentShares > 0m && !isDividendOnly
         };
+    }
+
+    private bool HasDividend(StockPosition position)
+    {
+        if (_dividendStockIds.Contains(position.Stock.Id))
+        {
+            return true;
+        }
+
+        if (position.CurrentHolding.AnnualDividendPerShare > 0m)
+        {
+            return true;
+        }
+
+        return string.Equals(position.CurrentHolding.DividendStatus, "配当あり", StringComparison.Ordinal) ||
+               IsDividendOnly(position);
     }
 
     private static bool IsDividendOnly(StockPosition position)
