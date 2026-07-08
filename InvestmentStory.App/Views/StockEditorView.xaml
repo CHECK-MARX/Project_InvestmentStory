@@ -1,0 +1,156 @@
+<UserControl x:Class="InvestmentStory.App.Views.StockEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24" MaxWidth="980">
+            <DockPanel Margin="0,0,0,14">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button Content="新規" Command="{Binding NewCommand}" Style="{StaticResource ActionButtonStyle}" />
+                    <Button Content="保存" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" />
+                    <Button Content="削除" Command="{Binding DeleteCommand}" Style="{StaticResource ActionButtonStyle}" Background="#A43F3F" BorderBrush="#A43F3F" />
+                </StackPanel>
+                <TextBlock Text="{Binding PageTitle}" Style="{StaticResource SectionTitleStyle}" />
+            </DockPanel>
+
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#A43F3F" Margin="0,0,0,12" />
+
+            <TextBlock Text="銘柄情報" Style="{StaticResource SectionTitleStyle}" />
+            <WrapPanel>
+                <StackPanel Width="220">
+                    <TextBlock Text="銘柄名" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="ティッカー" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding Ticker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="国" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding Country, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="通貨" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding Currency, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="220">
+                    <TextBlock Text="証券会社" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding Broker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="940">
+                    <TextBlock Text="メモ" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding StockMemo, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}"
+                             Height="54" TextWrapping="Wrap" AcceptsReturn="True" />
+                </StackPanel>
+            </WrapPanel>
+
+            <TextBlock Text="購入情報" Style="{StaticResource SectionTitleStyle}" Margin="0,14,0,12" />
+            <WrapPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="購入日" Style="{StaticResource LabelTextStyle}" />
+                    <DatePicker SelectedDate="{Binding PurchaseDate, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="購入株数" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseShares, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="購入単価" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseUnitPrice, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="購入時為替レート" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseExchangeRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="210">
+                    <TextBlock Text="為替取得日時" Style="{StaticResource LabelTextStyle}" />
+                    <DatePicker SelectedDate="{Binding PurchaseExchangeRateAcquiredAt, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="為替取得元" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseExchangeRateSource, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="取得区分" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseExchangeRateInputType, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="手数料" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseFee, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="940">
+                    <TextBlock Text="メモ" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding PurchaseMemo, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}"
+                             Height="54" TextWrapping="Wrap" AcceptsReturn="True" />
+                </StackPanel>
+            </WrapPanel>
+
+            <TextBlock Text="株式分割情報" Style="{StaticResource SectionTitleStyle}" Margin="0,14,0,12" />
+            <WrapPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="分割日" Style="{StaticResource LabelTextStyle}" />
+                    <DatePicker SelectedDate="{Binding SplitDate, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="分割倍率" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding SplitRatio, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="580">
+                    <TextBlock Text="メモ" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding SplitMemo, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+            </WrapPanel>
+
+            <TextBlock Text="現在情報" Style="{StaticResource SectionTitleStyle}" Margin="0,14,0,12" />
+            <WrapPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="現在保有株数" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding CurrentShares, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="現在株価" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding CurrentPrice, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="現在為替レート" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding CurrentExchangeRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="210">
+                    <TextBlock Text="為替取得日時" Style="{StaticResource LabelTextStyle}" />
+                    <DatePicker SelectedDate="{Binding CurrentExchangeRateAcquiredAt, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="為替取得元" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding CurrentExchangeRateSource, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="取得区分" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding CurrentExchangeRateInputType, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="190">
+                    <TextBlock Text="1株あたり年間配当（年間合計）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding AnnualDividendPerShare, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="160">
+                    <TextBlock Text="配当状態" Style="{StaticResource LabelTextStyle}" />
+                    <ComboBox SelectedValue="{Binding DividendStatus, Mode=TwoWay}" SelectedValuePath="Content" Height="30" Margin="0,0,14,10">
+                        <ComboBoxItem Content="配当あり" />
+                        <ComboBoxItem Content="配当なし" />
+                        <ComboBoxItem Content="配当未入力" />
+                    </ComboBox>
+                </StackPanel>
+                <StackPanel Width="190">
+                    <TextBlock Text="配当頻度（表示・予定管理用）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding DividendFrequency, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="220">
+                    <TextBlock Text="配当月" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding DividendMonths, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="180">
+                    <TextBlock Text="更新日" Style="{StaticResource LabelTextStyle}" />
+                    <DatePicker SelectedDate="{Binding UpdatedAt, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                </StackPanel>
+            </WrapPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

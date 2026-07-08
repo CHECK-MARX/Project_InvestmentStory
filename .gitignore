@@ -1,0 +1,25 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+TestResults/
+
+# IDE/user files
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local database and private imports
+*.db
+*.db-shm
+*.db-wal
+csv/*.csv
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+

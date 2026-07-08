@@ -1,0 +1,230 @@
+using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
+
+namespace InvestmentStory.Tests;
+
+public sealed class DividendTaxAndScheduleTests
+{
+    [Fact]
+    public void TaxCalculator_JapanSpecific_AppliesDomesticTaxOnly()
+    {
+        var result = new DividendTaxCalculator().Calculate(new DividendTaxInput
+        {
+            Quantity = 100m,
+            DividendPerShare = 50m,
+            Currency = "JPY",
+            ExchangeRate = 1m,
+            TaxProfile = new TaxProfile
+            {
+                Currency = "JPY",
+                AccountType = DividendConstants.AccountSpecific,
+                TotalDomesticTaxRate = 20.315m,
+                IsForeignTaxExempt = true
+            }
+        });
+
+        Assert.Equal(5000m, result.GrossAmount);
+        Assert.Equal(0m, result.ForeignTaxAmount);
+        Assert.Equal(1015.75m, result.DomesticTaxAmount);
+        Assert.Equal(3984.25m, result.NetAmount);
+    }
+
+    [Fact]
+    public void TaxCalculator_JapanNisa_IsTaxExempt()
+    {
+        var result = new DividendTaxCalculator().Calculate(new DividendTaxInput
+        {
+            Quantity = 100m,
+            DividendPerShare = 50m,
+            Currency = "JPY",
+            ExchangeRate = 1m,
+            TaxProfile = new TaxProfile
+            {
+                Currency = "JPY",
+                AccountType = DividendConstants.AccountNisa,
+                IsDomesticTaxExempt = true,
+                IsForeignTaxExempt = true
+            }
+        });
+
+        Assert.Equal(5000m, result.GrossAmount);
+        Assert.Equal(0m, result.TotalTaxAmount);
+        Assert.Equal(5000m, result.NetAmount);
+    }
+
+    [Fact]
+    public void TaxCalculator_UsSpecific_AppliesForeignThenDomesticTax()
+    {
+        var result = new DividendTaxCalculator().Calculate(new DividendTaxInput
+        {
+            Quantity = 10m,
+            DividendPerShare = 1m,
+            Currency = "USD",
+            ExchangeRate = 160m,
+            TaxProfile = new TaxProfile
+            {
+                Currency = "USD",
+                AccountType = DividendConstants.AccountSpecific,
+                ForeignWithholdingTaxRate = 10m,
+                TotalDomesticTaxRate = 20.315m
+            }
+        });
+
+        Assert.Equal(10m, result.GrossAmount);
+        Assert.Equal(1m, result.ForeignTaxAmount);
+        Assert.Equal(1.82835m, result.DomesticTaxAmount);
+        Assert.Equal(7.17165m, result.NetAmount);
+        Assert.Equal(1147.464m, result.NetAmountJpy);
+    }
+
+    [Fact]
+    public void TaxCalculator_UsNisa_KeepsForeignTaxOnly()
+    {
+        var result = new DividendTaxCalculator().Calculate(new DividendTaxInput
+        {
+            Quantity = 10m,
+            DividendPerShare = 1m,
+            Currency = "USD",
+            ExchangeRate = 160m,
+            TaxProfile = new TaxProfile
+            {
+                Currency = "USD",
+                AccountType = DividendConstants.AccountNisa,
+                ForeignWithholdingTaxRate = 10m,
+                IsDomesticTaxExempt = true
+            }
+        });
+
+        Assert.Equal(1m, result.ForeignTaxAmount);
+        Assert.Equal(0m, result.DomesticTaxAmount);
+        Assert.Equal(9m, result.NetAmount);
+        Assert.Equal(1440m, result.NetAmountJpy);
+    }
+
+    [Fact]
+    public void ScheduleService_UsesDividendHistoryMonthsAndDoesNotTouchActuals()
+    {
+        var service = new DividendScheduleService();
+        var position = CreatePosition(currentShares: 100m, annualDividendPerShare: 2m);
+        var existing = new[]
+        {
+            new DividendPayment
+            {
+                Id = 10,
+                StockId = 1,
+                PaymentDate = new DateTime(2026, 6, 20),
+                DividendStatus = DividendConstants.Estimated,
+                Quantity = 50m,
+                Currency = "USD",
+                ExchangeRate = 160m,
+                NetAmountJpy = 3000m
+            },
+            new DividendPayment
+            {
+                Id = 20,
+                StockId = 1,
+                PaymentDate = new DateTime(2025, 3, 20),
+                DividendStatus = DividendConstants.Actual,
+                Quantity = 50m,
+                DividendPerShare = 0.5m,
+                Currency = "USD",
+                ExchangeRate = 160m,
+                NetAmountJpy = 3000m
+            }
+        };
+
+        var result = service.BuildSchedules(
+            new[] { position },
+            existing,
+            UsProfiles(),
+            new DateTime(2026, 1, 1));
+
+        Assert.Contains(result.Schedules, x => x.PaymentDate.Month == 3);
+        var updatedJune = Assert.Single(result.Schedules, x => x.Id == 10);
+        Assert.Equal(100m, updatedJune.Quantity);
+        Assert.Equal(DividendConstants.SourceEstimatedFromHistory, updatedJune.Source);
+        Assert.DoesNotContain(result.Schedules, x => x.Id == 20);
+    }
+
+    [Fact]
+    public void ReconciliationService_CsvActualReplacesMatchingSchedule()
+    {
+        var existing = new[]
+        {
+            new DividendPayment
+            {
+                Id = 1,
+                StockId = 1,
+                AccountType = DividendConstants.AccountSpecific,
+                Broker = "SBI証券",
+                PaymentDate = new DateTime(2026, 6, 20),
+                DividendStatus = DividendConstants.Estimated,
+                Currency = "USD",
+                NetAmount = 10m,
+                NetAmountJpy = 1600m
+            }
+        };
+
+        var actual = new DividendPayment
+        {
+            StockId = 1,
+            AccountType = DividendConstants.AccountSpecific,
+            Broker = "SBI証券",
+            PaymentDate = new DateTime(2026, 6, 22),
+            DividendStatus = DividendConstants.Actual,
+            Currency = "USD",
+            NetAmount = 10m,
+            NetAmountJpy = 1600m,
+            Source = DividendConstants.SourceCsv
+        };
+
+        var decision = new DividendReconciliationService().ReconcileActual(existing, actual);
+
+        Assert.Null(decision.DuplicateActual);
+        Assert.Single(decision.ReplaceTargets);
+        Assert.Equal(1, decision.ReplaceTargets[0].Id);
+    }
+
+    private static StockPosition CreatePosition(decimal currentShares, decimal annualDividendPerShare)
+    {
+        return new StockPosition
+        {
+            Stock = new Stock
+            {
+                Id = 1,
+                Name = "PepsiCo",
+                Ticker = "PEP",
+                Country = "米国",
+                Currency = "USD",
+                Broker = "SBI証券"
+            },
+            CurrentHolding = new CurrentHolding
+            {
+                StockId = 1,
+                CurrentShares = currentShares,
+                CurrentPrice = 100m,
+                CurrentExchangeRate = 160m,
+                ExchangeRateAcquiredAt = new DateTime(2026, 1, 1),
+                ExchangeRateSource = "Yahoo Finance",
+                ExchangeRateInputType = "API",
+                AnnualDividendPerShare = annualDividendPerShare,
+                DividendStatus = "配当あり"
+            }
+        };
+    }
+
+    private static IReadOnlyList<TaxProfile> UsProfiles()
+    {
+        return new[]
+        {
+            new TaxProfile
+            {
+                Id = 1,
+                Currency = "USD",
+                AccountType = DividendConstants.AccountSpecific,
+                ForeignWithholdingTaxRate = 10m,
+                TotalDomesticTaxRate = 20.315m
+            }
+        };
+    }
+}

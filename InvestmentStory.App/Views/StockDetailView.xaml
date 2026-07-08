@@ -1,0 +1,152 @@
+<UserControl x:Class="InvestmentStory.App.Views.StockDetailView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24">
+            <TextBlock Text="{Binding Title}" Style="{StaticResource SectionTitleStyle}" />
+            <UniformGrid Columns="4">
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="購入時為替レート" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding PurchaseExchangeRate}" FontSize="22" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding PurchaseExchangeInfo}" FontSize="11" Foreground="#566070" Margin="0,5,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="現在為替レート" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CurrentExchangeRate}" FontSize="22" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding CurrentExchangeInfo}" FontSize="11" Foreground="#566070" Margin="0,5,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="購入総額（入力通貨）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding PurchaseTotalUsd}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="購入総額JPY" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding PurchaseTotalJpy}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="分割後取得単価" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding EffectiveAcquisitionPrice}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="現在評価額（入力通貨）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CurrentMarketValueUsd}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="現在評価額JPY" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CurrentMarketValueJpy}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="通貨ベース含み益" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding UnrealizedGainUsd}" FontSize="22" FontWeight="SemiBold" Foreground="#1C7C54" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="通貨ベース含み益率" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding UnrealizedGainRate}" FontSize="22" FontWeight="SemiBold" Foreground="#1C7C54" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="円ベース含み益" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding UnrealizedGainJpy}" FontSize="22" FontWeight="SemiBold" Foreground="#1C7C54" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="円ベース含み益率" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding UnrealizedGainRateJpy}" FontSize="22" FontWeight="SemiBold" Foreground="#1C7C54" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="為替影響額" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CurrencyImpactJpy}" FontSize="22" FontWeight="SemiBold" Foreground="#2F5B8C" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="何倍になったか" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding Multiple}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="年間配当" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding AnnualDividend}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="年間配当JPY" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding AnnualDividendJpy}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="月平均配当見込み" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding MonthlyDividend}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="月平均配当見込みJPY" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding MonthlyDividendJpy}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="現在利回り" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CurrentDividendYield}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="取得額ベース利回り" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding YieldOnCost}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="株数変化倍率" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding ShareChangeRatio}" FontSize="22" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="株価取得元" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CurrentPriceSource}" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding CurrentPriceAcquiredAt}" FontSize="11" Foreground="#566070" Margin="0,5,0,0" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="配当情報取得元" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding DividendInfoSource}" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding DividendInfoAcquiredAt}" FontSize="11" Foreground="#566070" Margin="0,5,0,0" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <TextBlock Text="投資ストーリー" Style="{StaticResource SectionTitleStyle}" Margin="0,10,0,12" />
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0">
+                <TextBlock Text="{Binding Story}" TextWrapping="Wrap" FontSize="15" LineHeight="25" Foreground="#2F3A4A" />
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

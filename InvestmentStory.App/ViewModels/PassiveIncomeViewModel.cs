@@ -1,0 +1,131 @@
+using System.Collections.ObjectModel;
+using System.Windows.Input;
+using InvestmentStory.App.Infrastructure;
+using InvestmentStory.Core.Models;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+
+namespace InvestmentStory.App.ViewModels;
+
+public sealed class PassiveIncomeViewModel : ObservableObject
+{
+    private readonly Action<IncomeGoal> _saveGoal;
+    private DashboardSummary _summary = new();
+    private string _goalMessage = string.Empty;
+
+    public PassiveIncomeViewModel(Action<IncomeGoal> saveGoal)
+    {
+        _saveGoal = saveGoal;
+        SaveGoalCommand = new RelayCommand(SaveGoal);
+    }
+
+    public ObservableCollection<DividendAggregateRowViewModel> Ranking { get; } = new();
+    public ICommand SaveGoalCommand { get; }
+
+    public string ThisMonthPassiveIncome => Formatters.Jpy(_summary.ThisMonthPassiveIncomeJpy);
+    public string ThisYearPassiveIncome => Formatters.Jpy(_summary.ThisYearPassiveIncomeJpy);
+    public string ThisMonthPlannedIncome => Formatters.Jpy(_summary.ThisMonthPlannedIncomeJpy);
+    public string ThisYearPlannedIncome => Formatters.Jpy(_summary.ThisYearPlannedIncomeJpy);
+    public string ThisYearForecastIncludingPlanned => Formatters.Jpy(_summary.ThisYearForecastIncludingPlannedJpy);
+    public string AnnualPassiveIncomeForecast => Formatters.Jpy(_summary.AnnualPassiveIncomeForecastJpy);
+    public string AnnualNetDividendForecast => Formatters.Jpy(_summary.AnnualNetDividendForecastJpy);
+    public string MonthlyAveragePassiveIncome => Formatters.Jpy(_summary.MonthlyAveragePassiveIncomeForecastJpy);
+    public string DailyPassiveIncome => Formatters.Jpy(_summary.AnnualPassiveIncomeForecastJpy / 365m);
+    public string ForeignTaxActual => Formatters.Jpy(_summary.ForeignTaxActualJpy);
+    public string DomesticTaxActual => Formatters.Jpy(_summary.DomesticTaxActualJpy);
+    public string TotalTaxActual => Formatters.Jpy(_summary.TotalTaxActualJpy);
+    public string NisaDividendActual => Formatters.Jpy(_summary.NisaDividendActualJpy);
+    public string TaxableDividendActual => Formatters.Jpy(_summary.TaxableDividendActualJpy);
+    public string DomesticStockDividendActual => Formatters.Jpy(_summary.DomesticStockDividendActualJpy);
+    public string ForeignStockDividendActual => Formatters.Jpy(_summary.ForeignStockDividendActualJpy);
+    public string AnnualGoalAchievementRate => Formatters.Percent(_summary.AnnualGoalAchievementRate);
+    public string MonthlyGoalAchievementRate => Formatters.Percent(_summary.MonthlyGoalAchievementRate);
+    public string AnnualGoalGap => Formatters.Jpy(_summary.AnnualGoalGapJpy);
+    public string GapToMonthly100k => Formatters.Jpy(Math.Max(100_000m - _summary.MonthlyAveragePassiveIncomeForecastJpy, 0m));
+
+    public ISeries[] MonthlySeries { get; private set; } = Array.Empty<ISeries>();
+    public ISeries[] YearlySeries { get; private set; } = Array.Empty<ISeries>();
+    public Axis[] MonthlyAxes { get; private set; } = Array.Empty<Axis>();
+    public Axis[] YearlyAxes { get; private set; } = Array.Empty<Axis>();
+
+    public int TargetYear { get; set; } = DateTime.Today.Year;
+    public decimal AnnualPassiveIncomeGoal { get; set; }
+    public decimal MonthlyPassiveIncomeGoal { get; set; }
+    public decimal TotalAssetGoal { get; set; }
+
+    public string GoalMessage
+    {
+        get => _goalMessage;
+        private set => SetProperty(ref _goalMessage, value);
+    }
+
+    public void Update(
+        DashboardSummary summary,
+        IncomeGoal? goal,
+        IReadOnlyList<DividendAggregate> monthly,
+        IReadOnlyList<DividendAggregate> yearly,
+        IReadOnlyList<DividendAggregate> byStock)
+    {
+        _summary = summary;
+        TargetYear = goal?.TargetYear ?? DateTime.Today.Year;
+        AnnualPassiveIncomeGoal = goal?.AnnualPassiveIncomeGoal ?? 0m;
+        MonthlyPassiveIncomeGoal = goal?.MonthlyPassiveIncomeGoal ?? 0m;
+        TotalAssetGoal = goal?.TotalAssetGoal ?? 0m;
+
+        MonthlySeries = new ISeries[]
+        {
+            new ColumnSeries<decimal>
+            {
+                Name = "月別配当",
+                Values = monthly.Select(x => x.AmountJpy).ToArray()
+            }
+        };
+        MonthlyAxes = new[] { new Axis { Labels = monthly.Select(x => x.Label).ToArray() } };
+
+        var yearlyItems = yearly.Count == 0
+            ? new[] { new DividendAggregate { Label = DateTime.Today.Year.ToString(), AmountJpy = 0m } }
+            : yearly;
+        YearlySeries = new ISeries[]
+        {
+            new ColumnSeries<decimal>
+            {
+                Name = "年別配当",
+                Values = yearlyItems.Select(x => x.AmountJpy).ToArray()
+            }
+        };
+        YearlyAxes = new[] { new Axis { Labels = yearlyItems.Select(x => x.Label).ToArray() } };
+
+        Ranking.Clear();
+        foreach (var item in byStock)
+        {
+            Ranking.Add(new DividendAggregateRowViewModel(item));
+        }
+
+        RefreshAllProperties();
+    }
+
+    private void SaveGoal()
+    {
+        if (TargetYear < 2000 || AnnualPassiveIncomeGoal < 0m || MonthlyPassiveIncomeGoal < 0m || TotalAssetGoal < 0m)
+        {
+            GoalMessage = "目標値を確認してください。";
+            return;
+        }
+
+        try
+        {
+            _saveGoal(new IncomeGoal
+            {
+                TargetYear = TargetYear,
+                AnnualPassiveIncomeGoal = AnnualPassiveIncomeGoal,
+                MonthlyPassiveIncomeGoal = MonthlyPassiveIncomeGoal,
+                TotalAssetGoal = TotalAssetGoal
+            });
+            GoalMessage = "目標を保存しました。";
+        }
+        catch (Exception ex)
+        {
+            GoalMessage = $"保存に失敗しました: {ex.Message}";
+        }
+    }
+}

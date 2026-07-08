@@ -1,0 +1,111 @@
+using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
+
+namespace InvestmentStory.Tests;
+
+public sealed class BrokerHoldingMergeServiceTests
+{
+    [Fact]
+    public void MergeHoldings_OverwritesManualValues_WhenBrokerAndTickerMatch()
+    {
+        var service = new BrokerHoldingMergeService();
+        var existing = new StockPosition
+        {
+            Stock = new Stock
+            {
+                Id = 10,
+                Ticker = "2593",
+                Name = "Manual Ito En",
+                Broker = "SBI証券",
+                Currency = "JPY",
+                DataSource = "手入力",
+                Memo = "manual memo"
+            },
+            Purchase = new Purchase
+            {
+                Id = 20,
+                StockId = 10,
+                PurchaseDate = new DateTime(2024, 1, 10),
+                Shares = 100m,
+                UnitPrice = 1000m,
+                ExchangeRate = 1m,
+                Memo = "manual purchase memo"
+            },
+            Split = new StockSplit
+            {
+                Id = 30,
+                StockId = 10,
+                SplitDate = new DateTime(2024, 1, 10),
+                SplitRatio = 1m,
+                Memo = "split memo"
+            },
+            CurrentHolding = new CurrentHolding
+            {
+                Id = 40,
+                StockId = 10,
+                CurrentShares = 100m,
+                CurrentPrice = 1000m,
+                CurrentExchangeRate = 1m
+            }
+        };
+        var brokerHolding = new BrokerHoldingRecord
+        {
+            Broker = "SBI証券",
+            Ticker = "2593.T",
+            Name = "伊藤園",
+            Shares = 200m,
+            AverageAcquisitionPrice = 3039m,
+            MarketValue = 620000m,
+            Currency = "JPY"
+        };
+
+        var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, new DateTime(2026, 7, 7, 15, 0, 0));
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal(BrokerMergeAction.Overwrite, decision.Action);
+        Assert.NotNull(decision.Merged);
+        Assert.Equal(200m, decision.Merged.Purchase.Shares);
+        Assert.Equal(3039m, decision.Merged.Purchase.UnitPrice);
+        Assert.Equal(200m, decision.Merged.CurrentHolding.CurrentShares);
+        Assert.Equal(3100m, decision.Merged.CurrentHolding.CurrentPrice);
+        Assert.Equal("伊藤園", decision.Merged.Stock.Name);
+        Assert.Equal("証券会社データ", decision.Merged.Stock.DataSource);
+        Assert.Equal("manual memo", decision.Merged.Stock.Memo);
+        Assert.Equal("manual purchase memo", decision.Merged.Purchase.Memo);
+        Assert.Equal("split memo", decision.Merged.Split.Memo);
+    }
+
+    [Fact]
+    public void MergeHoldings_CreatesSeparateHolding_WhenTickerMatchesDifferentBroker()
+    {
+        var service = new BrokerHoldingMergeService();
+        var existing = new StockPosition
+        {
+            Stock = new Stock
+            {
+                Ticker = "KO",
+                Name = "Coca-Cola",
+                Broker = "SBI証券",
+                Currency = "USD"
+            }
+        };
+        var brokerHolding = new BrokerHoldingRecord
+        {
+            Broker = "楽天証券",
+            Ticker = "KO",
+            Name = "The Coca-Cola Company",
+            Shares = 10m,
+            AverageAcquisitionPrice = 60m,
+            MarketValue = 650m,
+            Currency = "USD"
+        };
+
+        var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, DateTime.Now);
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal(BrokerMergeAction.Create, decision.Action);
+        Assert.NotNull(decision.Merged);
+        Assert.Equal("楽天証券", decision.Merged.Stock.Broker);
+        Assert.Equal("KO", decision.Merged.Stock.Ticker);
+    }
+}
