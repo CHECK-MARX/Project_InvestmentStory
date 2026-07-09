@@ -5,15 +5,6 @@
     <ProjectReference Include="..\InvestmentStory.Data\InvestmentStory.Data.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.5" />
-    <PackageReference Include="OpenTK" Version="4.9.4" />
-    <PackageReference Include="OpenTK.GLWpfControl" Version="4.3.6" />
-    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.0">
-      <NoWarn>NU1701</NoWarn>
-    </PackageReference>
-  </ItemGroup>
-
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>

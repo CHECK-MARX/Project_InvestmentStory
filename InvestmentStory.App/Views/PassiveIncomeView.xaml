@@ -1,7 +1,6 @@
 <UserControl x:Class="InvestmentStory.App.Views.PassiveIncomeView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
             <TextBlock Text="不労所得サマリー" Style="{StaticResource SectionTitleStyle}" />
@@ -118,13 +117,47 @@
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
                         <TextBlock Text="月別配当グラフ" Style="{StaticResource SectionTitleStyle}" />
-                        <lvc:CartesianChart Series="{Binding MonthlySeries}" XAxes="{Binding MonthlyAxes}" Height="260" />
+                        <ItemsControl ItemsSource="{Binding MonthlyBars}" Height="260" Margin="0,12,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="54" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="120" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" Foreground="#344256" />
+                                        <Grid Grid.Column="1" Height="16" Background="#EEF2F7" VerticalAlignment="Center">
+                                            <Border Width="{Binding BarWidth}" Background="#2F5B8C" HorizontalAlignment="Left" />
+                                        </Grid>
+                                        <TextBlock Grid.Column="2" Text="{Binding AmountJpy}" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
                         <TextBlock Text="年別配当グラフ" Style="{StaticResource SectionTitleStyle}" />
-                        <lvc:CartesianChart Series="{Binding YearlySeries}" XAxes="{Binding YearlyAxes}" Height="260" />
+                        <ItemsControl ItemsSource="{Binding YearlyBars}" Height="260" Margin="0,12,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="120" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" Foreground="#344256" />
+                                        <Grid Grid.Column="1" Height="20" Background="#EEF2F7" VerticalAlignment="Center">
+                                            <Border Width="{Binding BarWidth}" Background="#4E7D58" HorizontalAlignment="Left" />
+                                        </Grid>
+                                        <TextBlock Grid.Column="2" Text="{Binding AmountJpy}" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </Border>
             </Grid>

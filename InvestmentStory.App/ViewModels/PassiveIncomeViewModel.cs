@@ -2,8 +2,6 @@ using System.Collections.ObjectModel;
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
-using LiveChartsCore;
-using LiveChartsCore.SkiaSharpView;
 
 namespace InvestmentStory.App.ViewModels;
 
@@ -43,10 +41,8 @@ public sealed class PassiveIncomeViewModel : ObservableObject
     public string AnnualGoalGap => Formatters.Jpy(_summary.AnnualGoalGapJpy);
     public string GapToMonthly100k => Formatters.Jpy(Math.Max(100_000m - _summary.MonthlyAveragePassiveIncomeForecastJpy, 0m));
 
-    public ISeries[] MonthlySeries { get; private set; } = Array.Empty<ISeries>();
-    public ISeries[] YearlySeries { get; private set; } = Array.Empty<ISeries>();
-    public Axis[] MonthlyAxes { get; private set; } = Array.Empty<Axis>();
-    public Axis[] YearlyAxes { get; private set; } = Array.Empty<Axis>();
+    public ObservableCollection<ChartBarRowViewModel> MonthlyBars { get; } = new();
+    public ObservableCollection<ChartBarRowViewModel> YearlyBars { get; } = new();
 
     public int TargetYear { get; set; } = DateTime.Today.Year;
     public decimal AnnualPassiveIncomeGoal { get; set; }
@@ -72,28 +68,23 @@ public sealed class PassiveIncomeViewModel : ObservableObject
         MonthlyPassiveIncomeGoal = goal?.MonthlyPassiveIncomeGoal ?? 0m;
         TotalAssetGoal = goal?.TotalAssetGoal ?? 0m;
 
-        MonthlySeries = new ISeries[]
+        MonthlyBars.Clear();
+        var monthlyMax = monthly.Count == 0 ? 0m : monthly.Max(x => x.AmountJpy);
+        foreach (var item in monthly)
         {
-            new ColumnSeries<decimal>
-            {
-                Name = "月別配当",
-                Values = monthly.Select(x => x.AmountJpy).ToArray()
-            }
-        };
-        MonthlyAxes = new[] { new Axis { Labels = monthly.Select(x => x.Label).ToArray() } };
+            MonthlyBars.Add(new ChartBarRowViewModel(item, monthlyMax));
+        }
 
         var yearlyItems = yearly.Count == 0
             ? new[] { new DividendAggregate { Label = DateTime.Today.Year.ToString(), AmountJpy = 0m } }
             : yearly;
-        YearlySeries = new ISeries[]
+
+        YearlyBars.Clear();
+        var yearlyMax = yearlyItems.Max(x => x.AmountJpy);
+        foreach (var item in yearlyItems)
         {
-            new ColumnSeries<decimal>
-            {
-                Name = "年別配当",
-                Values = yearlyItems.Select(x => x.AmountJpy).ToArray()
-            }
-        };
-        YearlyAxes = new[] { new Axis { Labels = yearlyItems.Select(x => x.Label).ToArray() } };
+            YearlyBars.Add(new ChartBarRowViewModel(item, yearlyMax));
+        }
 
         Ranking.Clear();
         foreach (var item in byStock)
