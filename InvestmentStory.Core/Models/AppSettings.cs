@@ -2,9 +2,9 @@ namespace InvestmentStory.Core.Models;
 
 public sealed class AppSettings
 {
-    public string MarketDataMode { get; set; } = "Mock";
+    public string MarketDataMode { get; set; } = "Web/API";
     public string UsMarketDataProvider { get; set; } = "Alpha Vantage";
-    public string JapanMarketDataProvider { get; set; } = "J-Quants";
+    public string JapanMarketDataProvider { get; set; } = "Yahoo Finance";
     public string ExchangeRateProvider { get; set; } = "Yahoo Finance";
     public string BrokerDataMode { get; set; } = "手入力";
     public string AlphaVantageApiKey { get; set; } = string.Empty;

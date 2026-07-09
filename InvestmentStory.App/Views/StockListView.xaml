@@ -37,6 +37,8 @@
                 <DataGridTextColumn Header="現在保有株数" Binding="{Binding CurrentShares}" Width="110" />
                 <DataGridTextColumn Header="実質取得単価" Binding="{Binding EffectiveAcquisitionPrice}" Width="140" />
                 <DataGridTextColumn Header="現在株価" Binding="{Binding CurrentPrice}" Width="120" />
+                <DataGridTextColumn Header="株価更新日時" Binding="{Binding PriceAcquiredAt}" Width="140" />
+                <DataGridTextColumn Header="株価取得元" Binding="{Binding CurrentPriceSource}" Width="120" />
                 <DataGridTextColumn Header="現在評価額（通貨）" Binding="{Binding CurrentMarketValue}" Width="150" />
                 <DataGridTextColumn Header="現在評価額JPY" Binding="{Binding CurrentMarketValueJpy}" Width="130" />
                 <DataGridTextColumn Header="通貨ベース含み益" Binding="{Binding UnrealizedGain}" Width="150" />
@@ -47,8 +49,7 @@
                 <DataGridTextColumn Header="年間配当見込みJPY" Binding="{Binding AnnualDividendForecastJpy}" Width="160" />
                 <DataGridTextColumn Header="取得額ベース利回り" Binding="{Binding YieldOnCost}" Width="150" />
                 <DataGridTextColumn Header="現在株価ベース利回り" Binding="{Binding CurrentDividendYield}" Width="160" />
-                <DataGridTextColumn Header="株価取得日時" Binding="{Binding PriceAcquiredAt}" Width="140" />
-                <DataGridTextColumn Header="データ取得元" Binding="{Binding DataSource}" Width="160" />
+                <DataGridTextColumn Header="保有データ元" Binding="{Binding DataSource}" Width="160" />
             </DataGrid.Columns>
             </DataGrid>
         </Grid>

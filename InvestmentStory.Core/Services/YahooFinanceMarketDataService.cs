@@ -6,7 +6,7 @@ namespace InvestmentStory.Core.Services;
 
 public sealed class YahooFinanceMarketDataService : IMarketDataService
 {
-    private const string ProviderName = "Yahoo Finance fallback";
+    private const string ProviderName = "Yahoo Finance";
 
     public MarketDataResult GetQuote(string symbol, AppSettings settings)
     {

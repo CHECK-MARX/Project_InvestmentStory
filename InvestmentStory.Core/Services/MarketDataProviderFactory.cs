@@ -43,10 +43,23 @@ public sealed class MarketDataProviderFactory : IMarketDataService
         }
 
         var apiResult = LooksLikeJapaneseTicker(symbol)
-            ? _japanMarketDataService.GetJapanQuote(symbol, settings)
-            : _usMarketDataService.GetUsQuote(symbol, settings);
+            ? GetJapaneseQuote(symbol, settings)
+            : GetUsQuote(symbol, settings);
         return apiResult.IsSuccess ? apiResult : MergeWithFallback(symbol, settings, apiResult);
     }
+
+    private MarketDataResult GetJapaneseQuote(string symbol, AppSettings settings)
+    {
+        if (settings.JapanMarketDataProvider.Equals("Yahoo Finance", StringComparison.OrdinalIgnoreCase))
+        {
+            return _fallbackMarketDataService.GetQuote(symbol, settings);
+        }
+
+        return _japanMarketDataService.GetJapanQuote(symbol, settings);
+    }
+
+    private MarketDataResult GetUsQuote(string symbol, AppSettings settings) =>
+        _usMarketDataService.GetUsQuote(symbol, settings);
 
     private MarketDataResult MergeWithFallback(string symbol, AppSettings settings, MarketDataResult primaryResult)
     {

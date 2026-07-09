@@ -404,9 +404,9 @@ public sealed class InvestmentStoryRepository
 
         return new AppSettings
         {
-            MarketDataMode = GetSetting(values, nameof(AppSettings.MarketDataMode), "Mock"),
+            MarketDataMode = GetSetting(values, nameof(AppSettings.MarketDataMode), "Web/API"),
             UsMarketDataProvider = GetSetting(values, nameof(AppSettings.UsMarketDataProvider), "Alpha Vantage"),
-            JapanMarketDataProvider = GetSetting(values, nameof(AppSettings.JapanMarketDataProvider), "J-Quants"),
+            JapanMarketDataProvider = GetSetting(values, nameof(AppSettings.JapanMarketDataProvider), "Yahoo Finance"),
             ExchangeRateProvider = GetSetting(values, nameof(AppSettings.ExchangeRateProvider), "Yahoo Finance"),
             BrokerDataMode = GetSetting(values, nameof(AppSettings.BrokerDataMode), "手入力"),
             AlphaVantageApiKey = GetSetting(values, nameof(AppSettings.AlphaVantageApiKey), string.Empty),

@@ -31,13 +31,13 @@ public sealed class SettingsViewModel : ObservableObject
 
     public string[] MarketDataModes { get; } = { "Mock", "Web/API" };
     public string[] UsProviders { get; } = { "Alpha Vantage" };
-    public string[] JapanProviders { get; } = { "J-Quants" };
+    public string[] JapanProviders { get; } = { "Yahoo Finance", "J-Quants" };
     public string[] ExchangeProviders { get; } = { "Yahoo Finance", "Mock" };
     public string[] BrokerDataModes { get; } = { "CSV取込", "手入力", "公式API（市場データのみ）" };
 
-    public string MarketDataMode { get; set; } = "Mock";
+    public string MarketDataMode { get; set; } = "Web/API";
     public string UsMarketDataProvider { get; set; } = "Alpha Vantage";
-    public string JapanMarketDataProvider { get; set; } = "J-Quants";
+    public string JapanMarketDataProvider { get; set; } = "Yahoo Finance";
     public string ExchangeRateProvider { get; set; } = "Yahoo Finance";
     public string BrokerDataMode { get; set; } = "手入力";
     public string AlphaVantageApiKey { get; set; } = string.Empty;
@@ -56,9 +56,9 @@ public sealed class SettingsViewModel : ObservableObject
     public void Load()
     {
         var settings = _loadSettings();
-        MarketDataMode = settings.MarketDataMode;
+        MarketDataMode = MarketDataModes.Contains(settings.MarketDataMode) ? settings.MarketDataMode : "Web/API";
         UsMarketDataProvider = settings.UsMarketDataProvider;
-        JapanMarketDataProvider = settings.JapanMarketDataProvider;
+        JapanMarketDataProvider = JapanProviders.Contains(settings.JapanMarketDataProvider) ? settings.JapanMarketDataProvider : "Yahoo Finance";
         ExchangeRateProvider = settings.ExchangeRateProvider;
         BrokerDataMode = BrokerDataModes.Contains(settings.BrokerDataMode) ? settings.BrokerDataMode : "CSV取込";
         AlphaVantageApiKey = settings.AlphaVantageApiKey;

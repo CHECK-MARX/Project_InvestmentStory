@@ -293,9 +293,11 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var settings = _repository.GetSettings();
+        var settings = BuildLiveMarketDataSettings(_repository.GetSettings());
         var updated = 0;
         var failed = 0;
+        var latestPriceAt = DateTime.MinValue;
+        var sources = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
         foreach (var position in targets)
         {
@@ -323,12 +325,39 @@ public sealed class MainViewModel : ObservableObject
             {
                 _repository.SavePosition(position);
                 updated++;
+                if (position.CurrentHolding.CurrentPriceAcquiredAt > latestPriceAt)
+                {
+                    latestPriceAt = position.CurrentHolding.CurrentPriceAcquiredAt;
+                }
+
+                if (!string.IsNullOrWhiteSpace(position.CurrentHolding.CurrentPriceSource))
+                {
+                    sources.Add(position.CurrentHolding.CurrentPriceSource);
+                }
             }
         }
 
         LoadData();
         var errorText = errors.Count == 0 ? string.Empty : $" 失敗例: {string.Join(" / ", errors)}";
-        StockList.Message = $"API更新を実行しました。更新 {updated}件、失敗 {failed}件。{errorText}";
+        var latestText = latestPriceAt == DateTime.MinValue ? string.Empty : $" 最終株価取得: {latestPriceAt:yyyy/MM/dd HH:mm}";
+        var sourceText = sources.Count == 0 ? string.Empty : $" 取得元: {string.Join(", ", sources.Take(3))}";
+        StockList.Message = $"API更新を実行しました。更新 {updated}件、失敗 {failed}件。{latestText}{sourceText}{errorText}";
+    }
+
+    private static AppSettings BuildLiveMarketDataSettings(AppSettings settings)
+    {
+        if (settings.MarketDataMode.Equals("Mock", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.MarketDataMode = "Web/API";
+        }
+
+        if (settings.JapanMarketDataProvider.Equals("J-Quants", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(settings.JQuantsApiKey))
+        {
+            settings.JapanMarketDataProvider = "Yahoo Finance";
+        }
+
+        return settings;
     }
 
     private static bool IsMarketDataRefreshTarget(StockPosition position)

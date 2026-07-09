@@ -46,7 +46,10 @@ public sealed class StockRowViewModel
     public string PriceAcquiredAt => Snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt == DateTime.MinValue
         ? "未取得"
         : Snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt.ToString("yyyy/MM/dd HH:mm");
+    public string CurrentPriceSource => string.IsNullOrWhiteSpace(Snapshot.Position.CurrentHolding.CurrentPriceSource)
+        ? "未取得"
+        : Snapshot.Position.CurrentHolding.CurrentPriceSource;
     public string DataSource => string.IsNullOrWhiteSpace(Snapshot.Position.Stock.DataSource)
-        ? Snapshot.Position.CurrentHolding.CurrentPriceSource
+        ? "未設定"
         : Snapshot.Position.Stock.DataSource;
 }

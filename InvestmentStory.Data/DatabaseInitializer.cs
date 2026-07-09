@@ -259,6 +259,7 @@ public sealed class DatabaseInitializer
         RemoveTickerUniqueConstraintIfNeeded(connection);
         NormalizeLegacySecurityAliases(connection);
         MigrateDefaultExchangeRateProvider(connection);
+        MigrateDefaultMarketDataProvider(connection);
         BackfillDividendPaymentExtensions(connection);
         SeedTaxProfiles(connection);
 
@@ -397,6 +398,29 @@ public sealed class DatabaseInitializer
             SET Value = 'Yahoo Finance'
             WHERE Key = 'ExchangeRateProvider'
               AND (Value = '' OR Value = 'Mock');
+            """);
+    }
+
+    private static void MigrateDefaultMarketDataProvider(SqliteConnection connection)
+    {
+        Execute(connection, """
+            UPDATE AppSettings
+            SET Value = 'Web/API'
+            WHERE Key = 'MarketDataMode'
+              AND (Value = '' OR Value = 'Mock');
+            """);
+
+        Execute(connection, """
+            UPDATE AppSettings
+            SET Value = 'Yahoo Finance'
+            WHERE Key = 'JapanMarketDataProvider'
+              AND (Value = '' OR Value = 'J-Quants')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM AppSettings
+                  WHERE Key = 'JQuantsApiKey'
+                    AND TRIM(Value) <> ''
+              );
             """);
     }
 
