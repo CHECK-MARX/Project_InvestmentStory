@@ -1,102 +1,129 @@
-<UserControl x:Class="InvestmentStory.App.Views.DashboardView"
+﻿<UserControl x:Class="InvestmentStory.App.Views.DashboardView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24">
-            <TextBlock Text="全体サマリー" Style="{StaticResource SectionTitleStyle}" />
+            <DockPanel Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="投資ダッシュボード" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="{Binding MarketDataStatus}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="13" />
+                    <TextBlock Text="{Binding DataUpdateStatus}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,4,0,0" />
+                </StackPanel>
+            </DockPanel>
+
             <UniformGrid Columns="4">
+                <Border Style="{StaticResource HeroCardStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="5" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="{DynamicResource AccentBlueBrush}" CornerRadius="3" />
+                        <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                            <TextBlock Text="総資産" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Text="{Binding TotalCurrentMarketValue}" Style="{StaticResource MetricValueTextStyle}" />
+                            <TextBlock Text="現在評価額合計" Style="{StaticResource SubtleTextStyle}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Style="{StaticResource HeroCardStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="5" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="{DynamicResource ProfitBrush}" CornerRadius="3" />
+                        <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                            <TextBlock Text="含み損益" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Text="{Binding TotalUnrealizedGain}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource ProfitBrush}" />
+                            <TextBlock Text="{Binding TotalUnrealizedGainRate}" Style="{StaticResource SubtleTextStyle}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Style="{StaticResource HeroCardStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="5" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="{DynamicResource DividendBrush}" CornerRadius="3" />
+                        <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                            <TextBlock Text="今年の配当実績" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Text="{Binding ThisYearPassiveIncome}" Style="{StaticResource MetricValueTextStyle}" />
+                            <TextBlock Text="税引後入金ベース" Style="{StaticResource SubtleTextStyle}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Style="{StaticResource HeroCardStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="5" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="{DynamicResource WarningBrush}" CornerRadius="3" />
+                        <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                            <TextBlock Text="年間目標達成率" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Text="{Binding AnnualGoalAchievementRate}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource WarningBrush}" />
+                            <ProgressBar Value="{Binding AnnualGoalProgressValue}" Maximum="100" Height="7" Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </UniformGrid>
+
+            <UniformGrid Columns="2">
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="現在評価額合計" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding TotalCurrentMarketValue}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
+                        <TextBlock Text="年間配当見込み" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding AnnualPassiveIncomeForecast}" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource DividendBrush}" />
+                        <TextBlock Text="月平均" Style="{StaticResource LabelTextStyle}" Margin="0,12,0,4" />
+                        <TextBlock Text="{Binding MonthlyAveragePassiveIncomeForecast}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
                     </StackPanel>
                 </Border>
+
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="含み益合計" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding TotalUnrealizedGain}" FontSize="24" FontWeight="SemiBold" Foreground="#1C7C54" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="含み益率" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding TotalUnrealizedGainRate}" FontSize="24" FontWeight="SemiBold" Foreground="#1C7C54" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="外貨建て資産合計USD" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding ForeignAssetTotalUsd}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="外貨建て資産の円換算額" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding ForeignAssetTotalJpy}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="為替込み含み益合計" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding FxIncludedUnrealizedGain}" FontSize="24" FontWeight="SemiBold" Foreground="#1C7C54" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="現在のUSD/JPY" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding CurrentUsdJpy}" FontSize="24" FontWeight="SemiBold" Foreground="#2F5B8C" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="為替更新日時" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding ExchangeRateAcquiredAt}" FontSize="19" FontWeight="SemiBold" Foreground="#1F2937" />
-                        <TextBlock Text="{Binding ExchangeRateSource}" FontSize="12" Foreground="#566070" Margin="0,5,0,0" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="今年の不労所得実績" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding ThisYearPassiveIncome}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="年間不労所得見込み（概算）" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding AnnualPassiveIncomeForecast}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="月平均不労所得見込み（概算）" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding MonthlyAveragePassiveIncomeForecast}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="1日あたり不労所得" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding DailyPassiveIncomeForecast}" FontSize="24" FontWeight="SemiBold" Foreground="#1F2937" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="年間目標達成率" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding AnnualGoalAchievementRate}" FontSize="24" FontWeight="SemiBold" Foreground="#2F5B8C" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="年間目標まであといくら" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding AnnualGoalGap}" FontSize="24" FontWeight="SemiBold" Foreground="#A43F3F" />
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource MetricCardStyle}">
-                    <StackPanel>
-                        <TextBlock Text="月10万円まであといくら" Style="{StaticResource LabelTextStyle}" />
-                        <TextBlock Text="{Binding Monthly100kGap}" FontSize="24" FontWeight="SemiBold" Foreground="#A43F3F" />
+                        <TextBlock Text="目標まで" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding AnnualGoalGap}" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" />
+                        <TextBlock Text="月10万円まで" Style="{StaticResource LabelTextStyle}" Margin="0,12,0,4" />
+                        <TextBlock Text="{Binding Monthly100kGap}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
                     </StackPanel>
                 </Border>
             </UniformGrid>
+
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="資産推移" Style="{StaticResource SectionTitleStyle}" />
+                        <Border Height="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                            <TextBlock Text="履歴データがまだありません。今後の起動時またはAPI更新時に日次スナップショットを記録します。"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Margin="24" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="資産構成" Style="{StaticResource SectionTitleStyle}" />
+                        <Border Height="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="国別 / 通貨別 / 証券会社別" Foreground="{DynamicResource SecondaryTextBrush}" TextAlignment="Center" />
+                                <TextBlock Text="切替ドーナツは次ステップで追加" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" TextAlignment="Center" Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

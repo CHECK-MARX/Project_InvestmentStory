@@ -44,4 +44,40 @@ public sealed class InvestmentStoryRepositoryTests
             }
         }
     }
+
+    [Fact]
+    public void SaveSettings_PersistsUiPreferences()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_settings_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+
+            var settings = repository.GetSettings();
+            settings.ThemeMode = "Dark";
+            settings.IsSidebarCollapsed = true;
+            settings.StockListDisplayMode = "配当";
+            settings.LastDashboardCompositionMode = "Broker";
+            settings.LastOpenedPage = "銘柄一覧";
+
+            repository.SaveSettings(settings);
+
+            var reloaded = new InvestmentStoryRepository(databasePath);
+            var loaded = reloaded.GetSettings();
+
+            Assert.Equal("Dark", loaded.ThemeMode);
+            Assert.True(loaded.IsSidebarCollapsed);
+            Assert.Equal("配当", loaded.StockListDisplayMode);
+            Assert.Equal("Broker", loaded.LastDashboardCompositionMode);
+            Assert.Equal("銘柄一覧", loaded.LastOpenedPage);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
 }

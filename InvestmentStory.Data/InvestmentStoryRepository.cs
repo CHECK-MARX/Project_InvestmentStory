@@ -414,7 +414,12 @@ public sealed class InvestmentStoryRepository
             ApiTimeoutSeconds = GetIntSetting(values, nameof(AppSettings.ApiTimeoutSeconds), 10),
             UseLastValueOnApiFailure = GetBoolSetting(values, nameof(AppSettings.UseLastValueOnApiFailure), true),
             SaveLoginCredentials = GetBoolSetting(values, nameof(AppSettings.SaveLoginCredentials), false),
-            EnableApiResponseLog = GetBoolSetting(values, nameof(AppSettings.EnableApiResponseLog), false)
+            EnableApiResponseLog = GetBoolSetting(values, nameof(AppSettings.EnableApiResponseLog), false),
+            ThemeMode = GetSetting(values, nameof(AppSettings.ThemeMode), "Light"),
+            IsSidebarCollapsed = GetBoolSetting(values, nameof(AppSettings.IsSidebarCollapsed), false),
+            StockListDisplayMode = GetSetting(values, nameof(AppSettings.StockListDisplayMode), "基本"),
+            LastDashboardCompositionMode = GetSetting(values, nameof(AppSettings.LastDashboardCompositionMode), "Country"),
+            LastOpenedPage = GetSetting(values, nameof(AppSettings.LastOpenedPage), "Dashboard")
         };
     }
 
@@ -435,6 +440,11 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.UseLastValueOnApiFailure), settings.UseLastValueOnApiFailure.ToString());
         UpsertSetting(connection, transaction, nameof(AppSettings.SaveLoginCredentials), settings.SaveLoginCredentials.ToString());
         UpsertSetting(connection, transaction, nameof(AppSettings.EnableApiResponseLog), settings.EnableApiResponseLog.ToString());
+        UpsertSetting(connection, transaction, nameof(AppSettings.ThemeMode), settings.ThemeMode);
+        UpsertSetting(connection, transaction, nameof(AppSettings.IsSidebarCollapsed), settings.IsSidebarCollapsed.ToString());
+        UpsertSetting(connection, transaction, nameof(AppSettings.StockListDisplayMode), settings.StockListDisplayMode);
+        UpsertSetting(connection, transaction, nameof(AppSettings.LastDashboardCompositionMode), settings.LastDashboardCompositionMode);
+        UpsertSetting(connection, transaction, nameof(AppSettings.LastOpenedPage), settings.LastOpenedPage);
         transaction.Commit();
     }
 

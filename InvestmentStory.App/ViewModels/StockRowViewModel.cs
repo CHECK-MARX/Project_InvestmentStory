@@ -29,6 +29,8 @@ public sealed class StockRowViewModel
     public string UnrealizedGainRate => Formatters.SignedPercent(Snapshot.UnrealizedGainRate);
     public string UnrealizedGainJpy => Formatters.SignedJpy(Snapshot.UnrealizedGainJpy);
     public string UnrealizedGainRateJpy => Formatters.SignedPercent(Snapshot.UnrealizedGainRateJpy);
+    public bool HasPositiveGain => Snapshot.UnrealizedGainJpy > 0m || Snapshot.UnrealizedGain > 0m;
+    public bool HasNegativeGain => Snapshot.UnrealizedGainJpy < 0m || Snapshot.UnrealizedGain < 0m;
     public string PurchaseExchangeRate => $"{Snapshot.Position.Purchase.ExchangeRate:N2}";
     public string CurrentExchangeRate => $"{Snapshot.Position.CurrentHolding.CurrentExchangeRate:N2}";
     public string AnnualDividendForecast => Snapshot.Position.CurrentHolding.DividendStatus == "配当未入力"

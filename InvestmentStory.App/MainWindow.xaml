@@ -5,10 +5,17 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:views="clr-namespace:InvestmentStory.App.Views"
         xmlns:vm="clr-namespace:InvestmentStory.App.ViewModels"
+        xmlns:infra="clr-namespace:InvestmentStory.App.Infrastructure"
         mc:Ignorable="d"
-        Title="Investment Story" Height="820" Width="1280" MinHeight="720" MinWidth="1100"
-        Background="#F6F7F9" FontFamily="Yu Gothic UI">
+        Title="Investment Story"
+        Height="820"
+        Width="1280"
+        MinHeight="720"
+        MinWidth="1100"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        FontFamily="Yu Gothic UI">
     <Window.Resources>
+        <infra:BindingProxy x:Key="VmProxy" Data="{Binding}" />
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
             <views:DashboardView />
         </DataTemplate>
@@ -46,44 +53,129 @@
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="230" />
+            <ColumnDefinition Width="{Binding Data.SidebarWidth, Source={StaticResource VmProxy}}" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0" Background="#FFFFFF" BorderBrush="#DCE2EA" BorderThickness="0,0,1,0">
-            <DockPanel Margin="18">
+        <Border Grid.Column="0"
+                Background="{DynamicResource SidebarBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="0,0,1,0">
+            <DockPanel Margin="16">
                 <StackPanel DockPanel.Dock="Top">
-                    <TextBlock Text="Investment Story" FontSize="22" FontWeight="Bold" Foreground="#1F2937" Margin="0,0,0,20" />
-                    <Button Content="ダッシュボード" Command="{Binding ShowDashboardCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="かんたん登録" Command="{Binding ShowSimpleRegistrationCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="銘柄一覧" Command="{Binding ShowStockListCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="詳細登録・編集" Command="{Binding ShowStockEditorCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="銘柄詳細" Command="{Binding ShowStockDetailCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="配当実績" Command="{Binding ShowDividendsCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="不労所得" Command="{Binding ShowPassiveIncomeCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="未来シミュレーション" Command="{Binding ShowSimulationCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="CSV取込" Command="{Binding ShowCsvImportCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="取込・統合設定" Command="{Binding ShowBrokerIntegrationCommand}" Style="{StaticResource NavButtonStyle}" />
-                    <Button Content="設定" Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButtonStyle}" />
+                    <DockPanel Margin="0,0,0,16">
+                        <Button DockPanel.Dock="Right"
+                                Content="{Binding SidebarToggleText}"
+                                Command="{Binding ToggleSidebarCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Width="38"
+                                Padding="0"
+                                ToolTip="サイドバーを折りたたむ" />
+                        <TextBlock Text="Investment Story"
+                                   FontSize="22"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"
+                                   VerticalAlignment="Center"
+                                   Visibility="{Binding SidebarTextVisibility}" />
+                    </DockPanel>
+
+                    <TextBlock Text="ホーム" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                    <Button Command="{Binding ShowDashboardCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="ダッシュボード">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="H" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="ダッシュボード" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock Text="ポートフォリオ" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                    <Button Command="{Binding ShowStockListCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="銘柄一覧">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="P" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="銘柄一覧" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowStockDetailCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="銘柄分析">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="A" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="銘柄分析" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock Text="インカム" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                    <Button Command="{Binding ShowDividendsCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="配当実績・予定">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="D" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="配当実績・予定" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowPassiveIncomeCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="不労所得">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="I" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="不労所得" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock Text="分析" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                    <Button Command="{Binding ShowSimulationCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="未来シミュレーション">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="S" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="未来シミュレーション" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock Text="データ" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                    <Button Command="{Binding ShowCsvImportCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="CSV取込">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="C" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="CSV取込" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowBrokerIntegrationCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="取込・統合設定">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="M" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="取込・統合設定" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock Text="設定" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                    <Button Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="設定">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="G" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="設定" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
-                <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom">
-                    <TextBlock Text="DB" Foreground="#7B8494" FontSize="12" />
-                    <TextBlock Text="{Binding DatabasePath}" TextWrapping="Wrap" Foreground="#7B8494" FontSize="11" />
+
+                <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Visibility="{Binding SidebarFooterVisibility}">
+                    <TextBlock Text="DB" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" />
+                    <TextBlock Text="{Binding DatabasePath}"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="11" />
                 </StackPanel>
             </DockPanel>
         </Border>
 
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
-                <RowDefinition Height="64" />
+                <RowDefinition Height="70" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Border Grid.Row="0" Background="White" BorderBrush="#DCE2EA" BorderThickness="0,0,0,1">
+            <Border Grid.Row="0"
+                    Background="{DynamicResource SurfaceBackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="0,0,0,1">
                 <DockPanel Margin="24,0">
-                    <Button DockPanel.Dock="Right" Content="再読込" Command="{Binding RefreshCommand}"
-                            Style="{StaticResource ActionButtonStyle}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding CurrentTitle}" FontSize="24" FontWeight="SemiBold"
-                               VerticalAlignment="Center" Foreground="#1F2937" />
+                    <Button DockPanel.Dock="Right"
+                            Content="再読込"
+                            Command="{Binding RefreshCommand}"
+                            Style="{StaticResource ActionButtonStyle}"
+                            VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding CurrentTitle}"
+                               FontSize="26"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource PrimaryTextBrush}" />
                 </DockPanel>
             </Border>
             <ContentControl Grid.Row="1" Content="{Binding CurrentPage}" />

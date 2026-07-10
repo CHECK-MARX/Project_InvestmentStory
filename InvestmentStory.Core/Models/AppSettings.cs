@@ -13,4 +13,9 @@ public sealed class AppSettings
     public bool UseLastValueOnApiFailure { get; set; } = true;
     public bool SaveLoginCredentials { get; set; }
     public bool EnableApiResponseLog { get; set; }
+    public string ThemeMode { get; set; } = "Light";
+    public bool IsSidebarCollapsed { get; set; }
+    public string StockListDisplayMode { get; set; } = "基本";
+    public string LastDashboardCompositionMode { get; set; } = "Country";
+    public string LastOpenedPage { get; set; } = "Dashboard";
 }

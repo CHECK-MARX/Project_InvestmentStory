@@ -10,16 +10,19 @@ public sealed class SettingsViewModel : ObservableObject
     private readonly Func<AppSettings> _loadSettings;
     private readonly Action<AppSettings> _saveSettings;
     private readonly Func<IReadOnlyList<ApiFetchLogEntry>> _loadLogs;
+    private readonly Action<AppSettings> _afterSave;
     private string _message = string.Empty;
 
     public SettingsViewModel(
         Func<AppSettings> loadSettings,
         Action<AppSettings> saveSettings,
-        Func<IReadOnlyList<ApiFetchLogEntry>> loadLogs)
+        Func<IReadOnlyList<ApiFetchLogEntry>> loadLogs,
+        Action<AppSettings>? afterSave = null)
     {
         _loadSettings = loadSettings;
         _saveSettings = saveSettings;
         _loadLogs = loadLogs;
+        _afterSave = afterSave ?? (_ => { });
         SaveCommand = new RelayCommand(Save);
         ReloadLogsCommand = new RelayCommand(ReloadLogs);
         Load();
@@ -34,6 +37,7 @@ public sealed class SettingsViewModel : ObservableObject
     public string[] JapanProviders { get; } = { "Yahoo Finance", "J-Quants" };
     public string[] ExchangeProviders { get; } = { "Yahoo Finance", "Mock" };
     public string[] BrokerDataModes { get; } = { "CSV取込", "手入力", "公式API（市場データのみ）" };
+    public string[] ThemeModes { get; } = { "ライト", "ダーク", "Windowsの設定に従う" };
 
     public string MarketDataMode { get; set; } = "Web/API";
     public string UsMarketDataProvider { get; set; } = "Alpha Vantage";
@@ -46,6 +50,7 @@ public sealed class SettingsViewModel : ObservableObject
     public bool UseLastValueOnApiFailure { get; set; } = true;
     public bool SaveLoginCredentials { get; set; }
     public bool EnableApiResponseLog { get; set; }
+    public string ThemeMode { get; set; } = "ライト";
 
     public string Message
     {
@@ -67,6 +72,7 @@ public sealed class SettingsViewModel : ObservableObject
         UseLastValueOnApiFailure = settings.UseLastValueOnApiFailure;
         SaveLoginCredentials = settings.SaveLoginCredentials;
         EnableApiResponseLog = settings.EnableApiResponseLog;
+        ThemeMode = ToDisplayThemeMode(settings.ThemeMode);
         ReloadLogs();
         RefreshAllProperties();
     }
@@ -79,7 +85,7 @@ public sealed class SettingsViewModel : ObservableObject
             return;
         }
 
-        _saveSettings(new AppSettings
+        var settings = new AppSettings
         {
             MarketDataMode = MarketDataMode,
             UsMarketDataProvider = UsMarketDataProvider,
@@ -91,8 +97,15 @@ public sealed class SettingsViewModel : ObservableObject
             ApiTimeoutSeconds = ApiTimeoutSeconds,
             UseLastValueOnApiFailure = UseLastValueOnApiFailure,
             SaveLoginCredentials = SaveLoginCredentials,
-            EnableApiResponseLog = EnableApiResponseLog
-        });
+            EnableApiResponseLog = EnableApiResponseLog,
+            ThemeMode = ToStoredThemeMode(ThemeMode),
+            IsSidebarCollapsed = _loadSettings().IsSidebarCollapsed,
+            StockListDisplayMode = _loadSettings().StockListDisplayMode,
+            LastDashboardCompositionMode = _loadSettings().LastDashboardCompositionMode,
+            LastOpenedPage = _loadSettings().LastOpenedPage
+        };
+        _saveSettings(settings);
+        _afterSave(settings);
         Message = "設定を保存しました。";
     }
 
@@ -106,4 +119,18 @@ public sealed class SettingsViewModel : ObservableObject
 
         OnPropertyChanged(nameof(ApiLogs));
     }
+
+    private static string ToDisplayThemeMode(string value) =>
+        value.Equals("Dark", StringComparison.OrdinalIgnoreCase)
+            ? "ダーク"
+            : value.Equals("System", StringComparison.OrdinalIgnoreCase)
+                ? "Windowsの設定に従う"
+                : "ライト";
+
+    private static string ToStoredThemeMode(string value) =>
+        value.Equals("ダーク", StringComparison.OrdinalIgnoreCase)
+            ? "Dark"
+            : value.Equals("Windowsの設定に従う", StringComparison.OrdinalIgnoreCase)
+                ? "System"
+                : "Light";
 }

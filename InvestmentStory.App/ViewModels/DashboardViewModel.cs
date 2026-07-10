@@ -27,6 +27,11 @@ public sealed class DashboardViewModel : ObservableObject
     public string AnnualGoalAchievementRate => Formatters.Percent(_summary.AnnualGoalAchievementRate);
     public string AnnualGoalGap => Formatters.Jpy(_summary.AnnualGoalGapJpy);
     public string Monthly100kGap => Formatters.Jpy(Math.Max(0m, 100_000m - _summary.MonthlyAveragePassiveIncomeForecastJpy));
+    public double AnnualGoalProgressValue => (double)Math.Min(Math.Max(_summary.AnnualGoalAchievementRate, 0m), 100m);
+    public string MarketDataStatus => $"USD/JPY {CurrentUsdJpy} / 為替更新 {ExchangeRateAcquiredAt}";
+    public string DataUpdateStatus => string.IsNullOrWhiteSpace(_summary.ExchangeRateSource)
+        ? "データ取得元: 未取得"
+        : $"データ取得元: {_summary.ExchangeRateSource}";
 
     public void Update(DashboardSummary summary)
     {

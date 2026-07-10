@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
@@ -15,10 +16,12 @@ public sealed class StockListViewModel : ObservableObject
     private readonly Action<int> _refreshSelected;
     private readonly Action _refreshAll;
     private readonly Action _refreshMissing;
+    private readonly Action<string> _displayModeChanged;
     private readonly List<StockSnapshot> _allSnapshots = new();
     private readonly HashSet<int> _dividendStockIds = new();
     private StockRowViewModel? _selectedRow;
     private string _selectedFilter = "現在保有のみ";
+    private string _selectedDisplayMode = "基本";
     private string _message = string.Empty;
 
     public StockListViewModel(
@@ -28,7 +31,8 @@ public sealed class StockListViewModel : ObservableObject
         Action<int> delete,
         Action<int> refreshSelected,
         Action refreshAll,
-        Action refreshMissing)
+        Action refreshMissing,
+        Action<string>? displayModeChanged = null)
     {
         _createNew = createNew;
         _edit = edit;
@@ -37,6 +41,7 @@ public sealed class StockListViewModel : ObservableObject
         _refreshSelected = refreshSelected;
         _refreshAll = refreshAll;
         _refreshMissing = refreshMissing;
+        _displayModeChanged = displayModeChanged ?? (_ => { });
         NewCommand = new RelayCommand(_createNew);
         EditCommand = new RelayCommand(() => ExecuteSelected(_edit), HasSelection);
         DetailCommand = new RelayCommand(() => ExecuteSelected(_showDetail), HasSelection);
@@ -48,6 +53,7 @@ public sealed class StockListViewModel : ObservableObject
 
     public ObservableCollection<StockRowViewModel> Rows { get; } = new();
     public string[] Filters { get; } = { "現在保有のみ", "過去保有銘柄", "配当銘柄", "成長銘柄" };
+    public string[] DisplayModes { get; } = { "基本", "損益", "配当", "為替", "データ取得", "全項目" };
     public ICommand NewCommand { get; }
     public RelayCommand EditCommand { get; }
     public RelayCommand DetailCommand { get; }
@@ -67,6 +73,34 @@ public sealed class StockListViewModel : ObservableObject
             }
         }
     }
+
+    public string SelectedDisplayMode
+    {
+        get => _selectedDisplayMode;
+        set
+        {
+            if (!DisplayModes.Contains(value))
+            {
+                value = "基本";
+            }
+
+            if (SetProperty(ref _selectedDisplayMode, value))
+            {
+                OnPropertyChanged(nameof(ShowBasicColumns));
+                OnPropertyChanged(nameof(ShowProfitColumns));
+                OnPropertyChanged(nameof(ShowDividendColumns));
+                OnPropertyChanged(nameof(ShowExchangeColumns));
+                OnPropertyChanged(nameof(ShowDataColumns));
+                _displayModeChanged(value);
+            }
+        }
+    }
+
+    public Visibility ShowBasicColumns => IsMode("基本") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ShowProfitColumns => IsMode("損益") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ShowDividendColumns => IsMode("配当") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ShowExchangeColumns => IsMode("為替") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ShowDataColumns => IsMode("データ取得") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
 
     public string Message
     {
@@ -169,6 +203,8 @@ public sealed class StockListViewModel : ObservableObject
     }
 
     private bool HasSelection() => SelectedRow is not null;
+
+    private bool IsMode(string mode) => string.Equals(SelectedDisplayMode, mode, StringComparison.Ordinal);
 
     private void ExecuteSelected(Action<int> action)
     {

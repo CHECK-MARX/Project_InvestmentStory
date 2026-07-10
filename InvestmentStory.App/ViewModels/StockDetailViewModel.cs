@@ -10,6 +10,12 @@ public sealed class StockDetailViewModel : ObservableObject
 
     public bool HasStock => _snapshot is not null;
     public string Title => _snapshot is null ? "銘柄詳細" : $"{_snapshot.Position.Stock.Ticker} / {_snapshot.Position.Stock.Name}";
+    public string HeaderTicker => _snapshot?.Position.Stock.Ticker ?? "-";
+    public string HeaderName => _snapshot?.Position.Stock.Name ?? "銘柄を選択してください";
+    public string HeaderBroker => _snapshot?.Position.Stock.Broker ?? "-";
+    public string CurrentPrice => _snapshot is null
+        ? "-"
+        : Formatters.Money(_snapshot.Position.CurrentHolding.CurrentPrice, _snapshot.Position.Stock.Currency);
     public string PurchaseExchangeRate => _snapshot is null ? "-" : $"{_snapshot.Position.Purchase.ExchangeRate:N2} JPY/USD";
     public string CurrentExchangeRate => _snapshot is null ? "-" : $"{_snapshot.Position.CurrentHolding.CurrentExchangeRate:N2} JPY/USD";
     public string PurchaseExchangeInfo => _snapshot is null
@@ -52,6 +58,8 @@ public sealed class StockDetailViewModel : ObservableObject
         ? "未取得"
         : _snapshot.Position.CurrentHolding.DividendInfoAcquiredAt.ToString("yyyy/MM/dd HH:mm");
     public string Story => _story;
+    public bool HasPositiveGain => _snapshot is not null && _snapshot.UnrealizedGainJpy > 0m;
+    public bool HasNegativeGain => _snapshot is not null && _snapshot.UnrealizedGainJpy < 0m;
 
     private bool IsDividendNotEntered => _snapshot?.Position.CurrentHolding.DividendStatus == "配当未入力";
 

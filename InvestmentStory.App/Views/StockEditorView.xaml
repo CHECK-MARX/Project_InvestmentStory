@@ -1,4 +1,4 @@
-<UserControl x:Class="InvestmentStory.App.Views.StockEditorView"
+﻿<UserControl x:Class="InvestmentStory.App.Views.StockEditorView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -7,12 +7,12 @@
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                     <Button Content="新規" Command="{Binding NewCommand}" Style="{StaticResource ActionButtonStyle}" />
                     <Button Content="保存" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" />
-                    <Button Content="削除" Command="{Binding DeleteCommand}" Style="{StaticResource ActionButtonStyle}" Background="#A43F3F" BorderBrush="#A43F3F" />
+                    <Button Content="削除" Command="{Binding DeleteCommand}" Style="{StaticResource DangerButtonStyle}" />
                 </StackPanel>
                 <TextBlock Text="{Binding PageTitle}" Style="{StaticResource SectionTitleStyle}" />
             </DockPanel>
 
-            <TextBlock Text="{Binding ErrorMessage}" Foreground="#A43F3F" Margin="0,0,0,12" />
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,12" />
 
             <TextBlock Text="銘柄情報" Style="{StaticResource SectionTitleStyle}" />
             <WrapPanel>

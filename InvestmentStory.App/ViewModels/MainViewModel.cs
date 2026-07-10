@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using System.Windows;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
@@ -21,11 +22,15 @@ public sealed class MainViewModel : ObservableObject
     private int? _selectedDetailStockId;
     private object _currentPage;
     private string _currentTitle = "ダッシュボード";
+    private bool _isSidebarCollapsed;
 
     public MainViewModel()
     {
         _repository = new InvestmentStoryRepository();
         _repository.Initialize();
+        var settings = _repository.GetSettings();
+        ThemeManager.Apply(settings.ThemeMode);
+        _isSidebarCollapsed = settings.IsSidebarCollapsed;
         _exchangeRateService = new ExchangeRateProviderFactory(_repository.GetSettings);
 
         Dashboard = new DashboardViewModel();
@@ -44,7 +49,9 @@ public sealed class MainViewModel : ObservableObject
             DeleteStock,
             RefreshSelectedMarketData,
             RefreshAllMarketData,
-            RefreshMissingMarketData);
+            RefreshMissingMarketData,
+            SaveStockListDisplayMode);
+        StockList.SelectedDisplayMode = settings.StockListDisplayMode;
         StockEditor = new StockEditorViewModel(SaveStock, DeleteStock);
         StockDetail = new StockDetailViewModel();
         Dividends = new DividendsViewModel(
@@ -65,7 +72,11 @@ public sealed class MainViewModel : ObservableObject
             _repository.GetSettings,
             _repository.SaveSettings,
             () => Navigate(CsvImport, "CSV取込"));
-        Settings = new SettingsViewModel(_repository.GetSettings, _repository.SaveSettings, () => _repository.GetRecentApiFetchLogs(100));
+        Settings = new SettingsViewModel(
+            _repository.GetSettings,
+            _repository.SaveSettings,
+            () => _repository.GetRecentApiFetchLogs(100),
+            ApplySavedUiSettings);
 
         _currentPage = Dashboard;
 
@@ -92,6 +103,7 @@ public sealed class MainViewModel : ObservableObject
             Navigate(Settings, "設定");
         });
         RefreshCommand = new RelayCommand(LoadData);
+        ToggleSidebarCommand = new RelayCommand(ToggleSidebar);
 
         LoadData();
     }
@@ -120,6 +132,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ShowBrokerIntegrationCommand { get; }
     public ICommand ShowSettingsCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand ToggleSidebarCommand { get; }
 
     public object CurrentPage
     {
@@ -134,6 +147,26 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public string DatabasePath => _repository.DatabasePath;
+
+    public bool IsSidebarCollapsed
+    {
+        get => _isSidebarCollapsed;
+        private set
+        {
+            if (SetProperty(ref _isSidebarCollapsed, value))
+            {
+                OnPropertyChanged(nameof(SidebarWidth));
+                OnPropertyChanged(nameof(SidebarTextVisibility));
+                OnPropertyChanged(nameof(SidebarFooterVisibility));
+                OnPropertyChanged(nameof(SidebarToggleText));
+            }
+        }
+    }
+
+    public GridLength SidebarWidth => IsSidebarCollapsed ? new GridLength(72) : new GridLength(250);
+    public Visibility SidebarTextVisibility => IsSidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility SidebarFooterVisibility => IsSidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+    public string SidebarToggleText => IsSidebarCollapsed ? ">" : "<";
 
     private void LoadData()
     {
@@ -208,6 +241,30 @@ public sealed class MainViewModel : ObservableObject
     {
         CurrentPage = page;
         CurrentTitle = title;
+        var settings = _repository.GetSettings();
+        settings.LastOpenedPage = title;
+        _repository.SaveSettings(settings);
+    }
+
+    private void ToggleSidebar()
+    {
+        IsSidebarCollapsed = !IsSidebarCollapsed;
+        var settings = _repository.GetSettings();
+        settings.IsSidebarCollapsed = IsSidebarCollapsed;
+        _repository.SaveSettings(settings);
+    }
+
+    private void SaveStockListDisplayMode(string displayMode)
+    {
+        var settings = _repository.GetSettings();
+        settings.StockListDisplayMode = displayMode;
+        _repository.SaveSettings(settings);
+    }
+
+    private void ApplySavedUiSettings(AppSettings settings)
+    {
+        ThemeManager.Apply(settings.ThemeMode);
+        IsSidebarCollapsed = settings.IsSidebarCollapsed;
     }
 
     private void ShowSimpleRegistration()
