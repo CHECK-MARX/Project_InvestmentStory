@@ -67,7 +67,7 @@
                         <StackPanel Grid.Column="1" Margin="16,0,0,0">
                             <TextBlock Text="年間目標達成率" Style="{StaticResource LabelTextStyle}" />
                             <TextBlock Text="{Binding AnnualGoalAchievementRate}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource WarningBrush}" />
-                            <ProgressBar Value="{Binding AnnualGoalProgressValue}" Maximum="100" Height="7" Margin="0,8,0,0" />
+                            <ProgressBar Value="{Binding AnnualGoalProgressValue, Mode=OneWay}" Maximum="100" Height="7" Margin="0,8,0,0" />
                         </StackPanel>
                     </Grid>
                 </Border>
