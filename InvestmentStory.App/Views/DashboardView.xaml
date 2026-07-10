@@ -101,24 +101,77 @@
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
                         <TextBlock Text="資産推移" Style="{StaticResource SectionTitleStyle}" />
-                        <Border Height="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
-                            <TextBlock Text="履歴データがまだありません。今後の起動時またはAPI更新時に日次スナップショットを記録します。"
-                                       TextWrapping="Wrap"
-                                       Foreground="{DynamicResource SecondaryTextBrush}"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Margin="24" />
+                        <Border MinHeight="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="20">
+                            <StackPanel>
+                                <TextBlock Text="資産履歴テーブルは未実装のため、現在値ベースで総資産・投資元本・含み損益を表示します。"
+                                           Foreground="{DynamicResource SecondaryTextBrush}"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,14" />
+                                <ItemsControl ItemsSource="{Binding AssetBars}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,7">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="86" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="150" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                                <Grid Grid.Column="1" Height="16" Background="{DynamicResource SurfaceBackgroundBrush}" VerticalAlignment="Center">
+                                                    <Border Width="{Binding BarWidth}" Background="{DynamicResource AccentBlueBrush}" HorizontalAlignment="Left" CornerRadius="8" />
+                                                </Grid>
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding AmountJpy}"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           FontWeight="SemiBold" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </Border>
                     </StackPanel>
                 </Border>
 
                 <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="資産構成" Style="{StaticResource SectionTitleStyle}" />
-                        <Border Height="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
-                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <TextBlock Text="国別 / 通貨別 / 証券会社別" Foreground="{DynamicResource SecondaryTextBrush}" TextAlignment="Center" />
-                                <TextBlock Text="切替ドーナツは次ステップで追加" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" TextAlignment="Center" Margin="0,8,0,0" />
+                        <DockPanel Margin="0,0,0,8">
+                            <ComboBox DockPanel.Dock="Right"
+                                      ItemsSource="{Binding CompositionModes}"
+                                      SelectedItem="{Binding SelectedCompositionMode, Mode=TwoWay}"
+                                      Width="130" />
+                            <TextBlock Text="資産構成" Style="{StaticResource SectionTitleStyle}" />
+                        </DockPanel>
+                        <Border MinHeight="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="20">
+                            <StackPanel>
+                                <ItemsControl ItemsSource="{Binding CompositionBars}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,7">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="92" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="120" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Label}"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource SecondaryTextBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding Label}" />
+                                                <Grid Grid.Column="1" Height="16" Background="{DynamicResource SurfaceBackgroundBrush}" VerticalAlignment="Center">
+                                                    <Border Width="{Binding BarWidth}" Background="{DynamicResource DividendBrush}" HorizontalAlignment="Left" CornerRadius="8" />
+                                                </Grid>
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding AmountJpy}"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           FontWeight="SemiBold" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
                         </Border>
                     </StackPanel>

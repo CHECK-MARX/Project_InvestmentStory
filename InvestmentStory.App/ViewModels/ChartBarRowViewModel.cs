@@ -14,6 +14,13 @@ public sealed class ChartBarRowViewModel
         BarWidth = CalculateBarWidth(aggregate.AmountJpy, maxAmountJpy);
     }
 
+    public ChartBarRowViewModel(string label, decimal amountJpy, decimal maxAmountJpy, bool signed = false)
+    {
+        Label = label;
+        AmountJpy = signed ? Formatters.SignedJpy(amountJpy) : Formatters.Jpy(amountJpy);
+        BarWidth = CalculateBarWidth(Math.Abs(amountJpy), maxAmountJpy);
+    }
+
     public string Label { get; }
     public string AmountJpy { get; }
     public double BarWidth { get; }
@@ -25,7 +32,7 @@ public sealed class ChartBarRowViewModel
             return 0d;
         }
 
-        var width = (double)(amountJpy / maxAmountJpy) * MaxBarWidth;
+        var width = (double)(Math.Abs(amountJpy) / maxAmountJpy) * MaxBarWidth;
         return Math.Max(8d, width);
     }
 }

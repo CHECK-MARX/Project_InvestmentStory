@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
 
@@ -6,6 +7,13 @@ namespace InvestmentStory.App.ViewModels;
 public sealed class DashboardViewModel : ObservableObject
 {
     private DashboardSummary _summary = new();
+    private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
+    private string _selectedCompositionMode = "国別";
+
+    public DashboardViewModel()
+    {
+        CompositionModes = new[] { "国別", "通貨別", "証券会社別" };
+    }
 
     public string TotalCurrentMarketValue => Formatters.Jpy(_summary.TotalCurrentMarketValueJpy);
     public string TotalUnrealizedGain => Formatters.SignedJpy(_summary.TotalUnrealizedGainJpy);
@@ -32,10 +40,103 @@ public sealed class DashboardViewModel : ObservableObject
     public string DataUpdateStatus => string.IsNullOrWhiteSpace(_summary.ExchangeRateSource)
         ? "データ取得元: 未取得"
         : $"データ取得元: {_summary.ExchangeRateSource}";
+    public IReadOnlyList<string> CompositionModes { get; }
+    public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
+    public ObservableCollection<ChartBarRowViewModel> CompositionBars { get; } = new();
 
-    public void Update(DashboardSummary summary)
+    public string SelectedCompositionMode
+    {
+        get => _selectedCompositionMode;
+        set
+        {
+            if (SetProperty(ref _selectedCompositionMode, value))
+            {
+                RebuildCompositionBars();
+            }
+        }
+    }
+
+    public void Update(DashboardSummary summary, IReadOnlyList<StockSnapshot> snapshots)
     {
         _summary = summary;
+        _snapshots = snapshots;
+        RebuildAssetBars();
+        RebuildCompositionBars();
         RefreshAllProperties();
+    }
+
+    private void RebuildAssetBars()
+    {
+        AssetBars.Clear();
+        var values = new[]
+        {
+            Math.Abs(_summary.TotalCurrentMarketValueJpy),
+            Math.Abs(_summary.TotalPurchaseAmountJpy),
+            Math.Abs(_summary.TotalUnrealizedGainJpy)
+        };
+        var max = values.Max();
+        if (max <= 0m)
+        {
+            AssetBars.Add(new ChartBarRowViewModel("総資産", 0m, 1m));
+            AssetBars.Add(new ChartBarRowViewModel("投資元本", 0m, 1m));
+            AssetBars.Add(new ChartBarRowViewModel("含み損益", 0m, 1m, signed: true));
+            return;
+        }
+
+        AssetBars.Add(new ChartBarRowViewModel("総資産", _summary.TotalCurrentMarketValueJpy, max));
+        AssetBars.Add(new ChartBarRowViewModel("投資元本", _summary.TotalPurchaseAmountJpy, max));
+        AssetBars.Add(new ChartBarRowViewModel("含み損益", _summary.TotalUnrealizedGainJpy, max, signed: true));
+    }
+
+    private void RebuildCompositionBars()
+    {
+        CompositionBars.Clear();
+        var groups = BuildCompositionGroups().ToList();
+        if (groups.Count == 0)
+        {
+            CompositionBars.Add(new ChartBarRowViewModel("データなし", 0m, 1m));
+            return;
+        }
+
+        var top = groups
+            .OrderByDescending(x => x.Amount)
+            .Take(5)
+            .ToList();
+        var other = groups.Sum(x => x.Amount) - top.Sum(x => x.Amount);
+        if (other > 0m)
+        {
+            top.Add(("その他", other));
+        }
+
+        var max = top.Max(x => x.Amount);
+        foreach (var item in top)
+        {
+            CompositionBars.Add(new ChartBarRowViewModel(item.Label, item.Amount, max));
+        }
+    }
+
+    private IEnumerable<(string Label, decimal Amount)> BuildCompositionGroups()
+    {
+        var valuedSnapshots = _snapshots
+            .Where(x => x.CurrentMarketValueJpy > 0m)
+            .ToList();
+
+        if (SelectedCompositionMode == "通貨別")
+        {
+            return valuedSnapshots
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Currency) ? "未設定" : x.Position.Stock.Currency)
+                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+        }
+
+        if (SelectedCompositionMode == "証券会社別")
+        {
+            return valuedSnapshots
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Broker) ? "未設定" : x.Position.Stock.Broker)
+                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+        }
+
+        return valuedSnapshots
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Country) ? "未設定" : x.Position.Stock.Country)
+            .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
     }
 }

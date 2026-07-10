@@ -190,7 +190,7 @@ public sealed class MainViewModel : ObservableObject
         var yearly = _calculator.AggregateYearlyDividends(dividends);
         var byStock = _calculator.AggregateDividendsByStock(dividends);
 
-        Dashboard.Update(summary);
+        Dashboard.Update(summary, _snapshots);
         StockList.Update(_snapshots, dividends);
         Dividends.Update(positions, dividends);
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock);
