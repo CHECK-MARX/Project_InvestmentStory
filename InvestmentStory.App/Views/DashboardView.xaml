@@ -93,6 +93,37 @@
                 </Border>
             </UniformGrid>
 
+            <UniformGrid Columns="4">
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="配当込み総合リターン" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding TotalReturn}" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource ProfitBrush}" />
+                        <TextBlock Text="{Binding TotalReturnRate}" Style="{StaticResource SubtleTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="累計受取配当" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding CumulativeDividend}" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource DividendBrush}" />
+                        <TextBlock Text="Actualのみ / Replaced除外" Style="{StaticResource SubtleTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="前日比 / 前月比" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding TotalAssetDayChange}" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding TotalAssetMonthChange}" Style="{StaticResource SubtleTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="上位5銘柄集中率" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding Top5ConcentrationRate}" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" />
+                        <TextBlock Text="{Binding CapitalRecoveryRate, StringFormat=元本回収率 {0}}" Style="{StaticResource SubtleTextStyle}" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
             <Grid Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
@@ -100,29 +131,40 @@
                 </Grid.ColumnDefinitions>
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="資産推移" Style="{StaticResource SectionTitleStyle}" />
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="現在値を記録" Command="{Binding RecordSnapshotCommand}" Style="{StaticResource ActionButtonStyle}" />
+                            <TextBlock Text="資産推移" Style="{StaticResource SectionTitleStyle}" />
+                        </DockPanel>
                         <Border MinHeight="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="20">
                             <StackPanel>
-                                <TextBlock Text="資産履歴テーブルは未実装のため、現在値ベースで総資産・投資元本・含み損益を表示します。"
+                                <TextBlock Text="同日分は最新値で更新します。資産履歴は今後の起動時またはAPI/CSV更新時に蓄積されます。"
                                            Foreground="{DynamicResource SecondaryTextBrush}"
                                            FontSize="12"
                                            TextWrapping="Wrap"
                                            Margin="0,0,0,14" />
-                                <ItemsControl ItemsSource="{Binding AssetBars}">
+                                <ItemsControl ItemsSource="{Binding PortfolioHistoryRows}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid Margin="0,7">
+                                            <Grid Margin="0,7" ToolTip="{Binding TotalReturn}">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="86" />
+                                                    <ColumnDefinition Width="92" />
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="150" />
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                                <Grid Grid.Column="1" Height="16" Background="{DynamicResource SurfaceBackgroundBrush}" VerticalAlignment="Center">
-                                                    <Border Width="{Binding BarWidth}" Background="{DynamicResource AccentBlueBrush}" HorizontalAlignment="Left" CornerRadius="8" />
-                                                </Grid>
+                                                <TextBlock Text="{Binding Date}" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                                <StackPanel Grid.Column="1">
+                                                    <Grid Height="9" Background="{DynamicResource SurfaceBackgroundBrush}" Margin="0,0,0,3">
+                                                        <Border Width="{Binding TotalBarWidth}" Background="{DynamicResource AccentBlueBrush}" HorizontalAlignment="Left" CornerRadius="5" />
+                                                    </Grid>
+                                                    <Grid Height="7" Background="{DynamicResource SurfaceBackgroundBrush}" Margin="0,0,0,3">
+                                                        <Border Width="{Binding CostBarWidth}" Background="{DynamicResource NeutralBrush}" HorizontalAlignment="Left" CornerRadius="4" />
+                                                    </Grid>
+                                                    <Grid Height="7" Background="{DynamicResource SurfaceBackgroundBrush}">
+                                                        <Border Width="{Binding GainBarWidth}" Background="{DynamicResource ProfitBrush}" HorizontalAlignment="Left" CornerRadius="4" />
+                                                    </Grid>
+                                                </StackPanel>
                                                 <TextBlock Grid.Column="2"
-                                                           Text="{Binding AmountJpy}"
+                                                           Text="{Binding TotalMarketValue}"
                                                            HorizontalAlignment="Right"
                                                            VerticalAlignment="Center"
                                                            FontWeight="SemiBold" />

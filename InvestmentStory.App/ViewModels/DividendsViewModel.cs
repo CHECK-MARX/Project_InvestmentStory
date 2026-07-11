@@ -289,7 +289,7 @@ public sealed class DividendsViewModel : ObservableObject
                 NetAmountJpy = jpyAmount,
                 JpyAmount = jpyAmount,
                 IsTaxEstimated = false,
-                IsNisa = accountType == DividendConstants.AccountNisa,
+                IsNisa = DividendConstants.IsNisaAccount(accountType),
                 IsForeignStock = currency != "JPY",
                 Memo = Memo.Trim()
             });

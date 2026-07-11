@@ -9,6 +9,8 @@ public sealed class Stock
     public string Country { get; set; } = "米国";
     public string Currency { get; set; } = "USD";
     public string Broker { get; set; } = string.Empty;
+    public string AccountType { get; set; } = AccountTypes.Unknown;
+    public string CustodyType { get; set; } = string.Empty;
     public string Sector { get; set; } = string.Empty;
     public string Industry { get; set; } = string.Empty;
     public string Market { get; set; } = string.Empty;

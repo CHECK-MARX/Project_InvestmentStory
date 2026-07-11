@@ -95,7 +95,7 @@ public sealed class DividendScheduleService
                 schedule.NetAmountJpy = calculation.NetAmountJpy;
                 schedule.JpyAmount = calculation.NetAmountJpy;
                 schedule.IsTaxEstimated = true;
-                schedule.IsNisa = accountType == DividendConstants.AccountNisa;
+                schedule.IsNisa = DividendConstants.IsNisaAccount(accountType);
                 schedule.IsForeignStock = !IsJpy(position.Stock.Currency);
                 schedule.TaxProfileId = profile.Id == 0 ? null : profile.Id;
                 schedule.UpdatedAt = DateTime.Now;
@@ -206,9 +206,9 @@ public sealed class DividendScheduleService
                    Currency = currency,
                    Country = position.Stock.Country,
                    AccountType = accountType,
-                   TotalDomesticTaxRate = accountType == DividendConstants.AccountNisa ? 0m : 20.315m,
+                   TotalDomesticTaxRate = DividendConstants.IsNisaAccount(accountType) ? 0m : 20.315m,
                    ForeignWithholdingTaxRate = currency == "USD" ? 10m : 0m,
-                   IsDomesticTaxExempt = accountType == DividendConstants.AccountNisa,
+                   IsDomesticTaxExempt = DividendConstants.IsNisaAccount(accountType),
                    IsForeignTaxExempt = currency == "JPY"
                };
     }

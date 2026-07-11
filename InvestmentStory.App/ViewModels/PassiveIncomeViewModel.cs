@@ -18,6 +18,8 @@ public sealed class PassiveIncomeViewModel : ObservableObject
     }
 
     public ObservableCollection<DividendAggregateRowViewModel> Ranking { get; } = new();
+    public ObservableCollection<MonthlyDividendBreakdownRowViewModel> MonthlyBreakdownRows { get; } = new();
+    public ObservableCollection<DividendRankingItemViewModel> DividendRankingRows { get; } = new();
     public ICommand SaveGoalCommand { get; }
 
     public string ThisMonthPassiveIncome => Formatters.Jpy(_summary.ThisMonthPassiveIncomeJpy);
@@ -43,6 +45,7 @@ public sealed class PassiveIncomeViewModel : ObservableObject
 
     public ObservableCollection<ChartBarRowViewModel> MonthlyBars { get; } = new();
     public ObservableCollection<ChartBarRowViewModel> YearlyBars { get; } = new();
+    public string RankingTitle => $"{DateTime.Today.Year}年受取配当ランキング";
 
     public int TargetYear { get; set; } = DateTime.Today.Year;
     public decimal AnnualPassiveIncomeGoal { get; set; }
@@ -60,7 +63,9 @@ public sealed class PassiveIncomeViewModel : ObservableObject
         IncomeGoal? goal,
         IReadOnlyList<DividendAggregate> monthly,
         IReadOnlyList<DividendAggregate> yearly,
-        IReadOnlyList<DividendAggregate> byStock)
+        IReadOnlyList<DividendAggregate> byStock,
+        IReadOnlyList<MonthlyDividendBreakdown>? monthlyBreakdown = null,
+        IReadOnlyList<DividendRankingItem>? dividendRanking = null)
     {
         _summary = summary;
         TargetYear = goal?.TargetYear ?? DateTime.Today.Year;
@@ -73,6 +78,16 @@ public sealed class PassiveIncomeViewModel : ObservableObject
         foreach (var item in monthly)
         {
             MonthlyBars.Add(new ChartBarRowViewModel(item, monthlyMax));
+        }
+
+        MonthlyBreakdownRows.Clear();
+        var breakdownItems = monthlyBreakdown ?? Array.Empty<MonthlyDividendBreakdown>();
+        var breakdownMax = breakdownItems.Count == 0
+            ? 0m
+            : breakdownItems.Max(x => Math.Max(Math.Max(x.ActualJpy, x.PlannedJpy), Math.Max(x.PreviousYearActualJpy, x.MonthlyGoalJpy)));
+        foreach (var item in breakdownItems)
+        {
+            MonthlyBreakdownRows.Add(new MonthlyDividendBreakdownRowViewModel(item, breakdownMax));
         }
 
         var yearlyItems = yearly.Count == 0
@@ -90,6 +105,12 @@ public sealed class PassiveIncomeViewModel : ObservableObject
         foreach (var item in byStock)
         {
             Ranking.Add(new DividendAggregateRowViewModel(item));
+        }
+
+        DividendRankingRows.Clear();
+        foreach (var item in dividendRanking ?? Array.Empty<DividendRankingItem>())
+        {
+            DividendRankingRows.Add(new DividendRankingItemViewModel(item));
         }
 
         RefreshAllProperties();

@@ -1,6 +1,7 @@
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
+using System.Collections.ObjectModel;
 using System.Windows;
 
 namespace InvestmentStory.App.ViewModels;
@@ -8,6 +9,7 @@ namespace InvestmentStory.App.ViewModels;
 public sealed class StockDetailViewModel : ObservableObject
 {
     private StockSnapshot? _snapshot;
+    private IReadOnlyList<BrokerTrade> _trades = Array.Empty<BrokerTrade>();
     private string _story = "銘柄一覧から銘柄を選択してください。";
 
     public bool HasStock => _snapshot is not null;
@@ -103,13 +105,43 @@ public sealed class StockDetailViewModel : ObservableObject
         ? "-"
         : Formatters.SignedJpy(_snapshot.CurrentMarketValueJpy + _snapshot.Position.MutualFund.TotalSaleAmount -
             (_snapshot.Position.MutualFund.TotalPurchaseAmount > 0m ? _snapshot.Position.MutualFund.TotalPurchaseAmount : _snapshot.PurchaseTotalJpy));
+    public ObservableCollection<BrokerTradeRowViewModel> TradeRows { get; } = new();
+    public ObservableCollection<DataQualityRowViewModel> DataQualityRows { get; } = new();
+    public string TradeCount => $"{_trades.Count:N0}件";
+    public string TotalBuyAmountJpy => Formatters.Jpy(_trades.Where(IsBuyTrade).Sum(x => Math.Abs(x.SettlementAmountJpy)));
+    public string TotalSaleAmountJpy => Formatters.Jpy(_trades.Where(IsSellTrade).Sum(x => Math.Abs(x.SettlementAmountJpy)));
+    public string RealizedGainLossJpy => Formatters.SignedJpy(_trades.Sum(x => x.RealizedGainLossJpy));
+    public string CurrentTradeQuantity => _trades.Count == 0 ? "-" : Formatters.Number(_trades.OrderByDescending(x => x.TradeDate).First().AfterTradeQuantity);
+    public string AverageTradeCost => _trades.Count == 0
+        ? "-"
+        : Formatters.Money(_trades.OrderByDescending(x => x.TradeDate).First().AfterTradeAverageCost, _snapshot?.Position.Stock.Currency ?? "JPY");
+    public string TradeDataWarning => _trades.Count == 0
+        ? "取引履歴CSVが未取込です。保有残高CSVの数量・取得単価を優先して表示しています。"
+        : "実現損益はCSV取引履歴等から計算した投資分析用参考値です。税務上の正式な金額は証券会社の報告書をご確認ください。";
 
     private bool IsDividendNotEntered => _snapshot?.Position.CurrentHolding.DividendStatus == "配当未入力";
 
-    public void Update(StockSnapshot? snapshot, string? story)
+    public void Update(
+        StockSnapshot? snapshot,
+        string? story,
+        IReadOnlyList<BrokerTrade>? trades = null,
+        IReadOnlyList<DataQualityInfo>? dataQualityInfos = null)
     {
         _snapshot = snapshot;
+        _trades = trades ?? Array.Empty<BrokerTrade>();
         _story = story ?? "銘柄一覧から銘柄を選択してください。";
+        TradeRows.Clear();
+        foreach (var trade in _trades.OrderByDescending(x => x.TradeDate).ThenByDescending(x => x.Id))
+        {
+            TradeRows.Add(new BrokerTradeRowViewModel(trade));
+        }
+
+        DataQualityRows.Clear();
+        foreach (var item in dataQualityInfos ?? Array.Empty<DataQualityInfo>())
+        {
+            DataQualityRows.Add(new DataQualityRowViewModel(item));
+        }
+
         RefreshAllProperties();
     }
 
@@ -131,4 +163,14 @@ public sealed class StockDetailViewModel : ObservableObject
 
     private static string EmptyToDash(string? value, string fallback = "-") =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    private static bool IsBuyTrade(BrokerTrade trade) =>
+        trade.SignedQuantity > 0m ||
+        trade.TradeType.Contains("買", StringComparison.Ordinal) ||
+        trade.TradeType.Contains("雋ｷ", StringComparison.Ordinal);
+
+    private static bool IsSellTrade(BrokerTrade trade) =>
+        trade.SignedQuantity < 0m ||
+        trade.TradeType.Contains("売", StringComparison.Ordinal) ||
+        trade.TradeType.Contains("螢ｲ", StringComparison.Ordinal);
 }

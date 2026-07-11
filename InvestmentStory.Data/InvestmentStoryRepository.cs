@@ -26,7 +26,8 @@ public sealed class InvestmentStoryRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT
-                s.Id, s.Name, s.Ticker, s.Country, s.Currency, s.Broker, s.Sector, s.Industry, s.Market, s.DataSource, s.Memo,
+                s.Id, s.Name, s.Ticker, s.Country, s.Currency, s.Broker, s.AccountType, s.CustodyType,
+                s.Sector, s.Industry, s.Market, s.DataSource, s.Memo,
                 p.Id, p.PurchaseDate, p.Shares, p.UnitPrice, p.ExchangeRate,
                 p.ExchangeRateAcquiredAt, p.ExchangeRateSource, p.ExchangeRateInputType, p.Fee, p.Memo,
                 sp.Id, sp.SplitDate, sp.SplitRatio, sp.Memo,
@@ -62,76 +63,78 @@ public sealed class InvestmentStoryRepository
                     Country = GetString(reader, 3),
                     Currency = GetString(reader, 4),
                     Broker = GetString(reader, 5),
-                    Sector = GetString(reader, 6),
-                    Industry = GetString(reader, 7),
-                    Market = GetString(reader, 8),
-                    DataSource = GetStringOrDefault(reader, 9, "手入力"),
-                    Memo = GetString(reader, 10),
-                    AssetType = GetStringOrDefault(reader, 41, AssetTypes.Stock)
+                    AccountType = GetStringOrDefault(reader, 6, AccountTypes.Unknown),
+                    CustodyType = GetString(reader, 7),
+                    Sector = GetString(reader, 8),
+                    Industry = GetString(reader, 9),
+                    Market = GetString(reader, 10),
+                    DataSource = GetStringOrDefault(reader, 11, "手入力"),
+                    Memo = GetString(reader, 12),
+                    AssetType = GetStringOrDefault(reader, 43, AssetTypes.Stock)
                 },
                 Purchase = new Purchase
                 {
-                    Id = GetInt32OrZero(reader, 11),
+                    Id = GetInt32OrZero(reader, 13),
                     StockId = stockId,
-                    PurchaseDate = GetDateOrToday(reader, 12),
-                    Shares = GetDecimalOrZero(reader, 13),
-                    UnitPrice = GetDecimalOrZero(reader, 14),
-                    ExchangeRate = GetDecimalOrDefault(reader, 15, 1m),
-                    ExchangeRateAcquiredAt = GetDateTimeOrDefault(reader, 16, GetDateOrToday(reader, 12)),
-                    ExchangeRateSource = GetStringOrDefault(reader, 17, "手入力"),
-                    ExchangeRateInputType = GetStringOrDefault(reader, 18, "手入力"),
-                    Fee = GetDecimalOrZero(reader, 19),
-                    Memo = GetString(reader, 20)
+                    PurchaseDate = GetDateOrToday(reader, 14),
+                    Shares = GetDecimalOrZero(reader, 15),
+                    UnitPrice = GetDecimalOrZero(reader, 16),
+                    ExchangeRate = GetDecimalOrDefault(reader, 17, 1m),
+                    ExchangeRateAcquiredAt = GetDateTimeOrDefault(reader, 18, GetDateOrToday(reader, 14)),
+                    ExchangeRateSource = GetStringOrDefault(reader, 19, "手入力"),
+                    ExchangeRateInputType = GetStringOrDefault(reader, 20, "手入力"),
+                    Fee = GetDecimalOrZero(reader, 21),
+                    Memo = GetString(reader, 22)
                 },
                 Split = new StockSplit
                 {
-                    Id = GetInt32OrZero(reader, 21),
+                    Id = GetInt32OrZero(reader, 23),
                     StockId = stockId,
-                    SplitDate = GetDateOrToday(reader, 22),
-                    SplitRatio = GetDecimalOrDefault(reader, 23, 1m),
-                    Memo = GetString(reader, 24)
+                    SplitDate = GetDateOrToday(reader, 24),
+                    SplitRatio = GetDecimalOrDefault(reader, 25, 1m),
+                    Memo = GetString(reader, 26)
                 },
                 CurrentHolding = new CurrentHolding
                 {
-                    Id = GetInt32OrZero(reader, 25),
+                    Id = GetInt32OrZero(reader, 27),
                     StockId = stockId,
-                    CurrentShares = GetDecimalOrZero(reader, 26),
-                    CurrentPrice = GetDecimalOrZero(reader, 27),
-                    CurrentExchangeRate = GetDecimalOrDefault(reader, 28, 1m),
-                    ExchangeRateAcquiredAt = GetDateTimeOrDefault(reader, 29, DateTime.Today),
-                    ExchangeRateSource = GetStringOrDefault(reader, 30, "手入力"),
-                    ExchangeRateInputType = GetStringOrDefault(reader, 31, "手入力"),
-                    AnnualDividendPerShare = GetDecimalOrZero(reader, 32),
-                    DividendStatus = GetDividendStatus(reader, 33, GetDecimalOrZero(reader, 32)),
-                    DividendFrequency = GetString(reader, 34),
-                    DividendMonths = GetString(reader, 35),
-                    CurrentPriceAcquiredAt = GetDateTimeOrDefault(reader, 36, DateTime.MinValue),
-                    CurrentPriceSource = GetString(reader, 37),
-                    DividendInfoAcquiredAt = GetDateTimeOrDefault(reader, 38, DateTime.MinValue),
-                    DividendInfoSource = GetString(reader, 39),
-                    UpdatedAt = GetDateOrToday(reader, 40)
+                    CurrentShares = GetDecimalOrZero(reader, 28),
+                    CurrentPrice = GetDecimalOrZero(reader, 29),
+                    CurrentExchangeRate = GetDecimalOrDefault(reader, 30, 1m),
+                    ExchangeRateAcquiredAt = GetDateTimeOrDefault(reader, 31, DateTime.Today),
+                    ExchangeRateSource = GetStringOrDefault(reader, 32, "手入力"),
+                    ExchangeRateInputType = GetStringOrDefault(reader, 33, "手入力"),
+                    AnnualDividendPerShare = GetDecimalOrZero(reader, 34),
+                    DividendStatus = GetDividendStatus(reader, 35, GetDecimalOrZero(reader, 34)),
+                    DividendFrequency = GetString(reader, 36),
+                    DividendMonths = GetString(reader, 37),
+                    CurrentPriceAcquiredAt = GetDateTimeOrDefault(reader, 38, DateTime.MinValue),
+                    CurrentPriceSource = GetString(reader, 39),
+                    DividendInfoAcquiredAt = GetDateTimeOrDefault(reader, 40, DateTime.MinValue),
+                    DividendInfoSource = GetString(reader, 41),
+                    UpdatedAt = GetDateOrToday(reader, 42)
                 },
                 MutualFund = new MutualFundHolding
                 {
-                    Id = GetInt32OrZero(reader, 42),
+                    Id = GetInt32OrZero(reader, 44),
                     StockId = stockId,
-                    FundName = GetString(reader, 43),
-                    FundCode = GetString(reader, 44),
-                    AssociationCode = GetString(reader, 45),
-                    UnitsHeld = GetDecimalOrZero(reader, 46),
-                    UnitBase = GetDecimalOrDefault(reader, 47, 10000m),
-                    AverageCostNav = GetDecimalOrZero(reader, 48),
-                    CurrentNav = GetDecimalOrZero(reader, 49),
-                    AcquisitionAmount = GetDecimalOrZero(reader, 50),
-                    MarketValue = GetDecimalOrZero(reader, 51),
-                    UnrealizedGainLoss = GetDecimalOrZero(reader, 52),
-                    NavDate = GetDateTimeOrDefault(reader, 53, DateTime.MinValue),
-                    NavSource = GetString(reader, 54),
-                    DistributionMethod = GetString(reader, 55),
-                    AccountType = GetString(reader, 56),
-                    TotalPurchaseAmount = GetDecimalOrZero(reader, 57),
-                    TotalSaleAmount = GetDecimalOrZero(reader, 58),
-                    ReinvestedDistributionAmount = GetDecimalOrZero(reader, 59)
+                    FundName = GetString(reader, 45),
+                    FundCode = GetString(reader, 46),
+                    AssociationCode = GetString(reader, 47),
+                    UnitsHeld = GetDecimalOrZero(reader, 48),
+                    UnitBase = GetDecimalOrDefault(reader, 49, 10000m),
+                    AverageCostNav = GetDecimalOrZero(reader, 50),
+                    CurrentNav = GetDecimalOrZero(reader, 51),
+                    AcquisitionAmount = GetDecimalOrZero(reader, 52),
+                    MarketValue = GetDecimalOrZero(reader, 53),
+                    UnrealizedGainLoss = GetDecimalOrZero(reader, 54),
+                    NavDate = GetDateTimeOrDefault(reader, 55, DateTime.MinValue),
+                    NavSource = GetString(reader, 56),
+                    DistributionMethod = GetString(reader, 57),
+                    AccountType = GetString(reader, 58),
+                    TotalPurchaseAmount = GetDecimalOrZero(reader, 59),
+                    TotalSaleAmount = GetDecimalOrZero(reader, 60),
+                    ReinvestedDistributionAmount = GetDecimalOrZero(reader, 61)
                 }
             });
         }
@@ -543,6 +546,231 @@ public sealed class InvestmentStoryRepository
         return logs;
     }
 
+    public void SavePortfolioSnapshot(PortfolioSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO PortfolioSnapshots
+                (SnapshotDate, TotalMarketValueJpy, TotalCostBasisJpy, UnrealizedGainLossJpy,
+                 CumulativeDividendJpy, RealizedGainLossJpy, TotalReturnJpy, UsdJpyRate, CreatedAt, UpdatedAt)
+            VALUES
+                ($snapshotDate, $totalMarketValueJpy, $totalCostBasisJpy, $unrealizedGainLossJpy,
+                 $cumulativeDividendJpy, $realizedGainLossJpy, $totalReturnJpy, $usdJpyRate, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(SnapshotDate) DO UPDATE SET
+                TotalMarketValueJpy = excluded.TotalMarketValueJpy,
+                TotalCostBasisJpy = excluded.TotalCostBasisJpy,
+                UnrealizedGainLossJpy = excluded.UnrealizedGainLossJpy,
+                CumulativeDividendJpy = excluded.CumulativeDividendJpy,
+                RealizedGainLossJpy = excluded.RealizedGainLossJpy,
+                TotalReturnJpy = excluded.TotalReturnJpy,
+                UsdJpyRate = excluded.UsdJpyRate,
+                UpdatedAt = CURRENT_TIMESTAMP;
+            """;
+        command.Parameters.AddWithValue("$snapshotDate", ToDateText(snapshot.SnapshotDate));
+        command.Parameters.AddWithValue("$totalMarketValueJpy", snapshot.TotalMarketValueJpy);
+        command.Parameters.AddWithValue("$totalCostBasisJpy", snapshot.TotalCostBasisJpy);
+        command.Parameters.AddWithValue("$unrealizedGainLossJpy", snapshot.UnrealizedGainLossJpy);
+        command.Parameters.AddWithValue("$cumulativeDividendJpy", snapshot.CumulativeDividendJpy);
+        command.Parameters.AddWithValue("$realizedGainLossJpy", snapshot.RealizedGainLossJpy);
+        command.Parameters.AddWithValue("$totalReturnJpy", snapshot.TotalReturnJpy);
+        command.Parameters.AddWithValue("$usdJpyRate", snapshot.UsdJpyRate);
+        command.ExecuteNonQuery();
+    }
+
+    public IReadOnlyList<PortfolioSnapshot> GetPortfolioSnapshots()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, SnapshotDate, TotalMarketValueJpy, TotalCostBasisJpy, UnrealizedGainLossJpy,
+                   CumulativeDividendJpy, RealizedGainLossJpy, TotalReturnJpy, UsdJpyRate, CreatedAt, UpdatedAt
+            FROM PortfolioSnapshots
+            ORDER BY SnapshotDate;
+            """;
+
+        using var reader = command.ExecuteReader();
+        var snapshots = new List<PortfolioSnapshot>();
+        while (reader.Read())
+        {
+            snapshots.Add(new PortfolioSnapshot
+            {
+                Id = reader.GetInt32(0),
+                SnapshotDate = ParseDate(GetString(reader, 1)),
+                TotalMarketValueJpy = GetDecimalOrZero(reader, 2),
+                TotalCostBasisJpy = GetDecimalOrZero(reader, 3),
+                UnrealizedGainLossJpy = GetDecimalOrZero(reader, 4),
+                CumulativeDividendJpy = GetDecimalOrZero(reader, 5),
+                RealizedGainLossJpy = GetDecimalOrZero(reader, 6),
+                TotalReturnJpy = GetDecimalOrZero(reader, 7),
+                UsdJpyRate = GetDecimalOrZero(reader, 8),
+                CreatedAt = GetDateTimeOrDefault(reader, 9, DateTime.MinValue),
+                UpdatedAt = GetDateTimeOrDefault(reader, 10, DateTime.MinValue)
+            });
+        }
+
+        return snapshots;
+    }
+
+    public void SaveBrokerTrades(IEnumerable<BrokerTradeRecord> tradeRecords)
+    {
+        ArgumentNullException.ThrowIfNull(tradeRecords);
+
+        var records = tradeRecords.ToList();
+        if (records.Count == 0)
+        {
+            return;
+        }
+
+        var positions = GetPositions()
+            .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+        var ledgerBuilder = new TradeLedgerService();
+        var ledgers = new List<BrokerTrade>();
+
+        foreach (var group in records.GroupBy(x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase))
+        {
+            if (!positions.TryGetValue(group.Key, out var position))
+            {
+                continue;
+            }
+
+            ledgers.AddRange(ledgerBuilder.BuildLedger(position.Stock.Id, group.ToList()));
+        }
+
+        if (ledgers.Count == 0)
+        {
+            return;
+        }
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        foreach (var trade in ledgers)
+        {
+            InsertBrokerTrade(connection, transaction, trade);
+        }
+
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<BrokerTrade> GetBrokerTrades(int stockId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                   Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                   FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                   AfterTradeAverageCost, Source, SourceFile, CreatedAt
+            FROM BrokerTrades
+            WHERE StockId = $stockId
+            ORDER BY TradeDate DESC, SettlementDate DESC, Id DESC;
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+        return ReadBrokerTrades(command);
+    }
+
+    public IReadOnlyList<BrokerTrade> GetAllBrokerTrades()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                   Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                   FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                   AfterTradeAverageCost, Source, SourceFile, CreatedAt
+            FROM BrokerTrades
+            ORDER BY TradeDate DESC, SettlementDate DESC, Id DESC;
+            """;
+        return ReadBrokerTrades(command);
+    }
+
+    public IReadOnlyList<DataQualityInfo> GetDataQualityInfos(int stockId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, StockId, FieldName, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
+                   IsEstimated, IsStale, HasConflict, ConflictDescription, ManualOverride, Memo
+            FROM DataQualityInfos
+            WHERE StockId = $stockId
+            ORDER BY FieldName;
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+
+        using var reader = command.ExecuteReader();
+        var values = new List<DataQualityInfo>();
+        while (reader.Read())
+        {
+            values.Add(new DataQualityInfo
+            {
+                Id = reader.GetInt32(0),
+                StockId = reader.GetInt32(1),
+                FieldName = GetString(reader, 2),
+                SourceType = GetStringOrDefault(reader, 3, DataSourceTypes.Unknown),
+                SourceName = GetString(reader, 4),
+                RetrievedAt = GetDateTimeOrDefault(reader, 5, DateTime.MinValue),
+                ConfidenceLevel = GetStringOrDefault(reader, 6, DataQualityStates.Missing),
+                IsEstimated = GetInt32OrZero(reader, 7) == 1,
+                IsStale = GetInt32OrZero(reader, 8) == 1,
+                HasConflict = GetInt32OrZero(reader, 9) == 1,
+                ConflictDescription = GetString(reader, 10),
+                ManualOverride = GetInt32OrZero(reader, 11) == 1,
+                Memo = GetString(reader, 12)
+            });
+        }
+
+        return values;
+    }
+
+    public void SaveDataQualityInfos(IEnumerable<DataQualityInfo> items)
+    {
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        foreach (var item in items)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO DataQualityInfos
+                    (StockId, FieldName, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
+                     IsEstimated, IsStale, HasConflict, ConflictDescription, ManualOverride, Memo, UpdatedAt)
+                VALUES
+                    ($stockId, $fieldName, $sourceType, $sourceName, $retrievedAt, $confidenceLevel,
+                     $isEstimated, $isStale, $hasConflict, $conflictDescription, $manualOverride, $memo, CURRENT_TIMESTAMP)
+                ON CONFLICT(StockId, FieldName) DO UPDATE SET
+                    SourceType = excluded.SourceType,
+                    SourceName = excluded.SourceName,
+                    RetrievedAt = excluded.RetrievedAt,
+                    ConfidenceLevel = excluded.ConfidenceLevel,
+                    IsEstimated = excluded.IsEstimated,
+                    IsStale = excluded.IsStale,
+                    HasConflict = excluded.HasConflict,
+                    ConflictDescription = excluded.ConflictDescription,
+                    ManualOverride = excluded.ManualOverride,
+                    Memo = excluded.Memo,
+                    UpdatedAt = CURRENT_TIMESTAMP;
+                """;
+            command.Parameters.AddWithValue("$stockId", item.StockId);
+            command.Parameters.AddWithValue("$fieldName", item.FieldName);
+            command.Parameters.AddWithValue("$sourceType", item.SourceType);
+            command.Parameters.AddWithValue("$sourceName", item.SourceName);
+            command.Parameters.AddWithValue("$retrievedAt", ToOptionalDateText(item.RetrievedAt));
+            command.Parameters.AddWithValue("$confidenceLevel", item.ConfidenceLevel);
+            command.Parameters.AddWithValue("$isEstimated", item.IsEstimated ? 1 : 0);
+            command.Parameters.AddWithValue("$isStale", item.IsStale ? 1 : 0);
+            command.Parameters.AddWithValue("$hasConflict", item.HasConflict ? 1 : 0);
+            command.Parameters.AddWithValue("$conflictDescription", item.ConflictDescription);
+            command.Parameters.AddWithValue("$manualOverride", item.ManualOverride ? 1 : 0);
+            command.Parameters.AddWithValue("$memo", item.Memo);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
     private SqliteConnection OpenConnection()
     {
         var connection = new SqliteConnection(DatabaseInitializer.CreateConnectionString(_databasePath));
@@ -560,8 +788,8 @@ public sealed class InvestmentStoryRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO Stocks (AssetType, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo)
-            VALUES ($assetType, $name, $ticker, $country, $currency, $broker, $sector, $industry, $market, $dataSource, $memo);
+            INSERT INTO Stocks (AssetType, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo)
+            VALUES ($assetType, $name, $ticker, $country, $currency, $broker, $accountType, $custodyType, $sector, $industry, $market, $dataSource, $memo);
             SELECT last_insert_rowid();
             """;
         AddStockParameters(command, stock);
@@ -580,6 +808,8 @@ public sealed class InvestmentStoryRepository
                 Country = $country,
                 Currency = $currency,
                 Broker = $broker,
+                AccountType = $accountType,
+                CustodyType = $custodyType,
                 Sector = $sector,
                 Industry = $industry,
                 Market = $market,
@@ -772,6 +1002,83 @@ public sealed class InvestmentStoryRepository
         command.ExecuteNonQuery();
     }
 
+    private static void InsertBrokerTrade(SqliteConnection connection, SqliteTransaction transaction, BrokerTrade trade)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT OR IGNORE INTO BrokerTrades
+                (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                 Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                 FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                 AfterTradeAverageCost, Source, SourceFile, CreatedAt)
+            VALUES
+                ($stockId, $tradeDate, $settlementDate, $broker, $accountType, $custodyType, $tradeType,
+                 $quantity, $signedQuantity, $unitPrice, $currency, $exchangeRate, $settlementAmountJpy,
+                 $feeJpy, $taxJpy, $realizedGainLoss, $realizedGainLossJpy, $afterTradeQuantity,
+                 $afterTradeAverageCost, $source, $sourceFile, CURRENT_TIMESTAMP);
+            """;
+        command.Parameters.AddWithValue("$stockId", trade.StockId);
+        command.Parameters.AddWithValue("$tradeDate", ToDateText(trade.TradeDate));
+        command.Parameters.AddWithValue("$settlementDate", ToDateText(trade.SettlementDate));
+        command.Parameters.AddWithValue("$broker", trade.Broker);
+        command.Parameters.AddWithValue("$accountType", AccountTypeNormalizer.Normalize(trade.AccountType));
+        command.Parameters.AddWithValue("$custodyType", trade.CustodyType);
+        command.Parameters.AddWithValue("$tradeType", trade.TradeType);
+        command.Parameters.AddWithValue("$quantity", trade.Quantity);
+        command.Parameters.AddWithValue("$signedQuantity", trade.SignedQuantity);
+        command.Parameters.AddWithValue("$unitPrice", trade.UnitPrice);
+        command.Parameters.AddWithValue("$currency", NormalizeCurrency(trade.Currency));
+        command.Parameters.AddWithValue("$exchangeRate", trade.ExchangeRate <= 0m ? 1m : trade.ExchangeRate);
+        command.Parameters.AddWithValue("$settlementAmountJpy", trade.SettlementAmountJpy);
+        command.Parameters.AddWithValue("$feeJpy", trade.FeeJpy);
+        command.Parameters.AddWithValue("$taxJpy", trade.TaxJpy);
+        command.Parameters.AddWithValue("$realizedGainLoss", trade.RealizedGainLoss);
+        command.Parameters.AddWithValue("$realizedGainLossJpy", trade.RealizedGainLossJpy);
+        command.Parameters.AddWithValue("$afterTradeQuantity", trade.AfterTradeQuantity);
+        command.Parameters.AddWithValue("$afterTradeAverageCost", trade.AfterTradeAverageCost);
+        command.Parameters.AddWithValue("$source", trade.Source);
+        command.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+        command.ExecuteNonQuery();
+    }
+
+    private static IReadOnlyList<BrokerTrade> ReadBrokerTrades(SqliteCommand command)
+    {
+        using var reader = command.ExecuteReader();
+        var trades = new List<BrokerTrade>();
+        while (reader.Read())
+        {
+            trades.Add(new BrokerTrade
+            {
+                Id = reader.GetInt32(0),
+                StockId = reader.GetInt32(1),
+                TradeDate = ParseDate(GetString(reader, 2)),
+                SettlementDate = ParseDate(GetString(reader, 3)),
+                Broker = GetString(reader, 4),
+                AccountType = GetStringOrDefault(reader, 5, AccountTypes.Unknown),
+                CustodyType = GetString(reader, 6),
+                TradeType = GetString(reader, 7),
+                Quantity = GetDecimalOrZero(reader, 8),
+                SignedQuantity = GetDecimalOrZero(reader, 9),
+                UnitPrice = GetDecimalOrZero(reader, 10),
+                Currency = GetStringOrDefault(reader, 11, "JPY"),
+                ExchangeRate = GetDecimalOrDefault(reader, 12, 1m),
+                SettlementAmountJpy = GetDecimalOrZero(reader, 13),
+                FeeJpy = GetDecimalOrZero(reader, 14),
+                TaxJpy = GetDecimalOrZero(reader, 15),
+                RealizedGainLoss = GetDecimalOrZero(reader, 16),
+                RealizedGainLossJpy = GetDecimalOrZero(reader, 17),
+                AfterTradeQuantity = GetDecimalOrZero(reader, 18),
+                AfterTradeAverageCost = GetDecimalOrZero(reader, 19),
+                Source = GetString(reader, 20),
+                SourceFile = GetString(reader, 21),
+                CreatedAt = GetDateTimeOrDefault(reader, 22, DateTime.MinValue)
+            });
+        }
+
+        return trades;
+    }
+
     private static int InsertDividend(SqliteConnection connection, DividendPayment dividend)
     {
         using var command = connection.CreateCommand();
@@ -864,6 +1171,8 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$country", stock.Country);
         command.Parameters.AddWithValue("$currency", stock.Currency);
         command.Parameters.AddWithValue("$broker", stock.Broker);
+        command.Parameters.AddWithValue("$accountType", AccountTypeNormalizer.Normalize(stock.AccountType));
+        command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
         command.Parameters.AddWithValue("$sector", stock.Sector);
         command.Parameters.AddWithValue("$industry", stock.Industry);
         command.Parameters.AddWithValue("$market", stock.Market);
@@ -943,7 +1252,7 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$netAmountJpy", netAmountJpy);
         command.Parameters.AddWithValue("$jpyAmount", jpyAmount);
         command.Parameters.AddWithValue("$isTaxEstimated", dividend.IsTaxEstimated ? 1 : 0);
-        command.Parameters.AddWithValue("$isNisa", dividend.IsNisa || accountType == DividendConstants.AccountNisa || taxAccountType == DividendConstants.AccountNisa ? 1 : 0);
+        command.Parameters.AddWithValue("$isNisa", dividend.IsNisa || DividendConstants.IsNisaAccount(accountType) || DividendConstants.IsNisaAccount(taxAccountType) ? 1 : 0);
         command.Parameters.AddWithValue("$isForeignStock", dividend.IsForeignStock || currency != "JPY" ? 1 : 0);
         command.Parameters.AddWithValue("$taxProfileId", dividend.TaxProfileId.HasValue ? dividend.TaxProfileId.Value : (object)DBNull.Value);
         command.Parameters.AddWithValue("$matchedActualDividendId", dividend.MatchedActualDividendId.HasValue ? dividend.MatchedActualDividendId.Value : (object)DBNull.Value);
@@ -1056,6 +1365,14 @@ public sealed class InvestmentStoryRepository
     {
         var normalized = string.IsNullOrWhiteSpace(currency) ? "JPY" : currency.Trim().ToUpperInvariant();
         return normalized is "YEN" or "円" ? "JPY" : normalized;
+    }
+
+    private static string BuildPositionKey(string broker, string ticker, string accountType)
+    {
+        var normalizedBroker = SecuritySymbolNormalizer.NormalizeBroker(broker);
+        var normalizedTicker = SecuritySymbolNormalizer.NormalizeTicker(ticker);
+        var normalizedAccount = AccountTypeNormalizer.Normalize(accountType);
+        return $"{normalizedBroker}|{normalizedTicker}|{normalizedAccount}";
     }
 
     private static int ResolveDividendSourcePriority(string source)

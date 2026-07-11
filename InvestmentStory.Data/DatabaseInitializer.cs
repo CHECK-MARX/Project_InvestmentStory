@@ -43,6 +43,8 @@ public sealed class DatabaseInitializer
                 Country TEXT NOT NULL,
                 Currency TEXT NOT NULL,
                 Broker TEXT NOT NULL,
+                AccountType TEXT NOT NULL DEFAULT 'Unknown',
+                CustodyType TEXT NOT NULL DEFAULT '',
                 Sector TEXT NOT NULL DEFAULT '',
                 Industry TEXT NOT NULL DEFAULT '',
                 Market TEXT NOT NULL DEFAULT '',
@@ -229,11 +231,80 @@ public sealed class DatabaseInitializer
                 Summary TEXT NOT NULL DEFAULT ''
             );
             """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS PortfolioSnapshots (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SnapshotDate TEXT NOT NULL UNIQUE,
+                TotalMarketValueJpy REAL NOT NULL DEFAULT 0,
+                TotalCostBasisJpy REAL NOT NULL DEFAULT 0,
+                UnrealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                CumulativeDividendJpy REAL NOT NULL DEFAULT 0,
+                RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                TotalReturnJpy REAL NOT NULL DEFAULT 0,
+                UsdJpyRate REAL NOT NULL DEFAULT 0,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS BrokerTrades (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                TradeDate TEXT NOT NULL,
+                SettlementDate TEXT NOT NULL,
+                Broker TEXT NOT NULL DEFAULT '',
+                AccountType TEXT NOT NULL DEFAULT 'Unknown',
+                CustodyType TEXT NOT NULL DEFAULT '',
+                TradeType TEXT NOT NULL DEFAULT '',
+                Quantity REAL NOT NULL DEFAULT 0,
+                SignedQuantity REAL NOT NULL DEFAULT 0,
+                UnitPrice REAL NOT NULL DEFAULT 0,
+                Currency TEXT NOT NULL DEFAULT 'JPY',
+                ExchangeRate REAL NOT NULL DEFAULT 1,
+                SettlementAmountJpy REAL NOT NULL DEFAULT 0,
+                FeeJpy REAL NOT NULL DEFAULT 0,
+                TaxJpy REAL NOT NULL DEFAULT 0,
+                RealizedGainLoss REAL NOT NULL DEFAULT 0,
+                RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                AfterTradeQuantity REAL NOT NULL DEFAULT 0,
+                AfterTradeAverageCost REAL NOT NULL DEFAULT 0,
+                Source TEXT NOT NULL DEFAULT '',
+                SourceFile TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source),
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS DataQualityInfos (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                FieldName TEXT NOT NULL,
+                SourceType TEXT NOT NULL DEFAULT 'Unknown',
+                SourceName TEXT NOT NULL DEFAULT '',
+                RetrievedAt TEXT NOT NULL DEFAULT '',
+                ConfidenceLevel TEXT NOT NULL DEFAULT 'Missing',
+                IsEstimated INTEGER NOT NULL DEFAULT 0,
+                IsStale INTEGER NOT NULL DEFAULT 0,
+                HasConflict INTEGER NOT NULL DEFAULT 0,
+                ConflictDescription TEXT NOT NULL DEFAULT '',
+                ManualOverride INTEGER NOT NULL DEFAULT 0,
+                Memo TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(StockId, FieldName),
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            """);
     }
 
     private static void MigrateTables(SqliteConnection connection)
     {
         AddColumnIfMissing(connection, "Stocks", "AssetType", "TEXT NOT NULL DEFAULT 'Stock'");
+        AddColumnIfMissing(connection, "Stocks", "AccountType", "TEXT NOT NULL DEFAULT 'Unknown'");
+        AddColumnIfMissing(connection, "Stocks", "CustodyType", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateAcquiredAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateSource", "TEXT NOT NULL DEFAULT '手入力'");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateInputType", "TEXT NOT NULL DEFAULT '手入力'");
@@ -311,10 +382,126 @@ public sealed class DatabaseInitializer
             """);
 
         Execute(connection, """
+            CREATE TABLE IF NOT EXISTS PortfolioSnapshots (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SnapshotDate TEXT NOT NULL UNIQUE,
+                TotalMarketValueJpy REAL NOT NULL DEFAULT 0,
+                TotalCostBasisJpy REAL NOT NULL DEFAULT 0,
+                UnrealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                CumulativeDividendJpy REAL NOT NULL DEFAULT 0,
+                RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                TotalReturnJpy REAL NOT NULL DEFAULT 0,
+                UsdJpyRate REAL NOT NULL DEFAULT 0,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS BrokerTrades (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                TradeDate TEXT NOT NULL,
+                SettlementDate TEXT NOT NULL,
+                Broker TEXT NOT NULL DEFAULT '',
+                AccountType TEXT NOT NULL DEFAULT 'Unknown',
+                CustodyType TEXT NOT NULL DEFAULT '',
+                TradeType TEXT NOT NULL DEFAULT '',
+                Quantity REAL NOT NULL DEFAULT 0,
+                SignedQuantity REAL NOT NULL DEFAULT 0,
+                UnitPrice REAL NOT NULL DEFAULT 0,
+                Currency TEXT NOT NULL DEFAULT 'JPY',
+                ExchangeRate REAL NOT NULL DEFAULT 1,
+                SettlementAmountJpy REAL NOT NULL DEFAULT 0,
+                FeeJpy REAL NOT NULL DEFAULT 0,
+                TaxJpy REAL NOT NULL DEFAULT 0,
+                RealizedGainLoss REAL NOT NULL DEFAULT 0,
+                RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                AfterTradeQuantity REAL NOT NULL DEFAULT 0,
+                AfterTradeAverageCost REAL NOT NULL DEFAULT 0,
+                Source TEXT NOT NULL DEFAULT '',
+                SourceFile TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source),
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS DataQualityInfos (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                FieldName TEXT NOT NULL,
+                SourceType TEXT NOT NULL DEFAULT 'Unknown',
+                SourceName TEXT NOT NULL DEFAULT '',
+                RetrievedAt TEXT NOT NULL DEFAULT '',
+                ConfidenceLevel TEXT NOT NULL DEFAULT 'Missing',
+                IsEstimated INTEGER NOT NULL DEFAULT 0,
+                IsStale INTEGER NOT NULL DEFAULT 0,
+                HasConflict INTEGER NOT NULL DEFAULT 0,
+                ConflictDescription TEXT NOT NULL DEFAULT '',
+                ManualOverride INTEGER NOT NULL DEFAULT 0,
+                Memo TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(StockId, FieldName),
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            """);
+
+        Execute(connection, """
             UPDATE Stocks
             SET AssetType = 'MutualFund'
             WHERE AssetType <> 'MutualFund'
               AND (UPPER(Ticker) LIKE 'FUND:%' OR Sector LIKE '%投資信託%');
+            """);
+
+        Execute(connection, """
+            UPDATE Stocks
+            SET AccountType = CASE
+                WHEN AccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                WHEN AccountType LIKE '%つみたて%' OR AccountType LIKE '%積立%' THEN 'NisaAccumulation'
+                WHEN AccountType LIKE '%NISA%' OR AccountType LIKE '%成長投資%' THEN 'NisaGrowth'
+                WHEN AccountType LIKE '%特定%' THEN 'Specific'
+                WHEN AccountType LIKE '%一般%' THEN 'General'
+                WHEN AccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy', 'Specific', 'General') THEN AccountType
+                ELSE 'Unknown'
+            END;
+            """);
+
+        Execute(connection, """
+            UPDATE DividendPayments
+            SET AccountType = CASE
+                    WHEN AccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                    WHEN AccountType LIKE '%つみたて%' OR AccountType LIKE '%積立%' THEN 'NisaAccumulation'
+                    WHEN AccountType LIKE '%NISA%' OR AccountType LIKE '%成長投資%' THEN 'NisaGrowth'
+                    WHEN AccountType LIKE '%特定%' THEN 'Specific'
+                    WHEN AccountType LIKE '%一般%' THEN 'General'
+                    WHEN AccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy', 'Specific', 'General') THEN AccountType
+                    ELSE 'Unknown'
+                END,
+                TaxAccountType = CASE
+                    WHEN TaxAccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                    WHEN TaxAccountType LIKE '%つみたて%' OR TaxAccountType LIKE '%積立%' THEN 'NisaAccumulation'
+                    WHEN TaxAccountType LIKE '%NISA%' OR TaxAccountType LIKE '%成長投資%' THEN 'NisaGrowth'
+                    WHEN TaxAccountType LIKE '%特定%' THEN 'Specific'
+                    WHEN TaxAccountType LIKE '%一般%' THEN 'General'
+                    WHEN TaxAccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy', 'Specific', 'General') THEN TaxAccountType
+                    ELSE 'Unknown'
+                END,
+                IsNisa = CASE
+                    WHEN AccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy', 'NISA')
+                      OR TaxAccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy', 'NISA') THEN 1
+                    ELSE 0
+                END;
+            """);
+
+        Execute(connection, """
+            UPDATE DividendPayments
+            SET IsNisa = CASE
+                WHEN AccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy')
+                  OR TaxAccountType IN ('NisaGrowth', 'NisaAccumulation', 'NisaLegacy') THEN 1
+                ELSE 0
+            END;
             """);
 
         RemoveTickerUniqueConstraintIfNeeded(connection);
@@ -401,9 +588,11 @@ public sealed class DatabaseInitializer
                     Name TEXT NOT NULL,
                     Ticker TEXT NOT NULL,
                     Country TEXT NOT NULL,
-                    Currency TEXT NOT NULL,
-                    Broker TEXT NOT NULL,
-                    Sector TEXT NOT NULL DEFAULT '',
+                Currency TEXT NOT NULL,
+                Broker TEXT NOT NULL,
+                AccountType TEXT NOT NULL DEFAULT 'Unknown',
+                CustodyType TEXT NOT NULL DEFAULT '',
+                Sector TEXT NOT NULL DEFAULT '',
                     Industry TEXT NOT NULL DEFAULT '',
                     Market TEXT NOT NULL DEFAULT '',
                     DataSource TEXT NOT NULL DEFAULT '手入力',
@@ -415,9 +604,9 @@ public sealed class DatabaseInitializer
 
             Execute(connection, transaction, """
                 INSERT INTO Stocks_Migration_NoTickerUnique
-                    (Id, AssetType, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt)
+                    (Id, AssetType, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt)
                 SELECT
-                    Id, AssetType, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt
+                    Id, AssetType, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt
                 FROM Stocks;
                 """);
 

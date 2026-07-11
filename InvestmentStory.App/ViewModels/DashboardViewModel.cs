@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
 
@@ -6,13 +7,16 @@ namespace InvestmentStory.App.ViewModels;
 
 public sealed class DashboardViewModel : ObservableObject
 {
+    private readonly Action _recordSnapshot;
     private DashboardSummary _summary = new();
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
     private string _selectedCompositionMode = "国別";
 
-    public DashboardViewModel()
+    public DashboardViewModel(Action? recordSnapshot = null)
     {
+        _recordSnapshot = recordSnapshot ?? (() => { });
         CompositionModes = new[] { "国別", "通貨別", "証券会社別" };
+        RecordSnapshotCommand = new RelayCommand(_recordSnapshot);
     }
 
     public string TotalCurrentMarketValue => Formatters.Jpy(_summary.TotalCurrentMarketValueJpy);
@@ -35,13 +39,23 @@ public sealed class DashboardViewModel : ObservableObject
     public string AnnualGoalAchievementRate => Formatters.Percent(_summary.AnnualGoalAchievementRate);
     public string AnnualGoalGap => Formatters.Jpy(_summary.AnnualGoalGapJpy);
     public string Monthly100kGap => Formatters.Jpy(Math.Max(0m, 100_000m - _summary.MonthlyAveragePassiveIncomeForecastJpy));
+    public string TotalReturn => Formatters.SignedJpy(_summary.TotalReturnJpy);
+    public string TotalReturnRate => Formatters.SignedPercent(_summary.TotalReturnRate);
+    public string CumulativeDividend => Formatters.Jpy(_summary.CumulativeDividendJpy);
+    public string RealizedGainLoss => Formatters.SignedJpy(_summary.RealizedGainLossJpy);
+    public string CapitalRecoveryRate => Formatters.Percent(_summary.CapitalRecoveryRate);
+    public string Top5ConcentrationRate => Formatters.Percent(_summary.Top5ConcentrationRate);
+    public string TotalAssetDayChange => _summary.TotalAssetDayChangeJpy is null ? "比較データなし" : Formatters.SignedJpy(_summary.TotalAssetDayChangeJpy.Value);
+    public string TotalAssetMonthChange => _summary.TotalAssetMonthChangeJpy is null ? "比較データなし" : Formatters.SignedJpy(_summary.TotalAssetMonthChangeJpy.Value);
     public double AnnualGoalProgressValue => (double)Math.Min(Math.Max(_summary.AnnualGoalAchievementRate, 0m), 100m);
     public string MarketDataStatus => $"USD/JPY {CurrentUsdJpy} / 為替更新 {ExchangeRateAcquiredAt}";
     public string DataUpdateStatus => string.IsNullOrWhiteSpace(_summary.ExchangeRateSource)
         ? "データ取得元: 未取得"
         : $"データ取得元: {_summary.ExchangeRateSource}";
     public IReadOnlyList<string> CompositionModes { get; }
+    public ICommand RecordSnapshotCommand { get; }
     public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
+    public ObservableCollection<PortfolioSnapshotRowViewModel> PortfolioHistoryRows { get; } = new();
     public ObservableCollection<ChartBarRowViewModel> CompositionBars { get; } = new();
 
     public string SelectedCompositionMode
@@ -56,11 +70,15 @@ public sealed class DashboardViewModel : ObservableObject
         }
     }
 
-    public void Update(DashboardSummary summary, IReadOnlyList<StockSnapshot> snapshots)
+    public void Update(
+        DashboardSummary summary,
+        IReadOnlyList<StockSnapshot> snapshots,
+        IReadOnlyList<PortfolioSnapshot> portfolioSnapshots)
     {
         _summary = summary;
         _snapshots = snapshots;
         RebuildAssetBars();
+        RebuildPortfolioHistoryRows(portfolioSnapshots);
         RebuildCompositionBars();
         RefreshAllProperties();
     }
@@ -86,6 +104,21 @@ public sealed class DashboardViewModel : ObservableObject
         AssetBars.Add(new ChartBarRowViewModel("総資産", _summary.TotalCurrentMarketValueJpy, max));
         AssetBars.Add(new ChartBarRowViewModel("投資元本", _summary.TotalPurchaseAmountJpy, max));
         AssetBars.Add(new ChartBarRowViewModel("含み損益", _summary.TotalUnrealizedGainJpy, max, signed: true));
+    }
+
+    private void RebuildPortfolioHistoryRows(IReadOnlyList<PortfolioSnapshot> portfolioSnapshots)
+    {
+        PortfolioHistoryRows.Clear();
+        var values = portfolioSnapshots
+            .OrderByDescending(x => x.SnapshotDate)
+            .Take(20)
+            .OrderBy(x => x.SnapshotDate)
+            .ToList();
+        var max = values.Count == 0 ? 0m : values.Max(x => x.TotalMarketValueJpy);
+        foreach (var value in values)
+        {
+            PortfolioHistoryRows.Add(new PortfolioSnapshotRowViewModel(value, max));
+        }
     }
 
     private void RebuildCompositionBars()

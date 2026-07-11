@@ -116,21 +116,35 @@
                 </Grid.ColumnDefinitions>
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="月別配当グラフ" Style="{StaticResource SectionTitleStyle}" />
-                        <ItemsControl ItemsSource="{Binding MonthlyBars}" Height="260" Margin="0,12,0,0">
+                        <TextBlock Text="月別配当グラフ（実績・予定・前年・目標）" Style="{StaticResource SectionTitleStyle}" />
+                        <ItemsControl ItemsSource="{Binding MonthlyBreakdownRows}" Height="320" Margin="0,12,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Margin="0,3">
+                                    <Grid Margin="0,4" ToolTip="{Binding ToolTip}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="54" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="120" />
+                                            <ColumnDefinition Width="150" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="{Binding Label}" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                        <Grid Grid.Column="1" Height="16" Background="{DynamicResource ElevatedSurfaceBrush}" VerticalAlignment="Center">
-                                            <Border Width="{Binding BarWidth}" Background="{DynamicResource AccentBlueBrush}" HorizontalAlignment="Left" />
-                                        </Grid>
-                                        <TextBlock Grid.Column="2" Text="{Binding AmountJpy}" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                        <StackPanel Grid.Column="1">
+                                            <Grid Height="8" Background="{DynamicResource ElevatedSurfaceBrush}" Margin="0,0,0,2">
+                                                <Border Width="{Binding ActualBarWidth}" Background="{DynamicResource AccentBlueBrush}" HorizontalAlignment="Left" CornerRadius="4" />
+                                            </Grid>
+                                            <Grid Height="8" Background="{DynamicResource ElevatedSurfaceBrush}" Margin="0,0,0,2">
+                                                <Border Width="{Binding PlannedBarWidth}" Background="{DynamicResource DividendBrush}" HorizontalAlignment="Left" CornerRadius="4" />
+                                            </Grid>
+                                            <Grid Height="6" Background="{DynamicResource ElevatedSurfaceBrush}" Margin="0,0,0,2">
+                                                <Border Width="{Binding PreviousBarWidth}" Background="{DynamicResource NeutralBrush}" HorizontalAlignment="Left" CornerRadius="3" />
+                                            </Grid>
+                                            <Grid Height="4" Background="{DynamicResource ElevatedSurfaceBrush}">
+                                                <Border Width="{Binding GoalBarWidth}" Background="{DynamicResource WarningBrush}" HorizontalAlignment="Left" CornerRadius="2" />
+                                            </Grid>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                                            <TextBlock Text="{Binding Forecast}" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Planned, StringFormat=予定 {0}}" HorizontalAlignment="Right" Style="{StaticResource SubtleTextStyle}" />
+                                        </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -170,11 +184,15 @@
 
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="銘柄別配当ランキング" Style="{StaticResource SectionTitleStyle}" />
-                        <DataGrid ItemsSource="{Binding Ranking}" Height="260">
+                        <TextBlock Text="{Binding RankingTitle}" Style="{StaticResource SectionTitleStyle}" />
+                        <DataGrid ItemsSource="{Binding DividendRankingRows}" Height="260">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="銘柄" Binding="{Binding Label}" Width="*" />
-                                <DataGridTextColumn Header="配当合計" Binding="{Binding AmountJpy}" Width="160" />
+                                <DataGridTextColumn Header="#" Binding="{Binding Rank}" Width="54" />
+                                <DataGridTextColumn Header="コード" Binding="{Binding Ticker}" Width="90" />
+                                <DataGridTextColumn Header="銘柄" Binding="{Binding Name}" Width="*" />
+                                <DataGridTextColumn Header="金額" Binding="{Binding AmountJpy}" Width="130" />
+                                <DataGridTextColumn Header="構成比" Binding="{Binding ShareOfTotal}" Width="100" />
+                                <DataGridTextColumn Header="前年差" Binding="{Binding PreviousYearDifference}" Width="120" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </StackPanel>

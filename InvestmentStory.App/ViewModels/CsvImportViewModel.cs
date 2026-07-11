@@ -20,6 +20,7 @@ public sealed class CsvImportViewModel : ObservableObject
     private readonly Func<StockPosition, int>? _savePosition;
     private readonly Func<DividendPayment, int>? _saveDividend;
     private readonly Func<IReadOnlyList<DividendPayment>>? _getDividendPayments;
+    private readonly Action<IReadOnlyList<BrokerTradeRecord>>? _saveBrokerTrades;
     private readonly Action? _afterImport;
     private readonly List<string> _selectedFilePaths = new();
     private string _message = string.Empty;
@@ -31,12 +32,14 @@ public sealed class CsvImportViewModel : ObservableObject
         Func<StockPosition, int>? savePosition = null,
         Func<DividendPayment, int>? saveDividend = null,
         Func<IReadOnlyList<DividendPayment>>? getDividendPayments = null,
+        Action<IReadOnlyList<BrokerTradeRecord>>? saveBrokerTrades = null,
         Action? afterImport = null)
     {
         _getPositions = getPositions;
         _savePosition = savePosition;
         _saveDividend = saveDividend;
         _getDividendPayments = getDividendPayments;
+        _saveBrokerTrades = saveBrokerTrades;
         _afterImport = afterImport;
         BrowseCommand = new RelayCommand(Browse);
         PreviewCommand = new RelayCommand(Preview);
@@ -444,7 +447,7 @@ public sealed class CsvImportViewModel : ObservableObject
 
             var positions = _getPositions().ToList();
             var positionByKey = positions
-                .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
             var existingDividends = _getDividendPayments().ToList();
             var reconciliationService = new DividendReconciliationService();
@@ -457,11 +460,11 @@ public sealed class CsvImportViewModel : ObservableObject
 
             foreach (var record in records)
             {
-                var positionKey = BuildPositionKey(record.Broker, record.Ticker);
+                var positionKey = BuildPositionKey(record.Broker, record.Ticker, record.Account);
                 if (!positionByKey.TryGetValue(positionKey, out var position))
                 {
                     var relatedRecords = records
-                        .Where(x => string.Equals(BuildPositionKey(x.Broker, x.Ticker), positionKey, StringComparison.OrdinalIgnoreCase))
+                        .Where(x => string.Equals(BuildPositionKey(x.Broker, x.Ticker, x.Account), positionKey, StringComparison.OrdinalIgnoreCase))
                         .ToList();
                     position = CreateDividendOnlyPosition(record, relatedRecords);
                     position.Stock.Id = _savePosition(position);
@@ -522,10 +525,10 @@ public sealed class CsvImportViewModel : ObservableObject
 
             var positions = _getPositions().ToList();
             var positionByKey = positions
-                .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
             var dividendsByKey = statement.Dividends
-                .GroupBy(x => BuildPositionKey(x.Broker, x.Ticker), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => (IReadOnlyList<BrokerDividendRecord>)x.ToList(), StringComparer.OrdinalIgnoreCase);
 
             var createdStocks = 0;
@@ -534,7 +537,7 @@ public sealed class CsvImportViewModel : ObservableObject
             var skippedTradeGroups = 0;
             var createdReferenceStocks = 0;
             var holdingKeys = statement.Holdings
-                .Select(x => BuildPositionKey(x.Broker, x.Ticker))
+                .Select(x => BuildPositionKey(x.Broker, x.Ticker, x.Account))
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -543,7 +546,7 @@ public sealed class CsvImportViewModel : ObservableObject
                 var mergeResult = _holdingMergeService.MergeHoldings(positions, statement.Holdings, DateTime.Now);
                 foreach (var decision in mergeResult.Decisions)
                 {
-                    var positionKey = BuildPositionKey(decision.Source.Broker, decision.Source.Ticker);
+                    var positionKey = BuildPositionKey(decision.Source.Broker, decision.Source.Ticker, decision.Source.Account);
                     if (decision.Merged is null)
                     {
                         reviewHoldings++;
@@ -567,7 +570,7 @@ public sealed class CsvImportViewModel : ObservableObject
             if (statement.CanUpdateHoldings)
             {
                 foreach (var tradeGroup in statement.Trades
-                             .GroupBy(x => BuildPositionKey(x.Broker, x.Ticker), StringComparer.OrdinalIgnoreCase)
+                             .GroupBy(x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase)
                              .OrderBy(x => x.Key))
                 {
                     if (holdingKeys.Contains(tradeGroup.Key) ||
@@ -610,7 +613,7 @@ public sealed class CsvImportViewModel : ObservableObject
 
             foreach (var record in statement.Dividends)
             {
-                var positionKey = BuildPositionKey(record.Broker, record.Ticker);
+                var positionKey = BuildPositionKey(record.Broker, record.Ticker, record.Account);
                 if (!positionByKey.TryGetValue(positionKey, out var position))
                 {
                     var relatedRecords = dividendsByKey.TryGetValue(positionKey, out var group)
@@ -649,6 +652,7 @@ public sealed class CsvImportViewModel : ObservableObject
                 }
             }
 
+            _saveBrokerTrades?.Invoke(statement.Trades);
             _afterImport?.Invoke();
             AddStatementSummaryLogs(statement);
             ImportLogs.Add($"保有反映: 新規 {createdStocks}件 / 更新 {updatedStocks}件 / 要確認 {reviewHoldings}件 / 取引復元見送り {skippedTradeGroups}件");
@@ -740,6 +744,8 @@ public sealed class CsvImportViewModel : ObservableObject
                 Country = currency == "JPY" ? "日本" : "米国",
                 Currency = currency,
                 Broker = identity.Broker,
+                AccountType = AccountTypeNormalizer.Normalize(identity.Account),
+                CustodyType = identity.Account,
                 DataSource = sourceLabel,
                 Memo = BuildTradeSummaryMemo(trades, reconstruction)
             },
@@ -802,6 +808,8 @@ public sealed class CsvImportViewModel : ObservableObject
         position.Stock.Country = currency == "JPY" ? "日本" : "米国";
         position.Stock.Currency = currency;
         position.Stock.Broker = trades[0].Broker;
+        position.Stock.AccountType = AccountTypeNormalizer.Normalize(trades[0].Account);
+        position.Stock.CustodyType = trades[0].Account;
         position.Stock.DataSource = sourceLabel;
         position.Stock.Memo = BuildTradeSummaryMemo(trades, reconstruction);
 
@@ -858,6 +866,8 @@ public sealed class CsvImportViewModel : ObservableObject
         position.Stock.Country = currency == "JPY" ? "日本" : "米国";
         position.Stock.Currency = currency;
         position.Stock.Broker = latestDividend.Broker;
+        position.Stock.AccountType = AccountTypeNormalizer.Normalize(latestDividend.Account);
+        position.Stock.CustodyType = latestDividend.Account;
         position.Stock.DataSource = string.IsNullOrWhiteSpace(latestDividend.Source) ? "配当CSV" : latestDividend.Source;
 
         position.CurrentHolding.CurrentExchangeRate = exchangeRate;
@@ -896,6 +906,8 @@ public sealed class CsvImportViewModel : ObservableObject
                 Country = currency == "JPY" ? "日本" : "米国",
                 Currency = currency,
                 Broker = record.Broker,
+                AccountType = AccountTypeNormalizer.Normalize(record.Account),
+                CustodyType = record.Account,
                 DataSource = string.IsNullOrWhiteSpace(record.Source) ? "配当CSV" : record.Source,
                 Memo = "配当CSV取込時に自動作成"
             },
@@ -1164,7 +1176,7 @@ public sealed class CsvImportViewModel : ObservableObject
             NetAmountJpy = netAmountJpy,
             JpyAmount = netAmountJpy,
             IsTaxEstimated = false,
-            IsNisa = accountType == DividendConstants.AccountNisa,
+            IsNisa = DividendConstants.IsNisaAccount(accountType),
             IsForeignStock = currency != "JPY",
             CreatedAt = DateTime.Now,
             UpdatedAt = DateTime.Now,
@@ -1203,11 +1215,12 @@ public sealed class CsvImportViewModel : ObservableObject
         ReplacedSchedule
     }
 
-    private static string BuildPositionKey(string broker, string ticker)
+    private static string BuildPositionKey(string broker, string ticker, string account = "")
     {
         var normalizedBroker = SecuritySymbolNormalizer.NormalizeBroker(broker);
         var normalizedTicker = NormalizeTicker(ticker);
-        return $"{normalizedBroker}|{normalizedTicker}";
+        var normalizedAccount = AccountTypeNormalizer.Normalize(account);
+        return $"{normalizedBroker}|{normalizedTicker}|{normalizedAccount}";
     }
 
     private IReadOnlyList<string> GetTargetFilePaths()

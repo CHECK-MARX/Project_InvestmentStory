@@ -1,5 +1,7 @@
 namespace InvestmentStory.Core.Services;
 
+using InvestmentStory.Core.Models;
+
 public static class DividendConstants
 {
     public const string Planned = "Planned";
@@ -16,10 +18,10 @@ public static class DividendConstants
     public const string SourceEstimatedFromAnnualDividend = "EstimatedFromAnnualDividend";
     public const string SourceImportedFromBroker = "ImportedFromBroker";
 
-    public const string AccountNisa = "NISA";
-    public const string AccountSpecific = "Specific";
-    public const string AccountGeneral = "General";
-    public const string AccountUnknown = "Unknown";
+    public const string AccountNisa = AccountTypes.NisaGrowth;
+    public const string AccountSpecific = AccountTypes.Specific;
+    public const string AccountGeneral = AccountTypes.General;
+    public const string AccountUnknown = AccountTypes.Unknown;
 
     public static bool IsActual(string status) =>
         string.IsNullOrWhiteSpace(status) ||
@@ -34,31 +36,7 @@ public static class DividendConstants
     public static bool IsVisibleActual(string status) =>
         IsActual(status);
 
-    public static string NormalizeAccountType(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return AccountUnknown;
-        }
+    public static string NormalizeAccountType(string value) => AccountTypeNormalizer.Normalize(value);
 
-        var normalized = value.Trim();
-        if (normalized.Contains("NISA", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Contains("成長投資", StringComparison.Ordinal) ||
-            normalized.Contains("つみたて", StringComparison.Ordinal))
-        {
-            return AccountNisa;
-        }
-
-        if (normalized.Contains("特定", StringComparison.Ordinal))
-        {
-            return AccountSpecific;
-        }
-
-        if (normalized.Contains("一般", StringComparison.Ordinal))
-        {
-            return AccountGeneral;
-        }
-
-        return AccountUnknown;
-    }
+    public static bool IsNisaAccount(string value) => AccountTypes.IsNisa(value);
 }

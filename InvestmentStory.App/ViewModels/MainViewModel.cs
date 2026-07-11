@@ -13,6 +13,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly InvestmentCalculator _calculator = new();
     private readonly StoryGenerator _storyGenerator = new();
     private readonly DividendScheduleService _dividendScheduleService = new();
+    private readonly PortfolioAnalyticsService _portfolioAnalyticsService = new();
+    private readonly DataQualityService _dataQualityService = new();
     private readonly IExchangeRateService _exchangeRateService;
     private readonly IMarketDataService _marketDataService = new MarketDataProviderFactory();
     private readonly IStockLookupService _stockLookupService = new CompositeStockLookupService(
@@ -33,7 +35,7 @@ public sealed class MainViewModel : ObservableObject
         _isSidebarCollapsed = settings.IsSidebarCollapsed;
         _exchangeRateService = new ExchangeRateProviderFactory(_repository.GetSettings);
 
-        Dashboard = new DashboardViewModel();
+        Dashboard = new DashboardViewModel(RecordCurrentPortfolioSnapshot);
         SimpleRegistration = new SimpleRegistrationViewModel(
             SaveStock,
             _calculator,
@@ -67,6 +69,7 @@ public sealed class MainViewModel : ObservableObject
             _repository.SavePosition,
             payment => _repository.SaveDividendPayment(payment),
             _repository.GetDividendPayments,
+            _repository.SaveBrokerTrades,
             LoadData);
         BrokerIntegration = new BrokerIntegrationViewModel(
             _repository.GetSettings,
@@ -180,25 +183,89 @@ public sealed class MainViewModel : ObservableObject
         _snapshots = positions.Select(_calculator.CreateSnapshot).ToList();
         var dividends = _repository.GetDividendPayments();
         var goal = _repository.GetGoal(DateTime.Today.Year);
+        var realizedGainLossJpy = _repository.GetAllBrokerTrades().Sum(x => x.RealizedGainLossJpy);
+        var returnSummary = _portfolioAnalyticsService.BuildReturnSummary(_snapshots, dividends, realizedGainLossJpy);
+        SaveCurrentPortfolioSnapshot(dividends, realizedGainLossJpy, usdJpyQuote);
+        var portfolioSnapshots = _repository.GetPortfolioSnapshots();
+        var comparison = _portfolioAnalyticsService.CompareSnapshots(portfolioSnapshots, DateTime.Today);
         var summary = _calculator.CreateDashboardSummary(
             _snapshots,
             dividends,
             goal,
             DateTime.Today,
-            IsLiveExchangeRate(usdJpyQuote) ? usdJpyQuote : null);
+            IsLiveExchangeRate(usdJpyQuote) ? usdJpyQuote : null,
+            returnSummary,
+            comparison);
         var monthly = _calculator.AggregateMonthlyDividends(dividends, DateTime.Today.Year);
         var yearly = _calculator.AggregateYearlyDividends(dividends);
         var byStock = _calculator.AggregateDividendsByStock(dividends);
+        var monthlyBreakdown = _portfolioAnalyticsService.BuildMonthlyDividendBreakdown(
+            dividends,
+            DateTime.Today.Year,
+            goal?.MonthlyPassiveIncomeGoal ?? 0m);
+        var dividendRanking = _portfolioAnalyticsService.BuildDividendRanking(
+            dividends,
+            "今年実績",
+            DateTime.Today.Year);
 
-        Dashboard.Update(summary, _snapshots);
+        SaveDataQuality(positions);
+
+        Dashboard.Update(summary, _snapshots, portfolioSnapshots);
         StockList.Update(_snapshots, dividends);
         Dividends.Update(positions, dividends);
-        PassiveIncome.Update(summary, goal, monthly, yearly, byStock);
+        PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRanking);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
         var detailSnapshot = ResolveDetailSnapshot();
-        StockDetail.Update(detailSnapshot, detailSnapshot is null ? null : _storyGenerator.Generate(detailSnapshot));
+        UpdateStockDetail(detailSnapshot);
+    }
+
+    private void RecordCurrentPortfolioSnapshot()
+    {
+        var dividends = _repository.GetDividendPayments();
+        var realizedGainLossJpy = _repository.GetAllBrokerTrades().Sum(x => x.RealizedGainLossJpy);
+        SaveCurrentPortfolioSnapshot(dividends, realizedGainLossJpy, _exchangeRateService.GetUsdJpyRate());
+        LoadData();
+    }
+
+    private void SaveCurrentPortfolioSnapshot(
+        IReadOnlyList<DividendPayment> dividends,
+        decimal realizedGainLossJpy,
+        ExchangeRateQuote usdJpyQuote)
+    {
+        var snapshot = _portfolioAnalyticsService.CreatePortfolioSnapshot(
+            _snapshots,
+            dividends,
+            realizedGainLossJpy,
+            ResolveSnapshotUsdRate(usdJpyQuote),
+            DateTime.Today);
+        _repository.SavePortfolioSnapshot(snapshot);
+    }
+
+    private decimal ResolveSnapshotUsdRate(ExchangeRateQuote quote)
+    {
+        if (quote.Rate > 0m)
+        {
+            return quote.Rate;
+        }
+
+        return _snapshots
+            .Where(x => x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Position.CurrentHolding.CurrentExchangeRate)
+            .FirstOrDefault(x => x > 0m);
+    }
+
+    private void SaveDataQuality(IReadOnlyList<StockPosition> positions)
+    {
+        var items = positions
+            .Where(x => x.Stock.Id > 0)
+            .SelectMany(x => _dataQualityService.BuildForPosition(x, DateTime.Today))
+            .ToList();
+        if (items.Count > 0)
+        {
+            _repository.SaveDataQualityInfos(items);
+        }
     }
 
     private bool ApplyLatestExchangeRate(IReadOnlyList<StockPosition> positions, ExchangeRateQuote quote)
@@ -316,8 +383,23 @@ public sealed class MainViewModel : ObservableObject
     {
         _selectedDetailStockId = stockId;
         var snapshot = _snapshots.FirstOrDefault(x => x.Position.Stock.Id == stockId);
-        StockDetail.Update(snapshot, snapshot is null ? null : _storyGenerator.Generate(snapshot));
+        UpdateStockDetail(snapshot);
         Navigate(StockDetail, "銘柄詳細");
+    }
+
+    private void UpdateStockDetail(StockSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            StockDetail.Update(null, null, Array.Empty<BrokerTrade>(), Array.Empty<DataQualityInfo>());
+            return;
+        }
+
+        StockDetail.Update(
+            snapshot,
+            _storyGenerator.Generate(snapshot),
+            _repository.GetBrokerTrades(snapshot.Position.Stock.Id),
+            _repository.GetDataQualityInfos(snapshot.Position.Stock.Id));
     }
 
     private void RefreshSelectedMarketData(int stockId)

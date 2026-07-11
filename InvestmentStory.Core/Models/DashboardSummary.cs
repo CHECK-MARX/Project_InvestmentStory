@@ -33,4 +33,12 @@ public sealed class DashboardSummary
     public decimal MonthlyGoalAchievementRate { get; init; }
     public decimal AnnualGoalGapJpy { get; init; }
     public decimal MonthlyGoalGapJpy { get; init; }
+    public decimal RealizedGainLossJpy { get; init; }
+    public decimal CumulativeDividendJpy { get; init; }
+    public decimal TotalReturnJpy { get; init; }
+    public decimal TotalReturnRate { get; init; }
+    public decimal CapitalRecoveryRate { get; init; }
+    public decimal Top5ConcentrationRate { get; init; }
+    public decimal? TotalAssetDayChangeJpy { get; init; }
+    public decimal? TotalAssetMonthChangeJpy { get; init; }
 }

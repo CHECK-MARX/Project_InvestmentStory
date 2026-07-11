@@ -215,30 +215,106 @@
                 </TabItem>
 
                 <TabItem Header="取引履歴">
-                    <Border Style="{StaticResource MetricCardStyle}" Margin="4,16,4,4">
-                        <TextBlock Text="買付、売却、入庫、分割、平均取得単価の変化、実現損益は次の段階で取引履歴ViewModelと接続します。"
-                                   Foreground="{DynamicResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" />
-                    </Border>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,16,4,4">
+                            <UniformGrid Columns="6">
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="累計買付額" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding TotalBuyAmountJpy}" FontSize="18" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="累計売却額" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding TotalSaleAmountJpy}" FontSize="18" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="現在数量" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding CurrentTradeQuantity}" FontSize="18" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="平均取得単価" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding AverageTradeCost}" FontSize="18" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="実現損益" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding RealizedGainLossJpy}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ProfitBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="取引件数" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding TradeCount}" FontSize="18" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+                            <TextBlock Text="{Binding TradeDataWarning}"
+                                       Foreground="{DynamicResource WarningBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="4,8,4,10" />
+                            <DataGrid ItemsSource="{Binding TradeRows}" Height="360">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="約定日" Binding="{Binding TradeDate}" Width="100" />
+                                    <DataGridTextColumn Header="受渡日" Binding="{Binding SettlementDate}" Width="100" />
+                                    <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="110" />
+                                    <DataGridTextColumn Header="口座区分" Binding="{Binding AccountType}" Width="130" />
+                                    <DataGridTextColumn Header="取引種別" Binding="{Binding TradeType}" Width="100" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
+                                    <DataGridTextColumn Header="単価" Binding="{Binding UnitPrice}" Width="120" />
+                                    <DataGridTextColumn Header="通貨" Binding="{Binding Currency}" Width="70" />
+                                    <DataGridTextColumn Header="為替" Binding="{Binding ExchangeRate}" Width="80" />
+                                    <DataGridTextColumn Header="円換算額" Binding="{Binding SettlementAmountJpy}" Width="130" />
+                                    <DataGridTextColumn Header="手数料" Binding="{Binding FeeJpy}" Width="110" />
+                                    <DataGridTextColumn Header="税金" Binding="{Binding TaxJpy}" Width="110" />
+                                    <DataGridTextColumn Header="実現損益" Binding="{Binding RealizedGainLossJpy}" Width="130" />
+                                    <DataGridTextColumn Header="取引後数量" Binding="{Binding AfterTradeQuantity}" Width="110" />
+                                    <DataGridTextColumn Header="取引後平均" Binding="{Binding AfterTradeAverageCost}" Width="130" />
+                                    <DataGridTextColumn Header="データ元" Binding="{Binding Source}" Width="140" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="データ情報">
-                    <UniformGrid Columns="2" Margin="4,16,4,4">
-                        <Border Style="{StaticResource MetricCardStyle}">
-                            <StackPanel>
-                                <TextBlock Text="株価取得元" Style="{StaticResource LabelTextStyle}" />
-                                <TextBlock Text="{Binding CurrentPriceSource}" FontSize="18" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding CurrentPriceAcquiredAt}" Style="{StaticResource SubtleTextStyle}" />
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource MetricCardStyle}">
-                            <StackPanel>
-                                <TextBlock Text="配当情報取得元" Style="{StaticResource LabelTextStyle}" />
-                                <TextBlock Text="{Binding DividendInfoSource}" FontSize="18" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding DividendInfoAcquiredAt}" Style="{StaticResource SubtleTextStyle}" />
-                            </StackPanel>
-                        </Border>
-                    </UniformGrid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,16,4,4">
+                            <UniformGrid Columns="2">
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="株価取得元" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding CurrentPriceSource}" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding CurrentPriceAcquiredAt}" Style="{StaticResource SubtleTextStyle}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="配当情報取得元" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding DividendInfoSource}" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding DividendInfoAcquiredAt}" Style="{StaticResource SubtleTextStyle}" />
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+                            <TextBlock Text="項目別データ品質" Style="{StaticResource SectionTitleStyle}" Margin="4,12,4,8" />
+                            <DataGrid ItemsSource="{Binding DataQualityRows}" Height="360">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="項目" Binding="{Binding FieldName}" Width="160" />
+                                    <DataGridTextColumn Header="取得元種別" Binding="{Binding SourceType}" Width="130" />
+                                    <DataGridTextColumn Header="取得元" Binding="{Binding SourceName}" Width="180" />
+                                    <DataGridTextColumn Header="取得日時" Binding="{Binding RetrievedAt}" Width="150" />
+                                    <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="120" />
+                                    <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
             </TabControl>
         </Border>

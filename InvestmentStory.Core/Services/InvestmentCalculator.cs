@@ -90,7 +90,9 @@ public sealed class InvestmentCalculator
         IEnumerable<DividendPayment> dividendPayments,
         IncomeGoal? goal,
         DateTime asOf,
-        ExchangeRateQuote? usdJpyQuote = null)
+        ExchangeRateQuote? usdJpyQuote = null,
+        PortfolioReturnSummary? returnSummary = null,
+        SnapshotComparison? comparison = null)
     {
         var snapshotList = snapshots.ToList();
         var dividendList = dividendPayments.ToList();
@@ -181,7 +183,15 @@ public sealed class InvestmentCalculator
             AnnualGoalAchievementRate = goal is null ? 0m : CalculateRate(thisYearActual, goal.AnnualPassiveIncomeGoal),
             MonthlyGoalAchievementRate = goal is null ? 0m : CalculateRate(thisMonthActual, goal.MonthlyPassiveIncomeGoal),
             AnnualGoalGapJpy = goal is null ? 0m : Math.Max(0m, goal.AnnualPassiveIncomeGoal - thisYearActual),
-            MonthlyGoalGapJpy = goal is null ? 0m : Math.Max(0m, goal.MonthlyPassiveIncomeGoal - thisMonthActual)
+            MonthlyGoalGapJpy = goal is null ? 0m : Math.Max(0m, goal.MonthlyPassiveIncomeGoal - thisMonthActual),
+            RealizedGainLossJpy = returnSummary?.RealizedGainLossJpy ?? 0m,
+            CumulativeDividendJpy = returnSummary?.CumulativeDividendJpy ?? actualDividends.Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
+            TotalReturnJpy = returnSummary?.TotalReturnJpy ?? totalGainJpy,
+            TotalReturnRate = returnSummary?.TotalReturnRate ?? CalculateRate(totalGainJpy, totalPurchaseAmountJpy),
+            CapitalRecoveryRate = returnSummary?.CapitalRecoveryRate ?? 0m,
+            Top5ConcentrationRate = returnSummary?.Top5ConcentrationRate ?? 0m,
+            TotalAssetDayChangeJpy = comparison?.TotalAssetDayChangeJpy,
+            TotalAssetMonthChangeJpy = comparison?.TotalAssetMonthChangeJpy
         };
     }
 
