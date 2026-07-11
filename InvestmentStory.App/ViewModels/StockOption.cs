@@ -7,4 +7,6 @@ public sealed class StockOption
     public string Currency { get; init; } = "USD";
     public string Broker { get; init; } = string.Empty;
     public decimal ExchangeRate { get; init; } = 1m;
+
+    public override string ToString() => Display;
 }

@@ -7,6 +7,7 @@ public sealed class DataQualityRowViewModel
     public DataQualityRowViewModel(DataQualityInfo info)
     {
         FieldName = info.FieldName;
+        Value = string.IsNullOrWhiteSpace(info.Value) ? "-" : info.Value;
         SourceType = info.SourceType;
         SourceName = info.SourceName;
         RetrievedAt = info.RetrievedAt == DateTime.MinValue ? "未取得" : info.RetrievedAt.ToString("yyyy/MM/dd HH:mm");
@@ -15,6 +16,7 @@ public sealed class DataQualityRowViewModel
     }
 
     public string FieldName { get; }
+    public string Value { get; }
     public string SourceType { get; }
     public string SourceName { get; }
     public string RetrievedAt { get; }

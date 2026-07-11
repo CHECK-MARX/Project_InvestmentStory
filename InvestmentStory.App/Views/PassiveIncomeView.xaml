@@ -184,13 +184,20 @@
 
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="{Binding RankingTitle}" Style="{StaticResource SectionTitleStyle}" />
+                        <DockPanel Margin="0,0,0,8">
+                            <ComboBox DockPanel.Dock="Right"
+                                      ItemsSource="{Binding RankingModes}"
+                                      SelectedItem="{Binding SelectedRankingMode, Mode=TwoWay}"
+                                      Width="220" />
+                            <TextBlock Text="{Binding RankingTitle}" Style="{StaticResource SectionTitleStyle}" />
+                        </DockPanel>
                         <DataGrid ItemsSource="{Binding DividendRankingRows}" Height="260">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="#" Binding="{Binding Rank}" Width="54" />
                                 <DataGridTextColumn Header="コード" Binding="{Binding Ticker}" Width="90" />
                                 <DataGridTextColumn Header="銘柄" Binding="{Binding Name}" Width="*" />
                                 <DataGridTextColumn Header="金額" Binding="{Binding AmountJpy}" Width="130" />
+                                <DataGridTextColumn Header="利回り/成長率" Binding="{Binding Rate}" Width="130" />
                                 <DataGridTextColumn Header="構成比" Binding="{Binding ShareOfTotal}" Width="100" />
                                 <DataGridTextColumn Header="前年差" Binding="{Binding PreviousYearDifference}" Width="120" />
                             </DataGrid.Columns>

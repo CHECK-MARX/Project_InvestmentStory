@@ -10,6 +10,9 @@ public sealed class PassiveIncomeViewModel : ObservableObject
     private readonly Action<IncomeGoal> _saveGoal;
     private DashboardSummary _summary = new();
     private string _goalMessage = string.Empty;
+    private string _selectedRankingMode = "今年実績";
+    private IReadOnlyDictionary<string, IReadOnlyList<DividendRankingItem>> _rankingsByMode =
+        new Dictionary<string, IReadOnlyList<DividendRankingItem>>();
 
     public PassiveIncomeViewModel(Action<IncomeGoal> saveGoal)
     {
@@ -45,7 +48,36 @@ public sealed class PassiveIncomeViewModel : ObservableObject
 
     public ObservableCollection<ChartBarRowViewModel> MonthlyBars { get; } = new();
     public ObservableCollection<ChartBarRowViewModel> YearlyBars { get; } = new();
-    public string RankingTitle => $"{DateTime.Today.Year}年受取配当ランキング";
+    public string RankingTitle => $"{DateTime.Today.Year}年 {SelectedRankingMode} ランキング";
+    public IReadOnlyList<string> RankingModes { get; } =
+        new[]
+        {
+            "今年実績",
+            "今年着地見込み",
+            "現在保有ベース年間配当",
+            "累計受取配当",
+            "税引後年間見込み",
+            "取得額ベース利回り",
+            "配当成長率"
+        };
+
+    public string SelectedRankingMode
+    {
+        get => _selectedRankingMode;
+        set
+        {
+            if (!RankingModes.Contains(value))
+            {
+                value = "今年実績";
+            }
+
+            if (SetProperty(ref _selectedRankingMode, value))
+            {
+                RebuildDividendRankingRows();
+                OnPropertyChanged(nameof(RankingTitle));
+            }
+        }
+    }
 
     public int TargetYear { get; set; } = DateTime.Today.Year;
     public decimal AnnualPassiveIncomeGoal { get; set; }
@@ -65,7 +97,7 @@ public sealed class PassiveIncomeViewModel : ObservableObject
         IReadOnlyList<DividendAggregate> yearly,
         IReadOnlyList<DividendAggregate> byStock,
         IReadOnlyList<MonthlyDividendBreakdown>? monthlyBreakdown = null,
-        IReadOnlyList<DividendRankingItem>? dividendRanking = null)
+        IReadOnlyDictionary<string, IReadOnlyList<DividendRankingItem>>? dividendRankings = null)
     {
         _summary = summary;
         TargetYear = goal?.TargetYear ?? DateTime.Today.Year;
@@ -107,13 +139,24 @@ public sealed class PassiveIncomeViewModel : ObservableObject
             Ranking.Add(new DividendAggregateRowViewModel(item));
         }
 
+        _rankingsByMode = dividendRankings ?? new Dictionary<string, IReadOnlyList<DividendRankingItem>>();
+        RebuildDividendRankingRows();
+
+        RefreshAllProperties();
+    }
+
+    private void RebuildDividendRankingRows()
+    {
         DividendRankingRows.Clear();
-        foreach (var item in dividendRanking ?? Array.Empty<DividendRankingItem>())
+        if (!_rankingsByMode.TryGetValue(SelectedRankingMode, out var items))
+        {
+            items = Array.Empty<DividendRankingItem>();
+        }
+
+        foreach (var item in items)
         {
             DividendRankingRows.Add(new DividendRankingItemViewModel(item));
         }
-
-        RefreshAllProperties();
     }
 
     private void SaveGoal()

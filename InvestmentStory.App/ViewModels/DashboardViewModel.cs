@@ -10,12 +10,15 @@ public sealed class DashboardViewModel : ObservableObject
     private readonly Action _recordSnapshot;
     private DashboardSummary _summary = new();
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
+    private IReadOnlyList<PortfolioSnapshot> _portfolioSnapshots = Array.Empty<PortfolioSnapshot>();
     private string _selectedCompositionMode = "国別";
+    private string _selectedHistoryPeriod = "1年";
 
     public DashboardViewModel(Action? recordSnapshot = null)
     {
         _recordSnapshot = recordSnapshot ?? (() => { });
-        CompositionModes = new[] { "国別", "通貨別", "証券会社別" };
+        CompositionModes = new[] { "国別", "通貨別", "証券会社別", "資産種別別", "口座区分別", "セクター別" };
+        HistoryPeriods = new[] { "1か月", "3か月", "6か月", "1年", "3年", "全期間" };
         RecordSnapshotCommand = new RelayCommand(_recordSnapshot);
     }
 
@@ -53,6 +56,7 @@ public sealed class DashboardViewModel : ObservableObject
         ? "データ取得元: 未取得"
         : $"データ取得元: {_summary.ExchangeRateSource}";
     public IReadOnlyList<string> CompositionModes { get; }
+    public IReadOnlyList<string> HistoryPeriods { get; }
     public ICommand RecordSnapshotCommand { get; }
     public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
     public ObservableCollection<PortfolioSnapshotRowViewModel> PortfolioHistoryRows { get; } = new();
@@ -70,6 +74,33 @@ public sealed class DashboardViewModel : ObservableObject
         }
     }
 
+    public string SelectedHistoryPeriod
+    {
+        get => _selectedHistoryPeriod;
+        set
+        {
+            if (SetProperty(ref _selectedHistoryPeriod, value))
+            {
+                RebuildPortfolioHistoryRows(_portfolioSnapshots);
+            }
+        }
+    }
+
+    public string PortfolioHistoryMessage
+    {
+        get
+        {
+            if (PortfolioHistoryRows.Count == 0)
+            {
+                return "履歴データがまだありません。今後の起動時またはAPI/CSV更新時に日次スナップショットを記録します。";
+            }
+
+            return PortfolioHistoryRows.Count == 1
+                ? "履歴が1日分だけあります。比較グラフは今後の更新で増えていきます。"
+                : string.Empty;
+        }
+    }
+
     public void Update(
         DashboardSummary summary,
         IReadOnlyList<StockSnapshot> snapshots,
@@ -77,6 +108,7 @@ public sealed class DashboardViewModel : ObservableObject
     {
         _summary = summary;
         _snapshots = snapshots;
+        _portfolioSnapshots = portfolioSnapshots;
         RebuildAssetBars();
         RebuildPortfolioHistoryRows(portfolioSnapshots);
         RebuildCompositionBars();
@@ -109,7 +141,9 @@ public sealed class DashboardViewModel : ObservableObject
     private void RebuildPortfolioHistoryRows(IReadOnlyList<PortfolioSnapshot> portfolioSnapshots)
     {
         PortfolioHistoryRows.Clear();
+        var fromDate = ResolveHistoryStartDate(DateTime.Today);
         var values = portfolioSnapshots
+            .Where(x => fromDate is null || x.SnapshotDate.Date >= fromDate.Value)
             .OrderByDescending(x => x.SnapshotDate)
             .Take(20)
             .OrderBy(x => x.SnapshotDate)
@@ -119,6 +153,8 @@ public sealed class DashboardViewModel : ObservableObject
         {
             PortfolioHistoryRows.Add(new PortfolioSnapshotRowViewModel(value, max));
         }
+
+        OnPropertyChanged(nameof(PortfolioHistoryMessage));
     }
 
     private void RebuildCompositionBars()
@@ -168,8 +204,40 @@ public sealed class DashboardViewModel : ObservableObject
                 .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
         }
 
+        if (SelectedCompositionMode == "資産種別別")
+        {
+            return valuedSnapshots
+                .GroupBy(x => x.Position.IsMutualFund ? "投資信託" : "株式")
+                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+        }
+
+        if (SelectedCompositionMode == "口座区分別")
+        {
+            return valuedSnapshots
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.AccountType) ? "未設定" : x.Position.Stock.AccountType)
+                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+        }
+
+        if (SelectedCompositionMode == "セクター別")
+        {
+            return valuedSnapshots
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Sector) ? "未設定" : x.Position.Stock.Sector)
+                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+        }
+
         return valuedSnapshots
             .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Country) ? "未設定" : x.Position.Stock.Country)
             .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
     }
+
+    private DateTime? ResolveHistoryStartDate(DateTime today) =>
+        SelectedHistoryPeriod switch
+        {
+            "1か月" => today.AddMonths(-1),
+            "3か月" => today.AddMonths(-3),
+            "6か月" => today.AddMonths(-6),
+            "1年" => today.AddYears(-1),
+            "3年" => today.AddYears(-3),
+            _ => null
+        };
 }

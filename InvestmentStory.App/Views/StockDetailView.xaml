@@ -306,6 +306,7 @@
                             <DataGrid ItemsSource="{Binding DataQualityRows}" Height="360">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="項目" Binding="{Binding FieldName}" Width="160" />
+                                    <DataGridTextColumn Header="値" Binding="{Binding Value}" Width="150" />
                                     <DataGridTextColumn Header="取得元種別" Binding="{Binding SourceType}" Width="130" />
                                     <DataGridTextColumn Header="取得元" Binding="{Binding SourceName}" Width="180" />
                                     <DataGridTextColumn Header="取得日時" Binding="{Binding RetrievedAt}" Width="150" />

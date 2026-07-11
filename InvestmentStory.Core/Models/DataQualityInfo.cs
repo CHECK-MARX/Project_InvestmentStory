@@ -5,6 +5,7 @@ public sealed class DataQualityInfo
     public int Id { get; set; }
     public int StockId { get; set; }
     public string FieldName { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
     public string SourceType { get; set; } = DataSourceTypes.Unknown;
     public string SourceName { get; set; } = string.Empty;
     public DateTime RetrievedAt { get; set; } = DateTime.MinValue;
@@ -36,6 +37,7 @@ public static class DataQualityStates
     public const string Estimated = "Estimated";
     public const string Stale = "Stale";
     public const string Missing = "Missing";
+    public const string Failed = "Failed";
     public const string Conflict = "Conflict";
     public const string ManualOverride = "ManualOverride";
 
@@ -46,6 +48,7 @@ public static class DataQualityStates
             Reliable => "API更新済",
             Estimated => "推定",
             Stale => "期限切れ",
+            Failed => "取得失敗",
             Conflict => "差分あり",
             ManualOverride => "手入力固定",
             _ => "未取得"

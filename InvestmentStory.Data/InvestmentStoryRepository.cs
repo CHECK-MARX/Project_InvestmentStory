@@ -555,10 +555,12 @@ public sealed class InvestmentStoryRepository
         command.CommandText = """
             INSERT INTO PortfolioSnapshots
                 (SnapshotDate, TotalMarketValueJpy, TotalCostBasisJpy, UnrealizedGainLossJpy,
-                 CumulativeDividendJpy, RealizedGainLossJpy, TotalReturnJpy, UsdJpyRate, CreatedAt, UpdatedAt)
+                 CumulativeDividendJpy, RealizedGainLossJpy, TotalReturnJpy, UsdJpyRate,
+                 StockValueJpy, MutualFundValueJpy, CashValueJpy, CreatedAt, UpdatedAt)
             VALUES
                 ($snapshotDate, $totalMarketValueJpy, $totalCostBasisJpy, $unrealizedGainLossJpy,
-                 $cumulativeDividendJpy, $realizedGainLossJpy, $totalReturnJpy, $usdJpyRate, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 $cumulativeDividendJpy, $realizedGainLossJpy, $totalReturnJpy, $usdJpyRate,
+                 $stockValueJpy, $mutualFundValueJpy, $cashValueJpy, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(SnapshotDate) DO UPDATE SET
                 TotalMarketValueJpy = excluded.TotalMarketValueJpy,
                 TotalCostBasisJpy = excluded.TotalCostBasisJpy,
@@ -567,6 +569,9 @@ public sealed class InvestmentStoryRepository
                 RealizedGainLossJpy = excluded.RealizedGainLossJpy,
                 TotalReturnJpy = excluded.TotalReturnJpy,
                 UsdJpyRate = excluded.UsdJpyRate,
+                StockValueJpy = excluded.StockValueJpy,
+                MutualFundValueJpy = excluded.MutualFundValueJpy,
+                CashValueJpy = excluded.CashValueJpy,
                 UpdatedAt = CURRENT_TIMESTAMP;
             """;
         command.Parameters.AddWithValue("$snapshotDate", ToDateText(snapshot.SnapshotDate));
@@ -577,6 +582,9 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$realizedGainLossJpy", snapshot.RealizedGainLossJpy);
         command.Parameters.AddWithValue("$totalReturnJpy", snapshot.TotalReturnJpy);
         command.Parameters.AddWithValue("$usdJpyRate", snapshot.UsdJpyRate);
+        command.Parameters.AddWithValue("$stockValueJpy", snapshot.StockValueJpy);
+        command.Parameters.AddWithValue("$mutualFundValueJpy", snapshot.MutualFundValueJpy);
+        command.Parameters.AddWithValue("$cashValueJpy", snapshot.CashValueJpy);
         command.ExecuteNonQuery();
     }
 
@@ -586,7 +594,8 @@ public sealed class InvestmentStoryRepository
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, SnapshotDate, TotalMarketValueJpy, TotalCostBasisJpy, UnrealizedGainLossJpy,
-                   CumulativeDividendJpy, RealizedGainLossJpy, TotalReturnJpy, UsdJpyRate, CreatedAt, UpdatedAt
+                   CumulativeDividendJpy, RealizedGainLossJpy, TotalReturnJpy, UsdJpyRate,
+                   StockValueJpy, MutualFundValueJpy, CashValueJpy, CreatedAt, UpdatedAt
             FROM PortfolioSnapshots
             ORDER BY SnapshotDate;
             """;
@@ -606,8 +615,11 @@ public sealed class InvestmentStoryRepository
                 RealizedGainLossJpy = GetDecimalOrZero(reader, 6),
                 TotalReturnJpy = GetDecimalOrZero(reader, 7),
                 UsdJpyRate = GetDecimalOrZero(reader, 8),
-                CreatedAt = GetDateTimeOrDefault(reader, 9, DateTime.MinValue),
-                UpdatedAt = GetDateTimeOrDefault(reader, 10, DateTime.MinValue)
+                StockValueJpy = GetDecimalOrZero(reader, 9),
+                MutualFundValueJpy = GetDecimalOrZero(reader, 10),
+                CashValueJpy = GetDecimalOrZero(reader, 11),
+                CreatedAt = GetDateTimeOrDefault(reader, 12, DateTime.MinValue),
+                UpdatedAt = GetDateTimeOrDefault(reader, 13, DateTime.MinValue)
             });
         }
 
@@ -692,7 +704,7 @@ public sealed class InvestmentStoryRepository
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, StockId, FieldName, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
+            SELECT Id, StockId, FieldName, Value, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
                    IsEstimated, IsStale, HasConflict, ConflictDescription, ManualOverride, Memo
             FROM DataQualityInfos
             WHERE StockId = $stockId
@@ -709,16 +721,17 @@ public sealed class InvestmentStoryRepository
                 Id = reader.GetInt32(0),
                 StockId = reader.GetInt32(1),
                 FieldName = GetString(reader, 2),
-                SourceType = GetStringOrDefault(reader, 3, DataSourceTypes.Unknown),
-                SourceName = GetString(reader, 4),
-                RetrievedAt = GetDateTimeOrDefault(reader, 5, DateTime.MinValue),
-                ConfidenceLevel = GetStringOrDefault(reader, 6, DataQualityStates.Missing),
-                IsEstimated = GetInt32OrZero(reader, 7) == 1,
-                IsStale = GetInt32OrZero(reader, 8) == 1,
-                HasConflict = GetInt32OrZero(reader, 9) == 1,
-                ConflictDescription = GetString(reader, 10),
-                ManualOverride = GetInt32OrZero(reader, 11) == 1,
-                Memo = GetString(reader, 12)
+                Value = GetString(reader, 3),
+                SourceType = GetStringOrDefault(reader, 4, DataSourceTypes.Unknown),
+                SourceName = GetString(reader, 5),
+                RetrievedAt = GetDateTimeOrDefault(reader, 6, DateTime.MinValue),
+                ConfidenceLevel = GetStringOrDefault(reader, 7, DataQualityStates.Missing),
+                IsEstimated = GetInt32OrZero(reader, 8) == 1,
+                IsStale = GetInt32OrZero(reader, 9) == 1,
+                HasConflict = GetInt32OrZero(reader, 10) == 1,
+                ConflictDescription = GetString(reader, 11),
+                ManualOverride = GetInt32OrZero(reader, 12) == 1,
+                Memo = GetString(reader, 13)
             });
         }
 
@@ -735,12 +748,13 @@ public sealed class InvestmentStoryRepository
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO DataQualityInfos
-                    (StockId, FieldName, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
+                    (StockId, FieldName, Value, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
                      IsEstimated, IsStale, HasConflict, ConflictDescription, ManualOverride, Memo, UpdatedAt)
                 VALUES
-                    ($stockId, $fieldName, $sourceType, $sourceName, $retrievedAt, $confidenceLevel,
+                    ($stockId, $fieldName, $value, $sourceType, $sourceName, $retrievedAt, $confidenceLevel,
                      $isEstimated, $isStale, $hasConflict, $conflictDescription, $manualOverride, $memo, CURRENT_TIMESTAMP)
                 ON CONFLICT(StockId, FieldName) DO UPDATE SET
+                    Value = excluded.Value,
                     SourceType = excluded.SourceType,
                     SourceName = excluded.SourceName,
                     RetrievedAt = excluded.RetrievedAt,
@@ -755,6 +769,7 @@ public sealed class InvestmentStoryRepository
                 """;
             command.Parameters.AddWithValue("$stockId", item.StockId);
             command.Parameters.AddWithValue("$fieldName", item.FieldName);
+            command.Parameters.AddWithValue("$value", item.Value);
             command.Parameters.AddWithValue("$sourceType", item.SourceType);
             command.Parameters.AddWithValue("$sourceName", item.SourceName);
             command.Parameters.AddWithValue("$retrievedAt", ToOptionalDateText(item.RetrievedAt));

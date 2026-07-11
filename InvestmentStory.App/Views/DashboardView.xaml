@@ -133,6 +133,11 @@
                     <StackPanel>
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Content="現在値を記録" Command="{Binding RecordSnapshotCommand}" Style="{StaticResource ActionButtonStyle}" />
+                            <ComboBox DockPanel.Dock="Right"
+                                      ItemsSource="{Binding HistoryPeriods}"
+                                      SelectedItem="{Binding SelectedHistoryPeriod, Mode=TwoWay}"
+                                      Width="120"
+                                      Margin="0,0,10,0" />
                             <TextBlock Text="資産推移" Style="{StaticResource SectionTitleStyle}" />
                         </DockPanel>
                         <Border MinHeight="220" Background="{DynamicResource ElevatedSurfaceBrush}" CornerRadius="10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="20">
@@ -142,6 +147,11 @@
                                            FontSize="12"
                                            TextWrapping="Wrap"
                                            Margin="0,0,0,14" />
+                                <TextBlock Text="{Binding PortfolioHistoryMessage}"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           FontSize="13"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,10" />
                                 <ItemsControl ItemsSource="{Binding PortfolioHistoryRows}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>

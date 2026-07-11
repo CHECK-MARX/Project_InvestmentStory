@@ -203,17 +203,16 @@ public sealed class MainViewModel : ObservableObject
             dividends,
             DateTime.Today.Year,
             goal?.MonthlyPassiveIncomeGoal ?? 0m);
-        var dividendRanking = _portfolioAnalyticsService.BuildDividendRanking(
-            dividends,
-            "今年実績",
-            DateTime.Today.Year);
+        var dividendRankings = PassiveIncome.RankingModes.ToDictionary(
+            mode => mode,
+            mode => _portfolioAnalyticsService.BuildDividendRanking(dividends, mode, DateTime.Today.Year, _snapshots));
 
         SaveDataQuality(positions);
 
         Dashboard.Update(summary, _snapshots, portfolioSnapshots);
         StockList.Update(_snapshots, dividends);
         Dividends.Update(positions, dividends);
-        PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRanking);
+        PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
@@ -494,6 +493,12 @@ public sealed class MainViewModel : ObservableObject
             string.IsNullOrWhiteSpace(settings.JQuantsApiKey))
         {
             settings.JapanMarketDataProvider = "Yahoo Finance";
+        }
+
+        if (settings.UsMarketDataProvider.Equals("Alpha Vantage", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(settings.AlphaVantageApiKey))
+        {
+            settings.UsMarketDataProvider = "Yahoo Finance";
         }
 
         return settings;

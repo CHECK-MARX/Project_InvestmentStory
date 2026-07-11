@@ -26,6 +26,8 @@
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
                     <TextBlock Text="表示" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
                     <ComboBox ItemsSource="{Binding Filters}" SelectedItem="{Binding SelectedFilter, Mode=TwoWay}" Width="150" Margin="0,0,10,0" />
+                    <TextBlock Text="単位" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                    <ComboBox ItemsSource="{Binding GroupingModes}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Width="130" Margin="0,0,10,0" />
                     <TextBlock Text="列" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
                     <ComboBox ItemsSource="{Binding DisplayModes}" SelectedItem="{Binding SelectedDisplayMode, Mode=TwoWay}" Width="120" />
                 </StackPanel>
@@ -48,6 +50,26 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="コード" Binding="{Binding Ticker}" Width="100" ElementStyle="{StaticResource DataGridCellTextStyle}" />
                     <DataGridTextColumn Header="銘柄名" Binding="{Binding Name}" Width="190" ElementStyle="{StaticResource DataGridCellTextStyle}" />
+
+                    <DataGridTextColumn Header="種別" Binding="{Binding AssetTypeLabel}" Width="90"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="口座区分" Binding="{Binding AccountType}" Width="110"
+                                        ElementStyle="{StaticResource CenterCellTextStyle}"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="取得額" Binding="{Binding CostBasisJpy}" Width="130"
+                                        ElementStyle="{StaticResource RightAlignedCellTextStyle}"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="評価額" Binding="{Binding MarketValueJpy}" Width="130"
+                                        ElementStyle="{StaticResource RightAlignedCellTextStyle}"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="損益" Binding="{Binding GainLossJpy}" Width="130"
+                                        ElementStyle="{StaticResource ProfitLossCellTextStyle}"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="損益率" Binding="{Binding GainLossRateJpy}" Width="110"
+                                        ElementStyle="{StaticResource ProfitLossCellTextStyle}"
+                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
 
                     <DataGridTextColumn Header="種別" Binding="{Binding AssetTypeLabel}" Width="90"
                                         Visibility="{Binding Data.ShowFundColumns, Source={StaticResource VmProxy}}" />
@@ -86,19 +108,19 @@
                                         Visibility="{Binding Data.ShowFundColumns, Source={StaticResource VmProxy}}" />
 
                     <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120"
-                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                                        Visibility="{Binding Data.ShowStockColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="保有株数" Binding="{Binding CurrentShares}" Width="110"
                                         ElementStyle="{StaticResource RightAlignedCellTextStyle}"
-                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                                        Visibility="{Binding Data.ShowStockColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="現在株価" Binding="{Binding CurrentPrice}" Width="120"
                                         ElementStyle="{StaticResource RightAlignedCellTextStyle}"
-                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                                        Visibility="{Binding Data.ShowStockColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="現在評価額" Binding="{Binding CurrentMarketValue}" Width="140"
                                         ElementStyle="{StaticResource RightAlignedCellTextStyle}"
-                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                                        Visibility="{Binding Data.ShowStockColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="含み損益" Binding="{Binding UnrealizedGain}" Width="130"
                                         ElementStyle="{StaticResource ProfitLossCellTextStyle}"
-                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
+                                        Visibility="{Binding Data.ShowStockColumns, Source={StaticResource VmProxy}}" />
 
                     <DataGridTextColumn Header="国" Binding="{Binding Country}" Width="80"
                                         Visibility="{Binding Data.ShowProfitColumns, Source={StaticResource VmProxy}}" />

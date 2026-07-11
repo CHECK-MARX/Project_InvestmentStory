@@ -243,6 +243,9 @@ public sealed class DatabaseInitializer
                 RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
                 TotalReturnJpy REAL NOT NULL DEFAULT 0,
                 UsdJpyRate REAL NOT NULL DEFAULT 0,
+                StockValueJpy REAL NOT NULL DEFAULT 0,
+                MutualFundValueJpy REAL NOT NULL DEFAULT 0,
+                CashValueJpy REAL NOT NULL DEFAULT 0,
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -283,6 +286,7 @@ public sealed class DatabaseInitializer
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 StockId INTEGER NOT NULL,
                 FieldName TEXT NOT NULL,
+                Value TEXT NOT NULL DEFAULT '',
                 SourceType TEXT NOT NULL DEFAULT 'Unknown',
                 SourceName TEXT NOT NULL DEFAULT '',
                 RetrievedAt TEXT NOT NULL DEFAULT '',
@@ -392,10 +396,17 @@ public sealed class DatabaseInitializer
                 RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
                 TotalReturnJpy REAL NOT NULL DEFAULT 0,
                 UsdJpyRate REAL NOT NULL DEFAULT 0,
+                StockValueJpy REAL NOT NULL DEFAULT 0,
+                MutualFundValueJpy REAL NOT NULL DEFAULT 0,
+                CashValueJpy REAL NOT NULL DEFAULT 0,
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """);
+
+        AddColumnIfMissing(connection, "PortfolioSnapshots", "StockValueJpy", "REAL NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "PortfolioSnapshots", "MutualFundValueJpy", "REAL NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "PortfolioSnapshots", "CashValueJpy", "REAL NOT NULL DEFAULT 0");
 
         Execute(connection, """
             CREATE TABLE IF NOT EXISTS BrokerTrades (
@@ -432,6 +443,7 @@ public sealed class DatabaseInitializer
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 StockId INTEGER NOT NULL,
                 FieldName TEXT NOT NULL,
+                Value TEXT NOT NULL DEFAULT '',
                 SourceType TEXT NOT NULL DEFAULT 'Unknown',
                 SourceName TEXT NOT NULL DEFAULT '',
                 RetrievedAt TEXT NOT NULL DEFAULT '',
@@ -447,6 +459,8 @@ public sealed class DatabaseInitializer
                 FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
             );
             """);
+
+        AddColumnIfMissing(connection, "DataQualityInfos", "Value", "TEXT NOT NULL DEFAULT ''");
 
         Execute(connection, """
             UPDATE Stocks

@@ -17,6 +17,12 @@ public sealed class PortfolioAnalyticsService
             .ToList();
         var cumulativeDividend = actualDividends.Sum(NetDividendJpy);
         var totalMarketValue = snapshotList.Sum(x => x.CurrentMarketValueJpy);
+        var stockValue = snapshotList
+            .Where(x => !x.Position.IsMutualFund)
+            .Sum(x => x.CurrentMarketValueJpy);
+        var mutualFundValue = snapshotList
+            .Where(x => x.Position.IsMutualFund)
+            .Sum(x => x.CurrentMarketValueJpy);
         var totalCost = snapshotList.Sum(x => x.PurchaseTotalJpy);
         var unrealized = totalMarketValue - totalCost;
 
@@ -29,7 +35,10 @@ public sealed class PortfolioAnalyticsService
             CumulativeDividendJpy = cumulativeDividend,
             RealizedGainLossJpy = realizedGainLossJpy,
             TotalReturnJpy = unrealized + realizedGainLossJpy + cumulativeDividend,
-            UsdJpyRate = usdJpyRate
+            UsdJpyRate = usdJpyRate,
+            StockValueJpy = stockValue,
+            MutualFundValueJpy = mutualFundValue,
+            CashValueJpy = 0m
         };
     }
 
@@ -71,11 +80,24 @@ public sealed class PortfolioAnalyticsService
     public IReadOnlyList<DividendRankingItem> BuildDividendRanking(
         IEnumerable<DividendPayment> dividends,
         string mode,
-        int year)
+        int year,
+        IEnumerable<StockSnapshot>? snapshots = null)
     {
         var dividendList = dividends
             .Where(x => !string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
             .ToList();
+        var snapshotList = snapshots?.ToList() ?? new List<StockSnapshot>();
+
+        if (mode is "現在保有ベース年間配当" or "税引後年間見込み" or "取得額ベース利回り")
+        {
+            return BuildSnapshotDividendRanking(snapshotList, mode);
+        }
+
+        if (mode == "配当成長率")
+        {
+            return BuildDividendGrowthRanking(dividendList, year);
+        }
+
         var current = mode switch
         {
             "今年着地見込み" => dividendList.Where(x => x.PaymentDate.Year == year && (DividendConstants.IsVisibleActual(x.DividendStatus) || DividendConstants.IsUnconfirmed(x.DividendStatus))),
@@ -114,6 +136,101 @@ public sealed class PortfolioAnalyticsService
                 PreviousYearDifferenceJpy = x.Amount - previous
             };
         }).ToList();
+    }
+
+    private static IReadOnlyList<DividendRankingItem> BuildSnapshotDividendRanking(
+        IReadOnlyList<StockSnapshot> snapshots,
+        string mode)
+    {
+        var ranked = snapshots
+            .Where(x => x.AnnualDividendForecastJpy > 0m || mode == "取得額ベース利回り")
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Ticker) ? x.Position.Stock.Name : x.Position.Stock.Ticker)
+            .Select(x =>
+            {
+                var amount = x.Sum(y => y.AnnualDividendForecastJpy);
+                var cost = x.Sum(y => y.PurchaseTotalJpy);
+                var rate = cost <= 0m ? 0m : amount / cost * 100m;
+                var afterTax = x.Sum(y => EstimateAfterTaxDividend(y));
+                return new
+                {
+                    Ticker = x.Key,
+                    Name = x.First().Position.Stock.Name,
+                    Amount = mode == "税引後年間見込み" ? afterTax : amount,
+                    Rate = rate
+                };
+            })
+            .OrderByDescending(x => mode == "取得額ベース利回り" ? x.Rate : x.Amount)
+            .Take(10)
+            .ToList();
+        var total = ranked.Sum(x => x.Amount);
+        var rank = 1;
+        return ranked.Select(x => new DividendRankingItem
+        {
+            Rank = rank++,
+            Ticker = x.Ticker,
+            Name = x.Name,
+            AmountJpy = x.Amount,
+            Rate = x.Rate,
+            ShareOfTotal = total <= 0m ? 0m : x.Amount / total * 100m
+        }).ToList();
+    }
+
+    private static IReadOnlyList<DividendRankingItem> BuildDividendGrowthRanking(
+        IReadOnlyList<DividendPayment> dividends,
+        int year)
+    {
+        var current = dividends
+            .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus) && x.PaymentDate.Year == year)
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Ticker) ? x.StockName : x.Ticker)
+            .ToDictionary(x => x.Key, x => (Name: x.First().StockName, Amount: x.Sum(NetDividendJpy)), StringComparer.OrdinalIgnoreCase);
+        var previous = dividends
+            .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus) && x.PaymentDate.Year == year - 1)
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Ticker) ? x.StockName : x.Ticker)
+            .ToDictionary(x => x.Key, x => x.Sum(NetDividendJpy), StringComparer.OrdinalIgnoreCase);
+
+        var rank = 1;
+        return current
+            .Select(x =>
+            {
+                previous.TryGetValue(x.Key, out var previousAmount);
+                var growthRate = previousAmount <= 0m ? 0m : (x.Value.Amount - previousAmount) / previousAmount * 100m;
+                return new DividendRankingItem
+                {
+                    Rank = 0,
+                    Ticker = x.Key,
+                    Name = x.Value.Name,
+                    AmountJpy = x.Value.Amount,
+                    Rate = growthRate,
+                    PreviousYearDifferenceJpy = x.Value.Amount - previousAmount
+                };
+            })
+            .OrderByDescending(x => x.Rate)
+            .Take(10)
+            .Select(x => new DividendRankingItem
+            {
+                Rank = rank++,
+                Ticker = x.Ticker,
+                Name = x.Name,
+                AmountJpy = x.AmountJpy,
+                Rate = x.Rate,
+                ShareOfTotal = x.Rate,
+                PreviousYearDifferenceJpy = x.PreviousYearDifferenceJpy
+            })
+            .ToList();
+    }
+
+    private static decimal EstimateAfterTaxDividend(StockSnapshot snapshot)
+    {
+        if (DividendConstants.IsNisaAccount(snapshot.Position.Stock.AccountType))
+        {
+            return snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+                ? snapshot.AnnualDividendForecastJpy
+                : snapshot.AnnualDividendForecastJpy * 0.9m;
+        }
+
+        return snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+            ? snapshot.AnnualDividendForecastJpy * 0.79685m
+            : snapshot.AnnualDividendForecastJpy * 0.717165m;
     }
 
     public PortfolioReturnSummary BuildReturnSummary(

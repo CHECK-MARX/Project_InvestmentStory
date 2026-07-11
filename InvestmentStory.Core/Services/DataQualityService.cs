@@ -12,6 +12,7 @@ public sealed class DataQualityService
             Create(
                 stockId,
                 "保有数量",
+                FormatQuantity(position),
                 ResolveSourceType(position.Stock.DataSource),
                 position.Stock.DataSource,
                 position.CurrentHolding.UpdatedAt,
@@ -20,6 +21,7 @@ public sealed class DataQualityService
             Create(
                 stockId,
                 "平均取得単価",
+                position.IsMutualFund ? $"{position.MutualFund.AverageCostNav:N0}" : $"{position.Purchase.UnitPrice:N2}",
                 ResolveSourceType(position.Purchase.ExchangeRateInputType == "CSV" ? position.Purchase.ExchangeRateSource : position.Stock.DataSource),
                 position.Purchase.ExchangeRateSource,
                 position.Purchase.PurchaseDate,
@@ -28,6 +30,7 @@ public sealed class DataQualityService
             Create(
                 stockId,
                 position.IsMutualFund ? "基準価額" : "現在株価",
+                position.IsMutualFund ? $"{position.MutualFund.CurrentNav:N0}" : $"{position.CurrentHolding.CurrentPrice:N2}",
                 ResolveSourceType(position.IsMutualFund ? position.MutualFund.NavSource : position.CurrentHolding.CurrentPriceSource),
                 position.IsMutualFund ? position.MutualFund.NavSource : position.CurrentHolding.CurrentPriceSource,
                 position.IsMutualFund ? position.MutualFund.NavDate : position.CurrentHolding.CurrentPriceAcquiredAt,
@@ -37,6 +40,7 @@ public sealed class DataQualityService
             Create(
                 stockId,
                 "現在為替",
+                $"{position.CurrentHolding.CurrentExchangeRate:N2}",
                 ResolveSourceType(position.CurrentHolding.ExchangeRateInputType),
                 position.CurrentHolding.ExchangeRateSource,
                 position.CurrentHolding.ExchangeRateAcquiredAt,
@@ -46,6 +50,7 @@ public sealed class DataQualityService
             Create(
                 stockId,
                 "年間配当",
+                $"{position.CurrentHolding.AnnualDividendPerShare:N2}",
                 ResolveSourceType(position.CurrentHolding.DividendInfoSource),
                 position.CurrentHolding.DividendInfoSource,
                 position.CurrentHolding.DividendInfoAcquiredAt,
@@ -56,6 +61,7 @@ public sealed class DataQualityService
             Create(
                 stockId,
                 "口座区分",
+                position.Stock.AccountType,
                 ResolveSourceType(position.Stock.DataSource),
                 position.Stock.DataSource,
                 position.CurrentHolding.UpdatedAt,
@@ -69,6 +75,7 @@ public sealed class DataQualityService
     private static DataQualityInfo Create(
         int stockId,
         string fieldName,
+        string value,
         string sourceType,
         string sourceName,
         DateTime retrievedAt,
@@ -80,6 +87,7 @@ public sealed class DataQualityService
         {
             StockId = stockId,
             FieldName = fieldName,
+            Value = value,
             SourceType = sourceType,
             SourceName = string.IsNullOrWhiteSpace(sourceName) ? "未取得" : sourceName,
             RetrievedAt = retrievedAt,
@@ -91,6 +99,11 @@ public sealed class DataQualityService
 
     private static decimal CurrentQuantity(StockPosition position) =>
         position.IsMutualFund ? position.MutualFund.UnitsHeld : position.CurrentHolding.CurrentShares;
+
+    private static string FormatQuantity(StockPosition position) =>
+        position.IsMutualFund
+            ? $"{position.MutualFund.UnitsHeld:N0}口"
+            : $"{position.CurrentHolding.CurrentShares:N2}株";
 
     private static bool HasCurrentPrice(StockPosition position) =>
         position.IsMutualFund ? position.MutualFund.CurrentNav > 0m : position.CurrentHolding.CurrentPrice > 0m;

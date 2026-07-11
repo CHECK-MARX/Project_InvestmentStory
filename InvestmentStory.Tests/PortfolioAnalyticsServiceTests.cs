@@ -100,6 +100,68 @@ public sealed class PortfolioAnalyticsServiceTests
     }
 
     [Fact]
+    public void PortfolioSnapshot_SplitsStockAndMutualFundValues()
+    {
+        var calculator = new InvestmentCalculator();
+        var stockSnapshot = calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock { Ticker = "8151", Name = "東陽テクニカ", Currency = "JPY" },
+            Purchase = new Purchase { Shares = 100m, UnitPrice = 1_000m, ExchangeRate = 1m },
+            CurrentHolding = new CurrentHolding { CurrentShares = 100m, CurrentPrice = 1_500m, CurrentExchangeRate = 1m }
+        });
+        var fundSnapshot = calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock { Ticker = "FUND:SBI-V-SP500", Name = "SBI V S&P500", Currency = "JPY", AssetType = AssetTypes.MutualFund },
+            MutualFund = new MutualFundHolding
+            {
+                UnitsHeld = 411_318m,
+                UnitBase = 10_000m,
+                AverageCostNav = 29_499m,
+                CurrentNav = 40_579m,
+                AcquisitionAmount = 1_213_346m,
+                MarketValue = 1_669_087m
+            }
+        });
+
+        var result = new PortfolioAnalyticsService().CreatePortfolioSnapshot(
+            new[] { stockSnapshot, fundSnapshot },
+            Array.Empty<DividendPayment>(),
+            realizedGainLossJpy: 0m,
+            usdJpyRate: 162m,
+            snapshotDate: new DateTime(2026, 7, 11));
+
+        Assert.Equal(150_000m, result.StockValueJpy);
+        Assert.Equal(1_669_087m, result.MutualFundValueJpy);
+        Assert.Equal(1_819_087m, result.TotalMarketValueJpy);
+        Assert.Equal(result.CumulativeDividendJpy, result.CumulativeNetDividendJpy);
+    }
+
+    [Fact]
+    public void DataQualityService_IncludesDisplayValueAndMissingState()
+    {
+        var result = new DataQualityService().BuildForPosition(new StockPosition
+        {
+            Stock = new Stock { Id = 10, Ticker = "PEP", Name = "ペプシコ", Currency = "USD", AccountType = AccountTypes.Unknown },
+            Purchase = new Purchase { Shares = 20m, UnitPrice = 142.98m, ExchangeRate = 160m },
+            CurrentHolding = new CurrentHolding
+            {
+                CurrentShares = 20m,
+                CurrentPrice = 0m,
+                CurrentExchangeRate = 162m,
+                DividendStatus = "配当未入力"
+            }
+        }, new DateTime(2026, 7, 11));
+
+        var price = result.Single(x => x.FieldName == "現在株価");
+        var account = result.Single(x => x.FieldName == "口座区分");
+
+        Assert.Equal("0.00", price.Value);
+        Assert.Equal(DataQualityStates.Missing, price.ConfidenceLevel);
+        Assert.Equal(AccountTypes.Unknown, account.Value);
+        Assert.Equal(DataQualityStates.Missing, account.ConfidenceLevel);
+    }
+
+    [Fact]
     public void ReturnSummary_AddsUnrealizedRealizedAndCumulativeDividends()
     {
         var calculator = new InvestmentCalculator();
