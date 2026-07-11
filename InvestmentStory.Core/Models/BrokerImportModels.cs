@@ -17,6 +17,7 @@ public sealed class BrokerCsvImportResult
 
 public sealed class BrokerHoldingRecord
 {
+    public string AssetType { get; set; } = AssetTypes.Stock;
     public string Broker { get; set; } = string.Empty;
     public string Account { get; set; } = string.Empty;
     public string Product { get; set; } = string.Empty;
@@ -35,6 +36,17 @@ public sealed class BrokerHoldingRecord
     public DateTime SnapshotDate { get; set; } = DateTime.MinValue;
     public string Market { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+    public string FundName { get; set; } = string.Empty;
+    public string FundCode { get; set; } = string.Empty;
+    public string AssociationCode { get; set; } = string.Empty;
+    public decimal UnitsHeld { get; set; }
+    public decimal UnitBase { get; set; } = 10000m;
+    public decimal AverageCostNav { get; set; }
+    public decimal CurrentNav { get; set; }
+    public DateTime NavDate { get; set; } = DateTime.MinValue;
+    public string NavSource { get; set; } = string.Empty;
+    public string DistributionMethod { get; set; } = string.Empty;
+    public bool IsMutualFund => AssetTypes.IsMutualFund(AssetType);
 }
 
 public sealed class BrokerDividendRecord

@@ -37,6 +37,7 @@ public sealed class DatabaseInitializer
         Execute(connection, """
             CREATE TABLE IF NOT EXISTS Stocks (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                AssetType TEXT NOT NULL DEFAULT 'Stock',
                 Name TEXT NOT NULL,
                 Ticker TEXT NOT NULL,
                 Country TEXT NOT NULL,
@@ -49,6 +50,32 @@ public sealed class DatabaseInitializer
                 Memo TEXT NOT NULL DEFAULT '',
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS MutualFundHoldings (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL UNIQUE,
+                FundName TEXT NOT NULL DEFAULT '',
+                FundCode TEXT NOT NULL DEFAULT '',
+                AssociationCode TEXT NOT NULL DEFAULT '',
+                UnitsHeld REAL NOT NULL DEFAULT 0,
+                UnitBase REAL NOT NULL DEFAULT 10000,
+                AverageCostNav REAL NOT NULL DEFAULT 0,
+                CurrentNav REAL NOT NULL DEFAULT 0,
+                AcquisitionAmount REAL NOT NULL DEFAULT 0,
+                MarketValue REAL NOT NULL DEFAULT 0,
+                UnrealizedGainLoss REAL NOT NULL DEFAULT 0,
+                NavDate TEXT NOT NULL DEFAULT '',
+                NavSource TEXT NOT NULL DEFAULT '',
+                DistributionMethod TEXT NOT NULL DEFAULT '',
+                AccountType TEXT NOT NULL DEFAULT '',
+                TotalPurchaseAmount REAL NOT NULL DEFAULT 0,
+                TotalSaleAmount REAL NOT NULL DEFAULT 0,
+                ReinvestedDistributionAmount REAL NOT NULL DEFAULT 0,
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
             );
             """);
 
@@ -206,6 +233,7 @@ public sealed class DatabaseInitializer
 
     private static void MigrateTables(SqliteConnection connection)
     {
+        AddColumnIfMissing(connection, "Stocks", "AssetType", "TEXT NOT NULL DEFAULT 'Stock'");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateAcquiredAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateSource", "TEXT NOT NULL DEFAULT '手入力'");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateInputType", "TEXT NOT NULL DEFAULT '手入力'");
@@ -255,6 +283,39 @@ public sealed class DatabaseInitializer
         AddColumnIfMissing(connection, "DividendPayments", "ReplacedByDividendId", "INTEGER NULL");
         AddColumnIfMissing(connection, "DividendPayments", "CreatedAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "DividendPayments", "UpdatedAt", "TEXT NOT NULL DEFAULT ''");
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS MutualFundHoldings (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL UNIQUE,
+                FundName TEXT NOT NULL DEFAULT '',
+                FundCode TEXT NOT NULL DEFAULT '',
+                AssociationCode TEXT NOT NULL DEFAULT '',
+                UnitsHeld REAL NOT NULL DEFAULT 0,
+                UnitBase REAL NOT NULL DEFAULT 10000,
+                AverageCostNav REAL NOT NULL DEFAULT 0,
+                CurrentNav REAL NOT NULL DEFAULT 0,
+                AcquisitionAmount REAL NOT NULL DEFAULT 0,
+                MarketValue REAL NOT NULL DEFAULT 0,
+                UnrealizedGainLoss REAL NOT NULL DEFAULT 0,
+                NavDate TEXT NOT NULL DEFAULT '',
+                NavSource TEXT NOT NULL DEFAULT '',
+                DistributionMethod TEXT NOT NULL DEFAULT '',
+                AccountType TEXT NOT NULL DEFAULT '',
+                TotalPurchaseAmount REAL NOT NULL DEFAULT 0,
+                TotalSaleAmount REAL NOT NULL DEFAULT 0,
+                ReinvestedDistributionAmount REAL NOT NULL DEFAULT 0,
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            """);
+
+        Execute(connection, """
+            UPDATE Stocks
+            SET AssetType = 'MutualFund'
+            WHERE AssetType <> 'MutualFund'
+              AND (UPPER(Ticker) LIKE 'FUND:%' OR Sector LIKE '%投資信託%');
+            """);
 
         RemoveTickerUniqueConstraintIfNeeded(connection);
         NormalizeLegacySecurityAliases(connection);
@@ -336,6 +397,7 @@ public sealed class DatabaseInitializer
             Execute(connection, transaction, """
                 CREATE TABLE Stocks_Migration_NoTickerUnique (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    AssetType TEXT NOT NULL DEFAULT 'Stock',
                     Name TEXT NOT NULL,
                     Ticker TEXT NOT NULL,
                     Country TEXT NOT NULL,
@@ -353,9 +415,9 @@ public sealed class DatabaseInitializer
 
             Execute(connection, transaction, """
                 INSERT INTO Stocks_Migration_NoTickerUnique
-                    (Id, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt)
+                    (Id, AssetType, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt)
                 SELECT
-                    Id, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt
+                    Id, AssetType, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt
                 FROM Stocks;
                 """);
 

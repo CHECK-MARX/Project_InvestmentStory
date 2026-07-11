@@ -4,9 +4,16 @@ namespace InvestmentStory.Core.Services;
 
 public sealed class InvestmentCalculator
 {
+    private readonly MutualFundCalculator _mutualFundCalculator = new();
+
     public StockSnapshot CreateSnapshot(StockPosition position)
     {
         ArgumentNullException.ThrowIfNull(position);
+
+        if (position.IsMutualFund)
+        {
+            return CreateMutualFundSnapshot(position);
+        }
 
         var purchase = position.Purchase;
         var current = position.CurrentHolding;
@@ -43,6 +50,38 @@ public sealed class InvestmentCalculator
             CurrentMarketValueJpy = currentMarketValueJpy,
             UnrealizedGainJpy = unrealizedGainJpy,
             CurrencyImpactJpy = unrealizedGainJpy - CalculateJpyAmount(unrealizedGain, currentExchangeRate)
+        };
+    }
+
+    private StockSnapshot CreateMutualFundSnapshot(StockPosition position)
+    {
+        var fund = position.MutualFund;
+        var calculation = _mutualFundCalculator.Calculate(fund);
+        var marketValue = calculation.MarketValue;
+        var acquisitionAmount = calculation.AcquisitionAmount;
+        var unrealizedGain = calculation.UnrealizedGainLoss;
+
+        return new StockSnapshot
+        {
+            Position = position,
+            PurchaseTotal = acquisitionAmount,
+            EffectiveAcquisitionPrice = calculation.AverageCostNav,
+            CurrentMarketValue = marketValue,
+            UnrealizedGain = unrealizedGain,
+            UnrealizedGainRate = calculation.UnrealizedGainLossRate,
+            UnrealizedGainRateJpy = calculation.UnrealizedGainLossRate,
+            Multiple = DivideOrZero(marketValue, acquisitionAmount),
+            AnnualDividendForecast = 0m,
+            AnnualDividendForecastJpy = 0m,
+            MonthlyPassiveIncomeForecast = 0m,
+            MonthlyPassiveIncomeForecastJpy = 0m,
+            YieldOnCost = 0m,
+            CurrentDividendYield = 0m,
+            ShareChangeRatio = 1m,
+            PurchaseTotalJpy = acquisitionAmount,
+            CurrentMarketValueJpy = marketValue,
+            UnrealizedGainJpy = unrealizedGain,
+            CurrencyImpactJpy = 0m
         };
     }
 

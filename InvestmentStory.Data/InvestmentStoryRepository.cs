@@ -33,11 +33,17 @@ public sealed class InvestmentStoryRepository
                 ch.Id, ch.CurrentShares, ch.CurrentPrice, ch.CurrentExchangeRate,
                 ch.ExchangeRateAcquiredAt, ch.ExchangeRateSource, ch.ExchangeRateInputType, ch.AnnualDividendPerShare,
                 ch.DividendStatus, ch.DividendFrequency, ch.DividendMonths, ch.CurrentPriceAcquiredAt, ch.CurrentPriceSource,
-                ch.DividendInfoAcquiredAt, ch.DividendInfoSource, ch.UpdatedAt
+                ch.DividendInfoAcquiredAt, ch.DividendInfoSource, ch.UpdatedAt,
+                s.AssetType,
+                mf.Id, mf.FundName, mf.FundCode, mf.AssociationCode, mf.UnitsHeld, mf.UnitBase,
+                mf.AverageCostNav, mf.CurrentNav, mf.AcquisitionAmount, mf.MarketValue, mf.UnrealizedGainLoss,
+                mf.NavDate, mf.NavSource, mf.DistributionMethod, mf.AccountType,
+                mf.TotalPurchaseAmount, mf.TotalSaleAmount, mf.ReinvestedDistributionAmount
             FROM Stocks s
             LEFT JOIN Purchases p ON p.Id = (SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1)
             LEFT JOIN StockSplits sp ON sp.Id = (SELECT Id FROM StockSplits WHERE StockId = s.Id ORDER BY SplitDate DESC, Id DESC LIMIT 1)
             LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
+            LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
             ORDER BY s.Ticker;
             """;
 
@@ -60,7 +66,8 @@ public sealed class InvestmentStoryRepository
                     Industry = GetString(reader, 7),
                     Market = GetString(reader, 8),
                     DataSource = GetStringOrDefault(reader, 9, "手入力"),
-                    Memo = GetString(reader, 10)
+                    Memo = GetString(reader, 10),
+                    AssetType = GetStringOrDefault(reader, 41, AssetTypes.Stock)
                 },
                 Purchase = new Purchase
                 {
@@ -103,6 +110,28 @@ public sealed class InvestmentStoryRepository
                     DividendInfoAcquiredAt = GetDateTimeOrDefault(reader, 38, DateTime.MinValue),
                     DividendInfoSource = GetString(reader, 39),
                     UpdatedAt = GetDateOrToday(reader, 40)
+                },
+                MutualFund = new MutualFundHolding
+                {
+                    Id = GetInt32OrZero(reader, 42),
+                    StockId = stockId,
+                    FundName = GetString(reader, 43),
+                    FundCode = GetString(reader, 44),
+                    AssociationCode = GetString(reader, 45),
+                    UnitsHeld = GetDecimalOrZero(reader, 46),
+                    UnitBase = GetDecimalOrDefault(reader, 47, 10000m),
+                    AverageCostNav = GetDecimalOrZero(reader, 48),
+                    CurrentNav = GetDecimalOrZero(reader, 49),
+                    AcquisitionAmount = GetDecimalOrZero(reader, 50),
+                    MarketValue = GetDecimalOrZero(reader, 51),
+                    UnrealizedGainLoss = GetDecimalOrZero(reader, 52),
+                    NavDate = GetDateTimeOrDefault(reader, 53, DateTime.MinValue),
+                    NavSource = GetString(reader, 54),
+                    DistributionMethod = GetString(reader, 55),
+                    AccountType = GetString(reader, 56),
+                    TotalPurchaseAmount = GetDecimalOrZero(reader, 57),
+                    TotalSaleAmount = GetDecimalOrZero(reader, 58),
+                    ReinvestedDistributionAmount = GetDecimalOrZero(reader, 59)
                 }
             });
         }
@@ -130,10 +159,15 @@ public sealed class InvestmentStoryRepository
         position.Purchase.StockId = stockId;
         position.Split.StockId = stockId;
         position.CurrentHolding.StockId = stockId;
+        position.MutualFund.StockId = stockId;
 
         SavePurchase(connection, transaction, position.Purchase);
         SaveSplit(connection, transaction, position.Split);
         SaveCurrentHolding(connection, transaction, position.CurrentHolding);
+        if (position.IsMutualFund)
+        {
+            SaveMutualFundHolding(connection, transaction, position.MutualFund);
+        }
 
         transaction.Commit();
         return stockId;
@@ -526,8 +560,8 @@ public sealed class InvestmentStoryRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo)
-            VALUES ($name, $ticker, $country, $currency, $broker, $sector, $industry, $market, $dataSource, $memo);
+            INSERT INTO Stocks (AssetType, Name, Ticker, Country, Currency, Broker, Sector, Industry, Market, DataSource, Memo)
+            VALUES ($assetType, $name, $ticker, $country, $currency, $broker, $sector, $industry, $market, $dataSource, $memo);
             SELECT last_insert_rowid();
             """;
         AddStockParameters(command, stock);
@@ -540,7 +574,8 @@ public sealed class InvestmentStoryRepository
         command.Transaction = transaction;
         command.CommandText = """
             UPDATE Stocks
-            SET Name = $name,
+            SET AssetType = $assetType,
+                Name = $name,
                 Ticker = $ticker,
                 Country = $country,
                 Currency = $currency,
@@ -683,6 +718,60 @@ public sealed class InvestmentStoryRepository
         command.ExecuteNonQuery();
     }
 
+    private static void SaveMutualFundHolding(SqliteConnection connection, SqliteTransaction transaction, MutualFundHolding fund)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO MutualFundHoldings
+                (StockId, FundName, FundCode, AssociationCode, UnitsHeld, UnitBase, AverageCostNav, CurrentNav,
+                 AcquisitionAmount, MarketValue, UnrealizedGainLoss, NavDate, NavSource, DistributionMethod,
+                 AccountType, TotalPurchaseAmount, TotalSaleAmount, ReinvestedDistributionAmount, UpdatedAt)
+            VALUES
+                ($stockId, $fundName, $fundCode, $associationCode, $unitsHeld, $unitBase, $averageCostNav, $currentNav,
+                 $acquisitionAmount, $marketValue, $unrealizedGainLoss, $navDate, $navSource, $distributionMethod,
+                 $accountType, $totalPurchaseAmount, $totalSaleAmount, $reinvestedDistributionAmount, CURRENT_TIMESTAMP)
+            ON CONFLICT(StockId) DO UPDATE SET
+                FundName = excluded.FundName,
+                FundCode = excluded.FundCode,
+                AssociationCode = excluded.AssociationCode,
+                UnitsHeld = excluded.UnitsHeld,
+                UnitBase = excluded.UnitBase,
+                AverageCostNav = excluded.AverageCostNav,
+                CurrentNav = excluded.CurrentNav,
+                AcquisitionAmount = excluded.AcquisitionAmount,
+                MarketValue = excluded.MarketValue,
+                UnrealizedGainLoss = excluded.UnrealizedGainLoss,
+                NavDate = excluded.NavDate,
+                NavSource = excluded.NavSource,
+                DistributionMethod = excluded.DistributionMethod,
+                AccountType = excluded.AccountType,
+                TotalPurchaseAmount = excluded.TotalPurchaseAmount,
+                TotalSaleAmount = excluded.TotalSaleAmount,
+                ReinvestedDistributionAmount = excluded.ReinvestedDistributionAmount,
+                UpdatedAt = CURRENT_TIMESTAMP;
+            """;
+        command.Parameters.AddWithValue("$stockId", fund.StockId);
+        command.Parameters.AddWithValue("$fundName", fund.FundName);
+        command.Parameters.AddWithValue("$fundCode", fund.FundCode);
+        command.Parameters.AddWithValue("$associationCode", fund.AssociationCode);
+        command.Parameters.AddWithValue("$unitsHeld", fund.UnitsHeld);
+        command.Parameters.AddWithValue("$unitBase", MutualFundCalculator.NormalizeUnitBase(fund.UnitBase));
+        command.Parameters.AddWithValue("$averageCostNav", fund.AverageCostNav);
+        command.Parameters.AddWithValue("$currentNav", fund.CurrentNav);
+        command.Parameters.AddWithValue("$acquisitionAmount", fund.AcquisitionAmount);
+        command.Parameters.AddWithValue("$marketValue", fund.MarketValue);
+        command.Parameters.AddWithValue("$unrealizedGainLoss", fund.UnrealizedGainLoss);
+        command.Parameters.AddWithValue("$navDate", ToOptionalDateText(fund.NavDate));
+        command.Parameters.AddWithValue("$navSource", fund.NavSource);
+        command.Parameters.AddWithValue("$distributionMethod", fund.DistributionMethod);
+        command.Parameters.AddWithValue("$accountType", fund.AccountType);
+        command.Parameters.AddWithValue("$totalPurchaseAmount", fund.TotalPurchaseAmount);
+        command.Parameters.AddWithValue("$totalSaleAmount", fund.TotalSaleAmount);
+        command.Parameters.AddWithValue("$reinvestedDistributionAmount", fund.ReinvestedDistributionAmount);
+        command.ExecuteNonQuery();
+    }
+
     private static int InsertDividend(SqliteConnection connection, DividendPayment dividend)
     {
         using var command = connection.CreateCommand();
@@ -769,6 +858,7 @@ public sealed class InvestmentStoryRepository
 
     private static void AddStockParameters(SqliteCommand command, Stock stock)
     {
+        command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
         command.Parameters.AddWithValue("$name", stock.Name);
         command.Parameters.AddWithValue("$ticker", stock.Ticker);
         command.Parameters.AddWithValue("$country", stock.Country);

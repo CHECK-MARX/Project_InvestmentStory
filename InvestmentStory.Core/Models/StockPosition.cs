@@ -6,4 +6,6 @@ public sealed class StockPosition
     public Purchase Purchase { get; set; } = new();
     public StockSplit Split { get; set; } = new();
     public CurrentHolding CurrentHolding { get; set; } = new();
+    public MutualFundHolding MutualFund { get; set; } = new();
+    public bool IsMutualFund => AssetTypes.IsMutualFund(Stock.AssetType);
 }

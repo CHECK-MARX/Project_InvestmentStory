@@ -53,7 +53,7 @@ public sealed class StockListViewModel : ObservableObject
 
     public ObservableCollection<StockRowViewModel> Rows { get; } = new();
     public string[] Filters { get; } = { "現在保有のみ", "過去保有銘柄", "配当銘柄", "成長銘柄" };
-    public string[] DisplayModes { get; } = { "基本", "損益", "配当", "為替", "データ取得", "全項目" };
+    public string[] DisplayModes { get; } = { "基本", "損益", "配当", "投資信託", "為替", "データ取得", "全項目" };
     public ICommand NewCommand { get; }
     public RelayCommand EditCommand { get; }
     public RelayCommand DetailCommand { get; }
@@ -89,6 +89,7 @@ public sealed class StockListViewModel : ObservableObject
                 OnPropertyChanged(nameof(ShowBasicColumns));
                 OnPropertyChanged(nameof(ShowProfitColumns));
                 OnPropertyChanged(nameof(ShowDividendColumns));
+                OnPropertyChanged(nameof(ShowFundColumns));
                 OnPropertyChanged(nameof(ShowExchangeColumns));
                 OnPropertyChanged(nameof(ShowDataColumns));
                 _displayModeChanged(value);
@@ -99,6 +100,7 @@ public sealed class StockListViewModel : ObservableObject
     public Visibility ShowBasicColumns => IsMode("基本") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
     public Visibility ShowProfitColumns => IsMode("損益") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
     public Visibility ShowDividendColumns => IsMode("配当") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ShowFundColumns => IsMode("投資信託") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
     public Visibility ShowExchangeColumns => IsMode("為替") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
     public Visibility ShowDataColumns => IsMode("データ取得") || IsMode("全項目") ? Visibility.Visible : Visibility.Collapsed;
 
@@ -160,11 +162,11 @@ public sealed class StockListViewModel : ObservableObject
         var isDividendOnly = IsDividendOnly(position);
         return SelectedFilter switch
         {
-            "現在保有のみ" => position.CurrentHolding.CurrentShares > 0m && !isDividendOnly,
-            "過去保有銘柄" => position.CurrentHolding.CurrentShares <= 0m && !isDividendOnly,
+            "現在保有のみ" => CurrentQuantity(position) > 0m && !isDividendOnly,
+            "過去保有銘柄" => CurrentQuantity(position) <= 0m && !isDividendOnly,
             "配当銘柄" => HasDividend(position),
             "成長銘柄" => !HasDividend(position) && !isDividendOnly,
-            _ => position.CurrentHolding.CurrentShares > 0m && !isDividendOnly
+            _ => CurrentQuantity(position) > 0m && !isDividendOnly
         };
     }
 
@@ -188,7 +190,7 @@ public sealed class StockListViewModel : ObservableObject
     {
         var source = position.Stock.DataSource ?? string.Empty;
         var memo = position.Stock.Memo ?? string.Empty;
-        if (position.CurrentHolding.CurrentShares > 0m)
+        if (CurrentQuantity(position) > 0m)
         {
             return false;
         }
@@ -201,6 +203,9 @@ public sealed class StockListViewModel : ObservableObject
         return source.Contains("配当CSV", StringComparison.Ordinal) ||
                memo.Contains("配当CSV取込時", StringComparison.Ordinal);
     }
+
+    private static decimal CurrentQuantity(StockPosition position) =>
+        position.IsMutualFund ? position.MutualFund.UnitsHeld : position.CurrentHolding.CurrentShares;
 
     private bool HasSelection() => SelectedRow is not null;
 

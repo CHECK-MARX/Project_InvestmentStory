@@ -1,4 +1,5 @@
 using System.Text;
+using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 
 namespace InvestmentStory.Tests;
@@ -12,7 +13,6 @@ public sealed class SbiStatementCsvParserTests
         var path = Path.Combine(Path.GetTempPath(), $"SBI_Jap_SaveFile_{Guid.NewGuid():N}.csv");
         var encoding = Encoding.GetEncoding(932);
         File.WriteAllText(path, """
-            
             保有証券一覧
 
             株式（NISA預り（成長投資枠））
@@ -37,6 +37,47 @@ public sealed class SbiStatementCsvParserTests
             Assert.Equal(1346m, holding.AverageAcquisitionPrice);
             Assert.Equal(1382m, holding.CurrentPrice);
             Assert.Equal(276400m, holding.MarketValueJpy);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ParseFiles_ReadsSbiMutualFundHoldingsAsMutualFund()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_Fund_SaveFile_{Guid.NewGuid():N}.csv");
+        var encoding = Encoding.GetEncoding(932);
+        File.WriteAllText(path, """
+            保有証券一覧
+
+            投資信託（金額/口数指定）
+
+            ファンド名,保有口数,取得単価,基準価額,取得金額,評価額,評価損益,預り区分,分配金受取方法
+            "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド","411,318","29,499","40,579","1,213,346","1,669,087","+455,741","NISA","再投資"
+            """, encoding);
+
+        try
+        {
+            var parser = new SbiStatementCsvParser();
+
+            Assert.True(SbiStatementCsvParser.LooksLikeSbiStatementCsv(path));
+            var statement = parser.ParseFiles(new[] { path });
+
+            var holding = Assert.Single(statement.Holdings);
+            Assert.Equal(AssetTypes.MutualFund, holding.AssetType);
+            Assert.True(holding.IsMutualFund);
+            Assert.Equal("ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド", holding.FundName);
+            Assert.Equal(411318m, holding.UnitsHeld);
+            Assert.Equal(10000m, holding.UnitBase);
+            Assert.Equal(29499m, holding.AverageCostNav);
+            Assert.Equal(40579m, holding.CurrentNav);
+            Assert.Equal(1_213_346m, holding.AcquisitionAmount);
+            Assert.Equal(1_669_087m, holding.MarketValue);
+            Assert.Equal(455_741m, holding.UnrealizedGainLossJpy);
+            Assert.Equal("再投資", holding.DistributionMethod);
         }
         finally
         {

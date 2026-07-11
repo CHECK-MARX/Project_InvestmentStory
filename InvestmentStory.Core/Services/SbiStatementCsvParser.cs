@@ -186,6 +186,7 @@ public sealed class SbiStatementCsvParser
 
                 records.Add(new BrokerHoldingRecord
                 {
+                    AssetType = AssetTypes.Stock,
                     Broker = "SBI証券",
                     Account = account,
                     Product = "国内株式",
@@ -228,16 +229,21 @@ public sealed class SbiStatementCsvParser
 
                 var acquisitionAmount = ParseDecimal(Get(row, "取得金額"));
                 var marketValue = ParseDecimal(Get(row, "評価額"));
+                var averageCostNav = ParseDecimal(Get(row, "取得単価"));
+                var currentNav = ParseDecimal(Get(row, "基準価額"));
+                var distributionMethod = Get(row, "分配金受取方法");
+                var rowAccount = Get(row, "預り区分");
                 records.Add(new BrokerHoldingRecord
                 {
+                    AssetType = AssetTypes.MutualFund,
                     Broker = "SBI証券",
-                    Account = account,
+                    Account = string.IsNullOrWhiteSpace(rowAccount) ? account : rowAccount,
                     Product = "投資信託",
                     Ticker = SecuritySymbolNormalizer.NormalizeTicker(ResolveDomesticTicker(string.Empty, name)),
                     Name = name.Trim(),
                     Shares = shares,
-                    AverageAcquisitionPrice = shares > 0m ? acquisitionAmount / shares : ParseDecimal(Get(row, "取得単価")) / 10000m,
-                    CurrentPrice = shares > 0m ? marketValue / shares : ParseDecimal(Get(row, "基準価額")) / 10000m,
+                    AverageAcquisitionPrice = averageCostNav,
+                    CurrentPrice = currentNav,
                     AcquisitionAmount = acquisitionAmount,
                     MarketValue = marketValue,
                     MarketValueJpy = marketValue,
@@ -246,7 +252,16 @@ public sealed class SbiStatementCsvParser
                     PurchaseExchangeRate = 1m,
                     CurrentExchangeRate = 1m,
                     SnapshotDate = DateTime.Today,
-                    Source = "SBI投信保有CSV"
+                    Source = "SBI投信保有CSV",
+                    FundName = name.Trim(),
+                    FundCode = SecuritySymbolNormalizer.NormalizeTicker(ResolveDomesticTicker(string.Empty, name)),
+                    UnitsHeld = shares,
+                    UnitBase = 10000m,
+                    AverageCostNav = averageCostNav,
+                    CurrentNav = currentNav,
+                    NavDate = DateTime.Today,
+                    NavSource = "SBI投信保有CSV",
+                    DistributionMethod = distributionMethod
                 });
             }
         }
@@ -368,7 +383,7 @@ public sealed class SbiStatementCsvParser
     private static IReadOnlyList<BrokerHoldingRecord> AggregateHoldings(IReadOnlyList<BrokerHoldingRecord> records)
     {
         var aggregated = new List<BrokerHoldingRecord>();
-        foreach (var group in records.GroupBy(x => $"{x.Broker}|{x.Ticker}", StringComparer.OrdinalIgnoreCase))
+        foreach (var group in records.GroupBy(BuildAggregationKey, StringComparer.OrdinalIgnoreCase))
         {
             var holdings = group.ToList();
             if (holdings.Count == 1)
@@ -382,8 +397,55 @@ public sealed class SbiStatementCsvParser
             var marketValue = holdings.Sum(x => x.MarketValue);
             var marketValueJpy = holdings.Sum(x => x.MarketValueJpy);
             var first = holdings[0];
+            if (first.IsMutualFund)
+            {
+                var unitsHeld = holdings.Sum(x => x.UnitsHeld > 0m ? x.UnitsHeld : x.Shares);
+                var unitBase = MutualFundCalculator.NormalizeUnitBase(first.UnitBase);
+                aggregated.Add(new BrokerHoldingRecord
+                {
+                    AssetType = AssetTypes.MutualFund,
+                    Broker = first.Broker,
+                    Account = first.Account,
+                    Product = first.Product,
+                    Ticker = first.Ticker,
+                    Name = first.Name,
+                    Shares = unitsHeld,
+                    AverageAcquisitionPrice = unitsHeld > 0m && acquisitionAmount > 0m
+                        ? acquisitionAmount / unitsHeld * unitBase
+                        : first.AverageCostNav,
+                    CurrentPrice = unitsHeld > 0m && marketValue > 0m
+                        ? marketValue / unitsHeld * unitBase
+                        : first.CurrentNav,
+                    AcquisitionAmount = acquisitionAmount,
+                    MarketValue = marketValue,
+                    MarketValueJpy = marketValueJpy,
+                    UnrealizedGainLossJpy = holdings.Sum(x => x.UnrealizedGainLossJpy),
+                    Currency = "JPY",
+                    PurchaseExchangeRate = 1m,
+                    CurrentExchangeRate = 1m,
+                    SnapshotDate = holdings.Max(x => x.SnapshotDate),
+                    Source = first.Source,
+                    FundName = first.FundName,
+                    FundCode = first.FundCode,
+                    AssociationCode = first.AssociationCode,
+                    UnitsHeld = unitsHeld,
+                    UnitBase = unitBase,
+                    AverageCostNav = unitsHeld > 0m && acquisitionAmount > 0m
+                        ? acquisitionAmount / unitsHeld * unitBase
+                        : first.AverageCostNav,
+                    CurrentNav = unitsHeld > 0m && marketValue > 0m
+                        ? marketValue / unitsHeld * unitBase
+                        : first.CurrentNav,
+                    NavDate = holdings.Max(x => x.NavDate),
+                    NavSource = first.NavSource,
+                    DistributionMethod = first.DistributionMethod
+                });
+                continue;
+            }
+
             aggregated.Add(new BrokerHoldingRecord
             {
+                AssetType = AssetTypes.Stock,
                 Broker = first.Broker,
                 Account = "複数口座合算",
                 Product = first.Product,
@@ -406,6 +468,11 @@ public sealed class SbiStatementCsvParser
 
         return aggregated;
     }
+
+    private static string BuildAggregationKey(BrokerHoldingRecord record) =>
+        record.IsMutualFund
+            ? $"{record.Broker}|{record.Ticker}|{record.Account}"
+            : $"{record.Broker}|{record.Ticker}";
 
     private static string ResolvePreviousSectionTitle(IReadOnlyList<string> lines, int headerIndex)
     {

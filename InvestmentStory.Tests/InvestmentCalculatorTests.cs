@@ -92,6 +92,69 @@ public sealed class InvestmentCalculatorTests
     }
 
     [Fact]
+    public void CreateSnapshot_CalculatesMutualFundMetrics()
+    {
+        var snapshot = _calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock
+            {
+                AssetType = AssetTypes.MutualFund,
+                Name = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                Ticker = "FUND:ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                Country = "日本",
+                Currency = "JPY",
+                Broker = "SBI証券"
+            },
+            MutualFund = new MutualFundHolding
+            {
+                FundName = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                UnitsHeld = 411318m,
+                UnitBase = 10000m,
+                AverageCostNav = 29499m,
+                CurrentNav = 40579m
+            }
+        });
+
+        Assert.Equal(1_213_346.9682m, snapshot.PurchaseTotal);
+        Assert.Equal(1_669_087.3122m, snapshot.CurrentMarketValue);
+        Assert.InRange(snapshot.UnrealizedGainJpy, 455_740m, 455_742m);
+        Assert.Equal(37.56m, snapshot.UnrealizedGainRateJpy, precision: 2);
+    }
+
+    [Fact]
+    public void CreateSnapshot_PrefersMutualFundCsvAmounts()
+    {
+        var snapshot = _calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock
+            {
+                AssetType = AssetTypes.MutualFund,
+                Name = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                Ticker = "FUND:ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                Country = "日本",
+                Currency = "JPY",
+                Broker = "SBI証券"
+            },
+            MutualFund = new MutualFundHolding
+            {
+                FundName = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                UnitsHeld = 411318m,
+                UnitBase = 10000m,
+                AverageCostNav = 29499m,
+                CurrentNav = 40579m,
+                AcquisitionAmount = 1_213_346m,
+                MarketValue = 1_669_087m,
+                UnrealizedGainLoss = 455_741m
+            }
+        });
+
+        Assert.Equal(1_213_346m, snapshot.PurchaseTotal);
+        Assert.Equal(1_669_087m, snapshot.CurrentMarketValue);
+        Assert.Equal(455_741m, snapshot.UnrealizedGainJpy);
+        Assert.Equal(37.56m, snapshot.UnrealizedGainRateJpy, precision: 2);
+    }
+
+    [Fact]
     public void CreateDashboardSummary_CalculatesTotalsAndGoalGap()
     {
         var snapshot = _calculator.CreateSnapshot(CreateNvdaPosition());

@@ -1,5 +1,6 @@
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
 
 namespace InvestmentStory.App.ViewModels;
 
@@ -12,14 +13,25 @@ public sealed class StockRowViewModel
 
     public StockSnapshot Snapshot { get; }
     public int StockId => Snapshot.Position.Stock.Id;
+    public bool IsMutualFund => Snapshot.Position.IsMutualFund;
+    public string AssetTypeLabel => IsMutualFund ? "投資信託" : "株式";
     public string Ticker => Snapshot.Position.Stock.Ticker;
     public string Name => Snapshot.Position.Stock.Name;
+    public string FundName => string.IsNullOrWhiteSpace(Snapshot.Position.MutualFund.FundName)
+        ? Snapshot.Position.Stock.Name
+        : Snapshot.Position.MutualFund.FundName;
     public string Country => Snapshot.Position.Stock.Country;
     public string Currency => Snapshot.Position.Stock.Currency;
     public string Broker => Snapshot.Position.Stock.Broker;
-    public string CurrentShares => Formatters.Number(Snapshot.Position.CurrentHolding.CurrentShares);
-    public string EffectiveAcquisitionPrice => Formatters.Money(Snapshot.EffectiveAcquisitionPrice, Snapshot.Position.Stock.Currency);
-    public string CurrentPrice => Snapshot.Position.CurrentHolding.CurrentPrice == 0m &&
+    public string CurrentShares => IsMutualFund
+        ? $"{Formatters.Number(Snapshot.Position.MutualFund.UnitsHeld)}口"
+        : Formatters.Number(Snapshot.Position.CurrentHolding.CurrentShares);
+    public string EffectiveAcquisitionPrice => IsMutualFund
+        ? FundAverageCostNav
+        : Formatters.Money(Snapshot.EffectiveAcquisitionPrice, Snapshot.Position.Stock.Currency);
+    public string CurrentPrice => IsMutualFund
+        ? FundCurrentNav
+        : Snapshot.Position.CurrentHolding.CurrentPrice == 0m &&
         string.IsNullOrWhiteSpace(Snapshot.Position.CurrentHolding.CurrentPriceSource)
             ? "未取得"
             : Formatters.Money(Snapshot.Position.CurrentHolding.CurrentPrice, Snapshot.Position.Stock.Currency);
@@ -54,4 +66,31 @@ public sealed class StockRowViewModel
     public string DataSource => string.IsNullOrWhiteSpace(Snapshot.Position.Stock.DataSource)
         ? "未設定"
         : Snapshot.Position.Stock.DataSource;
+    public string FundAccountType => string.IsNullOrWhiteSpace(Snapshot.Position.MutualFund.AccountType)
+        ? "-"
+        : Snapshot.Position.MutualFund.AccountType;
+    public string FundUnitsHeld => $"{Formatters.Number(Snapshot.Position.MutualFund.UnitsHeld)}口";
+    public string FundAverageCostNav => FormatFundNav(Snapshot.Position.MutualFund.AverageCostNav, Snapshot.Position.MutualFund.UnitBase);
+    public string FundCurrentNav => Snapshot.Position.MutualFund.CurrentNav <= 0m
+        ? "基準価額未更新"
+        : FormatFundNav(Snapshot.Position.MutualFund.CurrentNav, Snapshot.Position.MutualFund.UnitBase);
+    public string FundAcquisitionAmount => Formatters.Jpy(Snapshot.PurchaseTotalJpy);
+    public string FundMarketValue => Formatters.Jpy(Snapshot.CurrentMarketValueJpy);
+    public string FundUnrealizedGainLoss => Formatters.SignedJpy(Snapshot.UnrealizedGainJpy);
+    public string FundUnrealizedGainLossRate => Formatters.SignedPercent(Snapshot.UnrealizedGainRateJpy);
+    public string FundNavDate => Snapshot.Position.MutualFund.NavDate == DateTime.MinValue
+        ? "基準価額未更新"
+        : Snapshot.Position.MutualFund.NavDate.ToString("yyyy/MM/dd");
+    public string FundNavSource => string.IsNullOrWhiteSpace(Snapshot.Position.MutualFund.NavSource)
+        ? "基準価額未更新"
+        : Snapshot.Position.MutualFund.NavSource;
+    public string FundDistributionMethod => string.IsNullOrWhiteSpace(Snapshot.Position.MutualFund.DistributionMethod)
+        ? "-"
+        : Snapshot.Position.MutualFund.DistributionMethod;
+
+    private static string FormatFundNav(decimal nav, decimal unitBase)
+    {
+        var normalizedUnitBase = MutualFundCalculator.NormalizeUnitBase(unitBase);
+        return $"{Formatters.Jpy(nav)} / {normalizedUnitBase:N0}口";
+    }
 }

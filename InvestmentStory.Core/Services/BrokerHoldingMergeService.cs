@@ -118,6 +118,18 @@ public sealed class BrokerHoldingMergeService
 
         var sourceLabel = string.IsNullOrWhiteSpace(source.Source) ? "証券会社データ" : source.Source.Trim();
         SetIfChanged(target.Stock.DataSource, sourceLabel, value => target.Stock.DataSource = value, "登録元", changedFields);
+        SetIfChanged(
+            target.Stock.AssetType,
+            source.IsMutualFund ? AssetTypes.MutualFund : AssetTypes.Stock,
+            value => target.Stock.AssetType = value,
+            "資産種別",
+            changedFields);
+
+        if (source.IsMutualFund)
+        {
+            ApplyMutualFundHolding(target, source, acquiredAt, sourceLabel, changedFields);
+            return;
+        }
 
         if (source.Shares > 0m)
         {
@@ -169,8 +181,78 @@ public sealed class BrokerHoldingMergeService
         target.CurrentHolding.CurrentPriceSource = sourceLabel;
     }
 
+    private static void ApplyMutualFundHolding(
+        StockPosition target,
+        BrokerHoldingRecord source,
+        DateTime acquiredAt,
+        string sourceLabel,
+        List<string> changedFields)
+    {
+        var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
+        var unitsHeld = source.UnitsHeld > 0m ? source.UnitsHeld : source.Shares;
+        var unitBase = MutualFundCalculator.NormalizeUnitBase(source.UnitBase);
+        var averageCostNav = source.AverageCostNav > 0m ? source.AverageCostNav : source.AverageAcquisitionPrice;
+        var currentNav = source.CurrentNav > 0m ? source.CurrentNav : source.CurrentPrice;
+        var marketValue = source.MarketValue > 0m ? source.MarketValue : source.MarketValueJpy;
+        var unrealizedGainLoss = source.UnrealizedGainLossJpy != 0m
+            ? source.UnrealizedGainLossJpy
+            : marketValue - source.AcquisitionAmount;
+        var navDate = source.NavDate == DateTime.MinValue ? snapshotAt : source.NavDate;
+
+        target.Stock.AssetType = AssetTypes.MutualFund;
+        target.Stock.Currency = "JPY";
+        target.Stock.Country = "日本";
+        target.Stock.Sector = string.IsNullOrWhiteSpace(source.Product) ? "投資信託" : source.Product;
+
+        target.MutualFund.FundName = string.IsNullOrWhiteSpace(source.FundName) ? source.Name.Trim() : source.FundName.Trim();
+        target.MutualFund.FundCode = source.FundCode;
+        target.MutualFund.AssociationCode = source.AssociationCode;
+        target.MutualFund.UnitsHeld = unitsHeld;
+        target.MutualFund.UnitBase = unitBase;
+        target.MutualFund.AverageCostNav = averageCostNav;
+        target.MutualFund.CurrentNav = currentNav;
+        target.MutualFund.AcquisitionAmount = source.AcquisitionAmount;
+        target.MutualFund.MarketValue = marketValue;
+        target.MutualFund.UnrealizedGainLoss = unrealizedGainLoss;
+        target.MutualFund.NavDate = navDate;
+        target.MutualFund.NavSource = string.IsNullOrWhiteSpace(source.NavSource) ? sourceLabel : source.NavSource;
+        target.MutualFund.DistributionMethod = source.DistributionMethod;
+        target.MutualFund.AccountType = source.Account;
+        target.MutualFund.TotalPurchaseAmount = source.AcquisitionAmount > 0m
+            ? source.AcquisitionAmount
+            : target.MutualFund.TotalPurchaseAmount;
+
+        SetIfChanged(target.Purchase.Shares, unitsHeld, value => target.Purchase.Shares = value, "保有口数", changedFields);
+        SetIfChanged(target.Purchase.UnitPrice, averageCostNav, value => target.Purchase.UnitPrice = value, "取得単価NAV", changedFields);
+        target.Purchase.ExchangeRate = 1m;
+        target.Purchase.ExchangeRateAcquiredAt = snapshotAt;
+        target.Purchase.ExchangeRateSource = sourceLabel;
+        target.Purchase.ExchangeRateInputType = "CSV";
+
+        SetIfChanged(target.CurrentHolding.CurrentShares, unitsHeld, value => target.CurrentHolding.CurrentShares = value, "保有口数", changedFields);
+        SetIfChanged(target.CurrentHolding.CurrentPrice, currentNav, value => target.CurrentHolding.CurrentPrice = value, "基準価額", changedFields);
+        target.CurrentHolding.CurrentExchangeRate = 1m;
+        target.CurrentHolding.ExchangeRateAcquiredAt = snapshotAt;
+        target.CurrentHolding.ExchangeRateSource = sourceLabel;
+        target.CurrentHolding.ExchangeRateInputType = "CSV";
+        target.CurrentHolding.AnnualDividendPerShare = 0m;
+        target.CurrentHolding.DividendStatus = string.Equals(source.DistributionMethod, "再投資", StringComparison.Ordinal)
+            ? "再投資"
+            : "配当なし";
+        target.CurrentHolding.CurrentPriceAcquiredAt = navDate;
+        target.CurrentHolding.CurrentPriceSource = target.MutualFund.NavSource;
+        target.CurrentHolding.UpdatedAt = snapshotAt.Date;
+
+        changedFields.Add("投資信託情報");
+    }
+
     private static StockPosition CreatePosition(BrokerHoldingRecord source, DateTime acquiredAt)
     {
+        if (source.IsMutualFund)
+        {
+            return CreateMutualFundPosition(source, acquiredAt);
+        }
+
         var currency = NormalizeCurrency(source.Currency);
         var currentPrice = source.CurrentPrice > 0m
             ? source.CurrentPrice
@@ -229,12 +311,93 @@ public sealed class BrokerHoldingMergeService
         };
     }
 
+    private static StockPosition CreateMutualFundPosition(BrokerHoldingRecord source, DateTime acquiredAt)
+    {
+        var sourceLabel = string.IsNullOrWhiteSpace(source.Source) ? "証券会社データ" : source.Source.Trim();
+        var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
+        var unitsHeld = source.UnitsHeld > 0m ? source.UnitsHeld : source.Shares;
+        var unitBase = MutualFundCalculator.NormalizeUnitBase(source.UnitBase);
+        var averageCostNav = source.AverageCostNav > 0m ? source.AverageCostNav : source.AverageAcquisitionPrice;
+        var currentNav = source.CurrentNav > 0m ? source.CurrentNav : source.CurrentPrice;
+        var marketValue = source.MarketValue > 0m ? source.MarketValue : source.MarketValueJpy;
+        var unrealizedGainLoss = source.UnrealizedGainLossJpy != 0m
+            ? source.UnrealizedGainLossJpy
+            : marketValue - source.AcquisitionAmount;
+        var navDate = source.NavDate == DateTime.MinValue ? snapshotAt : source.NavDate;
+        var name = string.IsNullOrWhiteSpace(source.Name) ? source.FundName : source.Name.Trim();
+
+        return new StockPosition
+        {
+            Stock = new Stock
+            {
+                AssetType = AssetTypes.MutualFund,
+                Ticker = NormalizeTickerForDisplay(source.Ticker),
+                Name = string.IsNullOrWhiteSpace(name) ? NormalizeTickerForDisplay(source.Ticker) : name,
+                Broker = source.Broker.Trim(),
+                Currency = "JPY",
+                Country = "日本",
+                Sector = string.IsNullOrWhiteSpace(source.Product) ? "投資信託" : source.Product,
+                Market = source.Market,
+                DataSource = sourceLabel
+            },
+            Purchase = new Purchase
+            {
+                PurchaseDate = snapshotAt.Date,
+                Shares = unitsHeld,
+                UnitPrice = averageCostNav,
+                ExchangeRate = 1m,
+                ExchangeRateAcquiredAt = snapshotAt,
+                ExchangeRateSource = sourceLabel,
+                ExchangeRateInputType = "CSV"
+            },
+            Split = new StockSplit
+            {
+                SplitDate = snapshotAt.Date,
+                SplitRatio = 1m
+            },
+            CurrentHolding = new CurrentHolding
+            {
+                CurrentShares = unitsHeld,
+                CurrentPrice = currentNav,
+                CurrentExchangeRate = 1m,
+                ExchangeRateAcquiredAt = snapshotAt,
+                ExchangeRateSource = sourceLabel,
+                ExchangeRateInputType = "CSV",
+                DividendStatus = string.Equals(source.DistributionMethod, "再投資", StringComparison.Ordinal)
+                    ? "再投資"
+                    : "配当なし",
+                CurrentPriceAcquiredAt = navDate,
+                CurrentPriceSource = string.IsNullOrWhiteSpace(source.NavSource) ? sourceLabel : source.NavSource,
+                UpdatedAt = snapshotAt.Date
+            },
+            MutualFund = new MutualFundHolding
+            {
+                FundName = string.IsNullOrWhiteSpace(source.FundName) ? name : source.FundName.Trim(),
+                FundCode = source.FundCode,
+                AssociationCode = source.AssociationCode,
+                UnitsHeld = unitsHeld,
+                UnitBase = unitBase,
+                AverageCostNav = averageCostNav,
+                CurrentNav = currentNav,
+                AcquisitionAmount = source.AcquisitionAmount,
+                MarketValue = marketValue,
+                UnrealizedGainLoss = unrealizedGainLoss,
+                NavDate = navDate,
+                NavSource = string.IsNullOrWhiteSpace(source.NavSource) ? sourceLabel : source.NavSource,
+                DistributionMethod = source.DistributionMethod,
+                AccountType = source.Account,
+                TotalPurchaseAmount = source.AcquisitionAmount
+            }
+        };
+    }
+
     private static StockPosition CopyPosition(StockPosition source) =>
         new()
         {
             Stock = new Stock
             {
                 Id = source.Stock.Id,
+                AssetType = source.Stock.AssetType,
                 Name = source.Stock.Name,
                 Ticker = source.Stock.Ticker,
                 Country = source.Stock.Country,
@@ -287,6 +450,28 @@ public sealed class BrokerHoldingMergeService
                 DividendInfoAcquiredAt = source.CurrentHolding.DividendInfoAcquiredAt,
                 DividendInfoSource = source.CurrentHolding.DividendInfoSource,
                 UpdatedAt = source.CurrentHolding.UpdatedAt
+            },
+            MutualFund = new MutualFundHolding
+            {
+                Id = source.MutualFund.Id,
+                StockId = source.MutualFund.StockId,
+                FundName = source.MutualFund.FundName,
+                FundCode = source.MutualFund.FundCode,
+                AssociationCode = source.MutualFund.AssociationCode,
+                UnitsHeld = source.MutualFund.UnitsHeld,
+                UnitBase = source.MutualFund.UnitBase,
+                AverageCostNav = source.MutualFund.AverageCostNav,
+                CurrentNav = source.MutualFund.CurrentNav,
+                AcquisitionAmount = source.MutualFund.AcquisitionAmount,
+                MarketValue = source.MutualFund.MarketValue,
+                UnrealizedGainLoss = source.MutualFund.UnrealizedGainLoss,
+                NavDate = source.MutualFund.NavDate,
+                NavSource = source.MutualFund.NavSource,
+                DistributionMethod = source.MutualFund.DistributionMethod,
+                AccountType = source.MutualFund.AccountType,
+                TotalPurchaseAmount = source.MutualFund.TotalPurchaseAmount,
+                TotalSaleAmount = source.MutualFund.TotalSaleAmount,
+                ReinvestedDistributionAmount = source.MutualFund.ReinvestedDistributionAmount
             }
         };
 

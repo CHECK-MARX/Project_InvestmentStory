@@ -22,7 +22,7 @@
                     <TextBlock Text="{Binding HeaderBroker}" Style="{StaticResource SubtleTextStyle}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1">
-                    <TextBlock Text="現在株価" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding CurrentPriceLabel}" Style="{StaticResource LabelTextStyle}" />
                     <TextBlock Text="{Binding CurrentPrice}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
                 </StackPanel>
                 <StackPanel Grid.Column="2">
@@ -35,9 +35,9 @@
                     <TextBlock Text="{Binding UnrealizedGainRateJpy}" Style="{StaticResource SubtleTextStyle}" />
                 </StackPanel>
                 <StackPanel Grid.Column="4">
-                    <TextBlock Text="年間配当" Style="{StaticResource LabelTextStyle}" />
-                    <TextBlock Text="{Binding AnnualDividendJpy}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource DividendBrush}" />
-                    <TextBlock Text="{Binding YieldOnCost}" Style="{StaticResource SubtleTextStyle}" />
+                    <TextBlock Text="{Binding HeaderIncomeLabel}" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding HeaderIncomeValue}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource DividendBrush}" />
+                    <TextBlock Text="{Binding HeaderIncomeSubValue}" Style="{StaticResource SubtleTextStyle}" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -47,7 +47,81 @@
                 <TabItem Header="概要">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="4,16,4,4">
-                            <UniformGrid Columns="4">
+                            <UniformGrid Columns="4" Visibility="{Binding MutualFundDetailVisibility}">
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="保有口数" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundUnitsHeld}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="取得単価" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundAverageCostNav}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="基準価額" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundCurrentNav}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource AccentBlueBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="評価損益率" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundUnrealizedGainLossRate}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource ProfitBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="取得金額" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundAcquisitionAmount}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="評価額" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundMarketValue}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="評価損益" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundUnrealizedGainLoss}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource ProfitBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="分配金受取方法" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundDistributionMethod}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource DividendBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="基準価額更新日" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundNavDate}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="基準価額取得元" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundNavSource}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="累計売却額" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundTotalSaleAmount}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource MetricCardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="トータルリターン" Style="{StaticResource LabelTextStyle}" />
+                                        <TextBlock Text="{Binding FundTotalReturn}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ProfitBrush}" />
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+                            <UniformGrid Columns="4" Visibility="{Binding StockDetailVisibility}">
                                 <Border Style="{StaticResource MetricCardStyle}">
                                     <StackPanel>
                                         <TextBlock Text="購入総額" Style="{StaticResource LabelTextStyle}" />

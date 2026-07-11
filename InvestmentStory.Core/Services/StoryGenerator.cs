@@ -8,6 +8,11 @@ public sealed class StoryGenerator
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
+        if (snapshot.Position.IsMutualFund)
+        {
+            return GenerateMutualFundStory(snapshot);
+        }
+
         var stock = snapshot.Position.Stock;
         var purchase = snapshot.Position.Purchase;
         var split = snapshot.Position.Split;
@@ -29,6 +34,27 @@ public sealed class StoryGenerator
             $"購入総額{FormatMoney(snapshot.PurchaseTotal, currency)}に対して{FormatSignedMoney(snapshot.UnrealizedGain, currency)}の{gainLabel}です。" +
             $"円ベースでは{FormatSignedJpy(snapshot.UnrealizedGainJpy)}、為替影響額は{FormatSignedJpy(snapshot.CurrencyImpactJpy)}です。" +
             $"通貨ベース損益率は{snapshot.UnrealizedGainRate:N2}%、円ベース損益率は{snapshot.UnrealizedGainRateJpy:N2}%、投資元本の{snapshot.Multiple:N2}倍です。{gainComment}{dividendComment}";
+    }
+
+    private static string GenerateMutualFundStory(StockSnapshot snapshot)
+    {
+        var fund = snapshot.Position.MutualFund;
+        var name = string.IsNullOrWhiteSpace(fund.FundName)
+            ? snapshot.Position.Stock.Name
+            : fund.FundName;
+        var unitBase = MutualFundCalculator.NormalizeUnitBase(fund.UnitBase);
+        var gainLabel = snapshot.UnrealizedGainJpy < 0m ? "評価損" : "評価益";
+        var navSource = string.IsNullOrWhiteSpace(fund.NavSource) ? "未取得" : fund.NavSource;
+        var navDate = fund.NavDate == DateTime.MinValue ? "未更新" : fund.NavDate.ToString("yyyy/MM/dd");
+
+        return
+            $"{name}は{fund.UnitsHeld:N0}口を保有しています。取得単価は{fund.AverageCostNav:N0}円/{unitBase:N0}口、" +
+            $"基準価額は{fund.CurrentNav:N0}円/{unitBase:N0}口です。取得金額{snapshot.PurchaseTotalJpy:N0}円に対して、" +
+            $"評価額は{snapshot.CurrentMarketValueJpy:N0}円となり、{snapshot.UnrealizedGainJpy:+#,0;-#,0;0}円の{gainLabel}です。" +
+            $"評価損益率は{snapshot.UnrealizedGainRateJpy:N2}%です。基準価額の取得元は{navSource}、更新日は{navDate}です。" +
+            (string.Equals(fund.DistributionMethod, "再投資", StringComparison.Ordinal)
+                ? "分配金受取方法は再投資のため、現金配当の不労所得には加算しません。"
+                : string.IsNullOrWhiteSpace(fund.DistributionMethod) ? string.Empty : $"分配金受取方法は{fund.DistributionMethod}です。");
     }
 
     private static string CreateGainComment(StockSnapshot snapshot)

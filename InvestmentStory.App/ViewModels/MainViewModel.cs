@@ -419,6 +419,11 @@ public sealed class MainViewModel : ObservableObject
 
     private static bool IsMarketDataRefreshTarget(StockPosition position)
     {
+        if (position.IsMutualFund)
+        {
+            return false;
+        }
+
         if (position.CurrentHolding.CurrentShares <= 0m)
         {
             return false;

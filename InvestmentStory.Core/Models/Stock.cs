@@ -3,6 +3,7 @@ namespace InvestmentStory.Core.Models;
 public sealed class Stock
 {
     public int Id { get; set; }
+    public string AssetType { get; set; } = AssetTypes.Stock;
     public string Name { get; set; } = string.Empty;
     public string Ticker { get; set; } = string.Empty;
     public string Country { get; set; } = "米国";
