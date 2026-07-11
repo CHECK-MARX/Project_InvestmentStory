@@ -17,10 +17,13 @@ public sealed class DatabaseInitializer
         connection.Open();
         Execute(connection, "PRAGMA foreign_keys = ON;");
         CreateTables(connection);
+        BackupBeforeSecurityMigrationIfNeeded(connection, databasePath);
+        DropCsvIdempotencyIndexesBeforeMigration(connection);
         MigrateTables(connection);
         RepairCsvReimportDuplicates(connection, databasePath);
         CreateCsvIdempotencyIndexes(connection);
         SeedSampleData(connection);
+        BackfillCanonicalSecurityKeys(connection);
     }
 
     internal static string CreateConnectionString(string databasePath)
@@ -40,6 +43,7 @@ public sealed class DatabaseInitializer
             CREATE TABLE IF NOT EXISTS Stocks (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 AssetType TEXT NOT NULL DEFAULT 'Stock',
+                CanonicalSecurityKey TEXT NOT NULL DEFAULT '',
                 Name TEXT NOT NULL,
                 Ticker TEXT NOT NULL,
                 Country TEXT NOT NULL,
@@ -306,9 +310,18 @@ public sealed class DatabaseInitializer
             """);
     }
 
+    private static void BackupBeforeSecurityMigrationIfNeeded(SqliteConnection connection, string databasePath)
+    {
+        if (!ColumnExists(connection, "Stocks", "CanonicalSecurityKey"))
+        {
+            BackupDatabase(databasePath, "before_security_fix");
+        }
+    }
+
     private static void MigrateTables(SqliteConnection connection)
     {
         AddColumnIfMissing(connection, "Stocks", "AssetType", "TEXT NOT NULL DEFAULT 'Stock'");
+        AddColumnIfMissing(connection, "Stocks", "CanonicalSecurityKey", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Stocks", "AccountType", "TEXT NOT NULL DEFAULT 'Unknown'");
         AddColumnIfMissing(connection, "Stocks", "CustodyType", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Purchases", "ExchangeRateAcquiredAt", "TEXT NOT NULL DEFAULT ''");
@@ -522,6 +535,7 @@ public sealed class DatabaseInitializer
 
         RemoveTickerUniqueConstraintIfNeeded(connection);
         NormalizeLegacySecurityAliases(connection);
+        BackfillCanonicalSecurityKeys(connection);
         MigrateDefaultExchangeRateProvider(connection);
         MigrateDefaultMarketDataProvider(connection);
         BackfillDividendPaymentExtensions(connection);
@@ -544,12 +558,14 @@ public sealed class DatabaseInitializer
 
         var duplicatePositionGroups = ReadDuplicatePositionGroups(connection);
         var duplicateDividendCount = CountDuplicateDividendRows(connection);
-        if (duplicatePositionGroups.Count > 0 || duplicateDividendCount > 0)
+        var zeroPriceInboundCount = CountZeroPriceInboundEvents(connection);
+        if (duplicatePositionGroups.Count > 0 || duplicateDividendCount > 0 || zeroPriceInboundCount > 0)
         {
             BackupDatabase(databasePath);
         }
 
         DeduplicateDividendPayments(connection);
+        NormalizeZeroPriceInboundEvents(connection);
 
         foreach (var group in duplicatePositionGroups)
         {
@@ -600,6 +616,12 @@ public sealed class DatabaseInitializer
     private static void CreateCsvIdempotencyIndexes(SqliteConnection connection)
     {
         Execute(connection, """
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_Stocks_PositionCanonicalIdentity
+            ON Stocks(Broker, CanonicalSecurityKey, AssetType, AccountType, CustodyType, Currency)
+            WHERE CanonicalSecurityKey <> '';
+            """);
+
+        Execute(connection, """
             CREATE UNIQUE INDEX IF NOT EXISTS UX_Stocks_PositionIdentity
             ON Stocks(Broker, Ticker, AssetType, AccountType, CustodyType, Currency);
             """);
@@ -638,6 +660,12 @@ public sealed class DatabaseInitializer
             """);
     }
 
+    private static void DropCsvIdempotencyIndexesBeforeMigration(SqliteConnection connection)
+    {
+        Execute(connection, "DROP INDEX IF EXISTS UX_Stocks_PositionCanonicalIdentity;");
+        Execute(connection, "DROP INDEX IF EXISTS UX_Stocks_PositionIdentity;");
+    }
+
     private static void DeduplicateDividendPayments(SqliteConnection connection)
     {
         Execute(connection, """
@@ -670,13 +698,45 @@ public sealed class DatabaseInitializer
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
+    private static int CountZeroPriceInboundEvents(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM BrokerTrades
+            WHERE SignedQuantity > 0
+              AND UnitPrice = 0
+              AND SettlementAmountJpy = 0
+              AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+            """;
+
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static void NormalizeZeroPriceInboundEvents(SqliteConnection connection)
+    {
+        Execute(connection, """
+            UPDATE BrokerTrades
+            SET TradeType = CASE
+                    WHEN AfterTradeQuantity > SignedQuantity
+                     AND ROUND(AfterTradeQuantity / NULLIF(AfterTradeQuantity - SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
+                        THEN 'StockSplit'
+                    ELSE 'TransferIn'
+                END
+            WHERE SignedQuantity > 0
+              AND UnitPrice = 0
+              AND SettlementAmountJpy = 0
+              AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+            """);
+    }
+
     private static IReadOnlyList<DuplicatePositionGroup> ReadDuplicatePositionGroups(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Broker, Ticker, AssetType, AccountType, CustodyType, Currency
+            SELECT Broker, COALESCE(NULLIF(CanonicalSecurityKey, ''), Ticker), AssetType, AccountType, CustodyType, Currency
             FROM Stocks
-            GROUP BY Broker, Ticker, AssetType, AccountType, CustodyType, Currency
+            GROUP BY Broker, COALESCE(NULLIF(CanonicalSecurityKey, ''), Ticker), AssetType, AccountType, CustodyType, Currency
             HAVING COUNT(*) > 1;
             """;
 
@@ -713,7 +773,7 @@ public sealed class DatabaseInitializer
             LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
             LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
             WHERE s.Broker = $broker
-              AND s.Ticker = $ticker
+              AND COALESCE(NULLIF(s.CanonicalSecurityKey, ''), s.Ticker) = $ticker
               AND s.AssetType = $assetType
               AND s.AccountType = $accountType
               AND s.CustodyType = $custodyType
@@ -825,14 +885,18 @@ public sealed class DatabaseInitializer
             ("$duplicateId", duplicateId));
     }
 
-    private static void BackupDatabase(string databasePath)
+    private static void BackupDatabase(string databasePath, string reason = "backup")
     {
         if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath))
         {
             return;
         }
 
-        var backupPath = $"{databasePath}.backup_{DateTime.Now:yyyyMMddHHmmss}";
+        var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
+        var name = Path.GetFileNameWithoutExtension(databasePath);
+        var extension = Path.GetExtension(databasePath);
+        var suffix = string.IsNullOrWhiteSpace(reason) ? "backup" : reason;
+        var backupPath = Path.Combine(directory, $"{name}_{DateTime.Now:yyyyMMdd_HHmmss}_{suffix}{extension}");
         if (!File.Exists(backupPath))
         {
             File.Copy(databasePath, backupPath);
@@ -915,6 +979,7 @@ public sealed class DatabaseInitializer
                 CREATE TABLE Stocks_Migration_NoTickerUnique (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     AssetType TEXT NOT NULL DEFAULT 'Stock',
+                    CanonicalSecurityKey TEXT NOT NULL DEFAULT '',
                     Name TEXT NOT NULL,
                     Ticker TEXT NOT NULL,
                     Country TEXT NOT NULL,
@@ -934,9 +999,9 @@ public sealed class DatabaseInitializer
 
             Execute(connection, transaction, """
                 INSERT INTO Stocks_Migration_NoTickerUnique
-                    (Id, AssetType, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt)
+                    (Id, AssetType, CanonicalSecurityKey, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt)
                 SELECT
-                    Id, AssetType, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt
+                    Id, AssetType, CanonicalSecurityKey, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo, CreatedAt, UpdatedAt
                 FROM Stocks;
                 """);
 
@@ -970,6 +1035,33 @@ public sealed class DatabaseInitializer
             """);
 
         MergeDuplicateStocksByBrokerAndTicker(connection, "CMBT");
+    }
+
+    private static void BackfillCanonicalSecurityKeys(SqliteConnection connection)
+    {
+        Execute(connection, """
+            UPDATE Stocks
+            SET CanonicalSecurityKey = CASE
+                WHEN Stocks.AssetType = 'MutualFund' THEN
+                    'FUND:JP:' ||
+                    UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(
+                        (SELECT NULLIF(FundCode, '') FROM MutualFundHoldings WHERE StockId = Stocks.Id ORDER BY Id DESC LIMIT 1),
+                        (SELECT NULLIF(AssociationCode, '') FROM MutualFundHoldings WHERE StockId = Stocks.Id ORDER BY Id DESC LIMIT 1),
+                        NULLIF(Stocks.Ticker, ''),
+                        (SELECT NULLIF(FundName, '') FROM MutualFundHoldings WHERE StockId = Stocks.Id ORDER BY Id DESC LIMIT 1),
+                        Stocks.Name), ' ', ''), '　', ''), '-', ''), '－', ''), 'ー', ''))
+                WHEN Stocks.Currency = 'JPY' OR Stocks.Country LIKE '%日本%' OR Stocks.Market LIKE '%TSE%' THEN
+                    'EQUITY:JP:' || CASE WHEN TRIM(Market) = '' THEN 'TSE' ELSE UPPER(REPLACE(REPLACE(TRIM(Market), ' ', ''), '　', '')) END || ':' ||
+                    UPPER(REPLACE(REPLACE(REPLACE(TRIM(Ticker), '.T', ''), ' ', ''), '　', ''))
+                WHEN Stocks.Currency = 'USD' OR Stocks.Country LIKE '%米%' OR UPPER(Stocks.Market) IN ('US', 'NASDAQ', 'NYSE') THEN
+                    'EQUITY:US:' || CASE WHEN TRIM(Market) = '' THEN 'US' ELSE UPPER(REPLACE(REPLACE(TRIM(Market), ' ', ''), '　', '')) END || ':' ||
+                    UPPER(REPLACE(REPLACE(REPLACE(TRIM(Ticker), '.T', ''), ' ', ''), '　', ''))
+                ELSE
+                    UPPER(AssetType) || ':' || UPPER(REPLACE(REPLACE(COALESCE(NULLIF(Country, ''), NULLIF(Currency, ''), 'UNKNOWN'), ' ', ''), '　', '')) || ':UNKNOWN:' ||
+                    UPPER(REPLACE(REPLACE(COALESCE(NULLIF(Ticker, ''), Name), ' ', ''), '　', ''))
+            END
+            WHERE Stocks.CanonicalSecurityKey = '' OR Stocks.CanonicalSecurityKey IS NULL;
+            """);
     }
 
     private static void MigrateDefaultExchangeRateProvider(SqliteConnection connection)
@@ -1082,6 +1174,22 @@ public sealed class DatabaseInitializer
         using var alterCommand = connection.CreateCommand();
         alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
         alterCommand.ExecuteNonQuery();
+    }
+
+    private static bool ColumnExists(SqliteConnection connection, string tableName, string columnName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void SeedSampleData(SqliteConnection connection)

@@ -39,7 +39,8 @@ public sealed class InvestmentStoryRepository
                 mf.Id, mf.FundName, mf.FundCode, mf.AssociationCode, mf.UnitsHeld, mf.UnitBase,
                 mf.AverageCostNav, mf.CurrentNav, mf.AcquisitionAmount, mf.MarketValue, mf.UnrealizedGainLoss,
                 mf.NavDate, mf.NavSource, mf.DistributionMethod, mf.AccountType,
-                mf.TotalPurchaseAmount, mf.TotalSaleAmount, mf.ReinvestedDistributionAmount
+                mf.TotalPurchaseAmount, mf.TotalSaleAmount, mf.ReinvestedDistributionAmount,
+                s.CanonicalSecurityKey
             FROM Stocks s
             LEFT JOIN Purchases p ON p.Id = (SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1)
             LEFT JOIN StockSplits sp ON sp.Id = (SELECT Id FROM StockSplits WHERE StockId = s.Id ORDER BY SplitDate DESC, Id DESC LIMIT 1)
@@ -70,7 +71,8 @@ public sealed class InvestmentStoryRepository
                     Market = GetString(reader, 10),
                     DataSource = GetStringOrDefault(reader, 11, "手入力"),
                     Memo = GetString(reader, 12),
-                    AssetType = GetStringOrDefault(reader, 43, AssetTypes.Stock)
+                    AssetType = GetStringOrDefault(reader, 43, AssetTypes.Stock),
+                    CanonicalSecurityKey = GetString(reader, 62)
                 },
                 Purchase = new Purchase
                 {
@@ -650,12 +652,12 @@ public sealed class InvestmentStoryRepository
         }
 
         var positions = GetPositions()
-            .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(x => SecurityIdentityService.BuildPositionKey(x), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         var ledgerBuilder = new TradeLedgerService();
         var ledgers = new List<BrokerTrade>();
 
-        foreach (var group in records.GroupBy(x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase))
+        foreach (var group in records.GroupBy(BuildTradePositionKey, StringComparer.OrdinalIgnoreCase))
         {
             if (!positions.TryGetValue(group.Key, out var position))
             {
@@ -697,6 +699,29 @@ public sealed class InvestmentStoryRepository
         return ReadBrokerTrades(command);
     }
 
+    public IReadOnlyList<BrokerTrade> GetBrokerTrades(IEnumerable<int> stockIds)
+    {
+        var ids = stockIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return Array.Empty<BrokerTrade>();
+        }
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        var parameterNames = AddIdParameters(command, ids);
+        command.CommandText = $"""
+            SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                   Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                   FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                   AfterTradeAverageCost, Source, SourceFile, CreatedAt
+            FROM BrokerTrades
+            WHERE StockId IN ({string.Join(", ", parameterNames)})
+            ORDER BY TradeDate DESC, SettlementDate DESC, Id DESC;
+            """;
+        return ReadBrokerTrades(command);
+    }
+
     public IReadOnlyList<BrokerTrade> GetAllBrokerTrades()
     {
         using var connection = OpenConnection();
@@ -725,6 +750,11 @@ public sealed class InvestmentStoryRepository
             """;
         command.Parameters.AddWithValue("$stockId", stockId);
 
+        return ReadDataQualityInfos(command);
+    }
+
+    private static IReadOnlyList<DataQualityInfo> ReadDataQualityInfos(SqliteCommand command)
+    {
         using var reader = command.ExecuteReader();
         var values = new List<DataQualityInfo>();
         while (reader.Read())
@@ -749,6 +779,28 @@ public sealed class InvestmentStoryRepository
         }
 
         return values;
+    }
+
+    public IReadOnlyList<DataQualityInfo> GetDataQualityInfos(IEnumerable<int> stockIds)
+    {
+        var ids = stockIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return Array.Empty<DataQualityInfo>();
+        }
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        var parameterNames = AddIdParameters(command, ids);
+        command.CommandText = $"""
+            SELECT Id, StockId, FieldName, Value, SourceType, SourceName, RetrievedAt, ConfidenceLevel,
+                   IsEstimated, IsStale, HasConflict, ConflictDescription, ManualOverride, Memo
+            FROM DataQualityInfos
+            WHERE StockId IN ({string.Join(", ", parameterNames)})
+            ORDER BY StockId, FieldName;
+            """;
+
+        return ReadDataQualityInfos(command);
     }
 
     public void SaveDataQualityInfos(IEnumerable<DataQualityInfo> items)
@@ -840,6 +892,7 @@ public sealed class InvestmentStoryRepository
         }
 
         PositionIdentityService.NormalizeForPersistence(position.Stock);
+        position.Stock.CanonicalSecurityKey = SecurityIdentityService.BuildCanonicalKey(position);
     }
 
     private static int FindStockIdByIdentity(SqliteConnection connection, SqliteTransaction transaction, Stock stock)
@@ -850,7 +903,10 @@ public sealed class InvestmentStoryRepository
             SELECT Id
             FROM Stocks
             WHERE Broker = $broker
-              AND Ticker = $ticker
+              AND (
+                    (CanonicalSecurityKey <> '' AND CanonicalSecurityKey = $canonicalSecurityKey)
+                 OR (CanonicalSecurityKey = '' AND Ticker = $ticker)
+              )
               AND AssetType = $assetType
               AND AccountType = $accountType
               AND CustodyType = $custodyType
@@ -859,6 +915,7 @@ public sealed class InvestmentStoryRepository
             LIMIT 1;
             """;
         command.Parameters.AddWithValue("$broker", stock.Broker);
+        command.Parameters.AddWithValue("$canonicalSecurityKey", stock.CanonicalSecurityKey);
         command.Parameters.AddWithValue("$ticker", stock.Ticker);
         command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
         command.Parameters.AddWithValue("$accountType", AccountTypeNormalizer.Normalize(stock.AccountType));
@@ -919,8 +976,8 @@ public sealed class InvestmentStoryRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO Stocks (AssetType, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo)
-            VALUES ($assetType, $name, $ticker, $country, $currency, $broker, $accountType, $custodyType, $sector, $industry, $market, $dataSource, $memo);
+            INSERT INTO Stocks (AssetType, CanonicalSecurityKey, Name, Ticker, Country, Currency, Broker, AccountType, CustodyType, Sector, Industry, Market, DataSource, Memo)
+            VALUES ($assetType, $canonicalSecurityKey, $name, $ticker, $country, $currency, $broker, $accountType, $custodyType, $sector, $industry, $market, $dataSource, $memo);
             SELECT last_insert_rowid();
             """;
         AddStockParameters(command, stock);
@@ -934,6 +991,7 @@ public sealed class InvestmentStoryRepository
         command.CommandText = """
             UPDATE Stocks
             SET AssetType = $assetType,
+                CanonicalSecurityKey = $canonicalSecurityKey,
                 Name = $name,
                 Ticker = $ticker,
                 Country = $country,
@@ -1297,8 +1355,13 @@ public sealed class InvestmentStoryRepository
     private static void AddStockParameters(SqliteCommand command, Stock stock)
     {
         PositionIdentityService.NormalizeForPersistence(stock);
+        if (string.IsNullOrWhiteSpace(stock.CanonicalSecurityKey))
+        {
+            stock.CanonicalSecurityKey = SecurityIdentityService.BuildCanonicalKey(stock);
+        }
 
         command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
+        command.Parameters.AddWithValue("$canonicalSecurityKey", stock.CanonicalSecurityKey);
         command.Parameters.AddWithValue("$name", stock.Name);
         command.Parameters.AddWithValue("$ticker", stock.Ticker);
         command.Parameters.AddWithValue("$country", stock.Country);
@@ -1498,6 +1561,44 @@ public sealed class InvestmentStoryRepository
     {
         var normalized = string.IsNullOrWhiteSpace(currency) ? "JPY" : currency.Trim().ToUpperInvariant();
         return normalized is "YEN" or "円" ? "JPY" : normalized;
+    }
+
+    private static IReadOnlyList<string> AddIdParameters(SqliteCommand command, IReadOnlyList<int> ids)
+    {
+        var names = new List<string>(ids.Count);
+        for (var i = 0; i < ids.Count; i++)
+        {
+            var name = $"$id{i}";
+            command.Parameters.AddWithValue(name, ids[i]);
+            names.Add(name);
+        }
+
+        return names;
+    }
+
+    private static string BuildTradePositionKey(BrokerTradeRecord trade)
+    {
+        var stock = new Stock
+        {
+            AssetType = AssetTypes.Stock,
+            Broker = trade.Broker,
+            Ticker = trade.Ticker,
+            Currency = trade.Currency,
+            AccountType = trade.Account,
+            CustodyType = trade.Account,
+            Country = NormalizeCurrency(trade.Currency) == "JPY" ? "Japan" : "US"
+        };
+        PositionIdentityService.NormalizeForPersistence(stock);
+        stock.CanonicalSecurityKey = SecurityIdentityService.BuildCanonicalKey(stock);
+
+        var position = new StockPosition
+        {
+            Stock = stock,
+            CurrentHolding = new CurrentHolding(),
+            Purchase = new Purchase(),
+            Split = new StockSplit()
+        };
+        return SecurityIdentityService.BuildPositionKey(position);
     }
 
     private static string BuildPositionKey(string broker, string ticker, string accountType)

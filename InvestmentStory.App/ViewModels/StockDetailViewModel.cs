@@ -9,17 +9,27 @@ namespace InvestmentStory.App.ViewModels;
 public sealed class StockDetailViewModel : ObservableObject
 {
     private StockSnapshot? _snapshot;
+    private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
     private IReadOnlyList<BrokerTrade> _trades = Array.Empty<BrokerTrade>();
     private string _story = "銘柄一覧から銘柄を選択してください。";
 
     public bool HasStock => _snapshot is not null;
+    public bool IsAggregated => _snapshots.Count > 1;
     public bool IsMutualFund => _snapshot?.Position.IsMutualFund == true;
     public Visibility StockDetailVisibility => IsMutualFund ? Visibility.Collapsed : Visibility.Visible;
     public Visibility MutualFundDetailVisibility => IsMutualFund ? Visibility.Visible : Visibility.Collapsed;
     public string Title => _snapshot is null ? "銘柄詳細" : $"{_snapshot.Position.Stock.Ticker} / {_snapshot.Position.Stock.Name}";
     public string HeaderTicker => _snapshot?.Position.Stock.Ticker ?? "-";
     public string HeaderName => _snapshot?.Position.Stock.Name ?? "銘柄を選択してください";
-    public string HeaderBroker => _snapshot?.Position.Stock.Broker ?? "-";
+    public string HeaderBroker => IsAggregated ? "全口座集約" : _snapshot?.Position.Stock.Broker ?? "-";
+    public string DetailScope => IsAggregated ? $"全口座集約 / {_snapshots.Count:N0}ポジション" : HeaderBroker;
+    public string PositionBreakdown => _snapshots.Count == 0
+        ? "-"
+        : string.Join(" / ", _snapshots.Select(x =>
+        {
+            var quantity = x.Position.IsMutualFund ? x.Position.MutualFund.UnitsHeld : x.Position.CurrentHolding.CurrentShares;
+            return $"{x.Position.Stock.Broker}:{x.Position.Stock.AccountType}:{quantity:N2}";
+        }));
     public string CurrentPriceLabel => IsMutualFund ? "基準価額" : "現在株価";
     public string CurrentPrice => _snapshot is null
         ? "-"
@@ -41,24 +51,26 @@ public sealed class StockDetailViewModel : ObservableObject
         : $"{_snapshot.Position.CurrentHolding.ExchangeRateAcquiredAt:yyyy/MM/dd HH:mm} / {_snapshot.Position.CurrentHolding.ExchangeRateSource} / {_snapshot.Position.CurrentHolding.ExchangeRateInputType}";
     public string PurchaseTotal => PurchaseTotalUsd;
     public string PurchaseTotalUsd => Money(x => x.PurchaseTotalUsd);
-    public string PurchaseTotalJpy => _snapshot is null ? "-" : Formatters.Jpy(_snapshot.PurchaseTotalJpy);
-    public string EffectiveAcquisitionPrice => Money(x => x.EffectiveAcquisitionPrice);
+    public string PurchaseTotalJpy => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
+    public string EffectiveAcquisitionPrice => _snapshot is null
+        ? "-"
+        : Formatters.Money(DivideOrZero(Sum(x => x.PurchaseTotal), Sum(x => x.Position.CurrentHolding.CurrentShares)), _snapshot.Position.Stock.Currency);
     public string CurrentMarketValue => CurrentMarketValueUsd;
     public string CurrentMarketValueUsd => Money(x => x.CurrentMarketValueUsd);
-    public string CurrentMarketValueJpy => _snapshot is null ? "-" : Formatters.Jpy(_snapshot.CurrentMarketValueJpy);
+    public string CurrentMarketValueJpy => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.CurrentMarketValueJpy));
     public string UnrealizedGain => UnrealizedGainUsd;
-    public string UnrealizedGainUsd => _snapshot is null ? "-" : Formatters.SignedMoney(_snapshot.UnrealizedGainUsd, _snapshot.Position.Stock.Currency);
-    public string UnrealizedGainRate => _snapshot is null ? "-" : Formatters.SignedPercent(_snapshot.UnrealizedGainRate);
-    public string UnrealizedGainRateJpy => _snapshot is null ? "-" : Formatters.SignedPercent(_snapshot.UnrealizedGainRateJpy);
-    public string UnrealizedGainJpy => _snapshot is null ? "-" : Formatters.SignedJpy(_snapshot.UnrealizedGainJpy);
-    public string CurrencyImpactJpy => _snapshot is null ? "-" : Formatters.SignedJpy(_snapshot.CurrencyImpactJpy);
-    public string Multiple => _snapshot is null ? "-" : $"{_snapshot.Multiple:N2}倍";
+    public string UnrealizedGainUsd => _snapshot is null ? "-" : Formatters.SignedMoney(Sum(x => x.UnrealizedGainUsd), _snapshot.Position.Stock.Currency);
+    public string UnrealizedGainRate => _snapshot is null ? "-" : Formatters.SignedPercent(DivideOrZero(Sum(x => x.CurrentMarketValue) - Sum(x => x.PurchaseTotal), Sum(x => x.PurchaseTotal)) * 100m);
+    public string UnrealizedGainRateJpy => _snapshot is null ? "-" : Formatters.SignedPercent(DivideOrZero(Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy), Sum(x => x.PurchaseTotalJpy)) * 100m);
+    public string UnrealizedGainJpy => _snapshot is null ? "-" : Formatters.SignedJpy(Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy));
+    public string CurrencyImpactJpy => _snapshot is null ? "-" : Formatters.SignedJpy(Sum(x => x.CurrencyImpactJpy));
+    public string Multiple => _snapshot is null ? "-" : $"{DivideOrZero(Sum(x => x.CurrentMarketValue), Sum(x => x.PurchaseTotal)):N2}倍";
     public string AnnualDividend => IsDividendNotEntered ? "配当情報が未入力です" : Money(x => x.AnnualDividendForecast);
-    public string AnnualDividendJpy => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Jpy(_snapshot.AnnualDividendForecastJpy);
+    public string AnnualDividendJpy => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Jpy(Sum(x => x.AnnualDividendForecastJpy));
     public string MonthlyDividend => IsDividendNotEntered ? "配当情報が未入力です" : Money(x => x.MonthlyPassiveIncomeForecast);
-    public string MonthlyDividendJpy => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Jpy(_snapshot.MonthlyPassiveIncomeForecastJpy);
-    public string CurrentDividendYield => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Percent(_snapshot.CurrentDividendYield);
-    public string YieldOnCost => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Percent(_snapshot.YieldOnCost);
+    public string MonthlyDividendJpy => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Jpy(Sum(x => x.MonthlyPassiveIncomeForecastJpy));
+    public string CurrentDividendYield => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Percent(DivideOrZero(Sum(x => x.AnnualDividendForecastJpy), Sum(x => x.CurrentMarketValueJpy)) * 100m);
+    public string YieldOnCost => _snapshot is null ? "-" : IsDividendNotEntered ? "配当情報が未入力です" : Formatters.Percent(DivideOrZero(Sum(x => x.AnnualDividendForecastJpy), Sum(x => x.PurchaseTotalJpy)) * 100m);
     public string ShareChangeRatio => _snapshot is null ? "-" : $"{_snapshot.ShareChangeRatio:N2}倍";
     public string CurrentPriceSource => _snapshot is null || string.IsNullOrWhiteSpace(_snapshot.Position.CurrentHolding.CurrentPriceSource)
         ? "未取得"
@@ -73,8 +85,8 @@ public sealed class StockDetailViewModel : ObservableObject
         ? "未取得"
         : _snapshot.Position.CurrentHolding.DividendInfoAcquiredAt.ToString("yyyy/MM/dd HH:mm");
     public string Story => _story;
-    public bool HasPositiveGain => _snapshot is not null && _snapshot.UnrealizedGainJpy > 0m;
-    public bool HasNegativeGain => _snapshot is not null && _snapshot.UnrealizedGainJpy < 0m;
+    public bool HasPositiveGain => _snapshot is not null && Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy) > 0m;
+    public bool HasNegativeGain => _snapshot is not null && Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy) < 0m;
     public string FundName => _snapshot is null
         ? "-"
         : string.IsNullOrWhiteSpace(_snapshot.Position.MutualFund.FundName)
@@ -119,7 +131,10 @@ public sealed class StockDetailViewModel : ObservableObject
         ? "取引履歴CSVが未取込です。保有残高CSVの数量・取得単価を優先して表示しています。"
         : "実現損益はCSV取引履歴等から計算した投資分析用参考値です。税務上の正式な金額は証券会社の報告書をご確認ください。";
 
-    private bool IsDividendNotEntered => _snapshot?.Position.CurrentHolding.DividendStatus == "配当未入力";
+    private bool IsDividendNotEntered =>
+        _snapshot is not null &&
+        Sum(x => x.AnnualDividendForecastJpy) == 0m &&
+        _snapshots.All(x => x.Position.CurrentHolding.DividendStatus == "配当未入力");
 
     public void Update(
         StockSnapshot? snapshot,
@@ -127,7 +142,17 @@ public sealed class StockDetailViewModel : ObservableObject
         IReadOnlyList<BrokerTrade>? trades = null,
         IReadOnlyList<DataQualityInfo>? dataQualityInfos = null)
     {
-        _snapshot = snapshot;
+        Update(snapshot is null ? Array.Empty<StockSnapshot>() : new[] { snapshot }, story, trades, dataQualityInfos);
+    }
+
+    public void Update(
+        IReadOnlyList<StockSnapshot> snapshots,
+        string? story,
+        IReadOnlyList<BrokerTrade>? trades = null,
+        IReadOnlyList<DataQualityInfo>? dataQualityInfos = null)
+    {
+        _snapshots = snapshots;
+        _snapshot = snapshots.FirstOrDefault();
         _trades = trades ?? Array.Empty<BrokerTrade>();
         _story = story ?? "銘柄一覧から銘柄を選択してください。";
         TradeRows.Clear();
@@ -152,8 +177,13 @@ public sealed class StockDetailViewModel : ObservableObject
             return "-";
         }
 
-        return Formatters.Money(selector(_snapshot), _snapshot.Position.Stock.Currency);
+        return Formatters.Money(Sum(selector), _snapshot.Position.Stock.Currency);
     }
+
+    private decimal Sum(Func<StockSnapshot, decimal> selector) => _snapshots.Sum(selector);
+
+    private static decimal DivideOrZero(decimal numerator, decimal denominator) =>
+        denominator == 0m ? 0m : numerator / denominator;
 
     private static string FormatFundNav(decimal nav, decimal unitBase)
     {
@@ -165,9 +195,22 @@ public sealed class StockDetailViewModel : ObservableObject
         string.IsNullOrWhiteSpace(value) ? fallback : value;
 
     private static bool IsBuyTrade(BrokerTrade trade) =>
+        !IsNonBuyInbound(trade) && (
         trade.SignedQuantity > 0m ||
         trade.TradeType.Contains("買", StringComparison.Ordinal) ||
-        trade.TradeType.Contains("雋ｷ", StringComparison.Ordinal);
+        trade.TradeType.Contains("雋ｷ", StringComparison.Ordinal));
+
+    private static bool IsNonBuyInbound(BrokerTrade trade) =>
+        trade.TradeType.Equals("TransferIn", StringComparison.OrdinalIgnoreCase) ||
+        trade.TradeType.Equals("OpeningBalance", StringComparison.OrdinalIgnoreCase) ||
+        trade.TradeType.Equals("StockSplit", StringComparison.OrdinalIgnoreCase) ||
+        trade.TradeType.Equals("ReverseSplit", StringComparison.OrdinalIgnoreCase) ||
+        trade.TradeType.Equals("UnknownAdjustment", StringComparison.OrdinalIgnoreCase) ||
+        trade.TradeType.Contains("入庫", StringComparison.Ordinal) ||
+        trade.TradeType.Contains("出庫", StringComparison.Ordinal) ||
+        trade.TradeType.Contains("移管", StringComparison.Ordinal) ||
+        trade.TradeType.Contains("分割", StringComparison.Ordinal) ||
+        trade.TradeType.Contains("併合", StringComparison.Ordinal);
 
     private static bool IsSellTrade(BrokerTrade trade) =>
         trade.SignedQuantity < 0m ||

@@ -20,6 +20,8 @@
                     <TextBlock Text="{Binding HeaderTicker}" Foreground="{DynamicResource AccentBlueBrush}" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding HeaderName}" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" />
                     <TextBlock Text="{Binding HeaderBroker}" Style="{StaticResource SubtleTextStyle}" />
+                    <TextBlock Text="{Binding DetailScope}" Style="{StaticResource SubtleTextStyle}" />
+                    <TextBlock Text="{Binding PositionBreakdown}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1">
                     <TextBlock Text="{Binding CurrentPriceLabel}" Style="{StaticResource LabelTextStyle}" />
@@ -31,7 +33,21 @@
                 </StackPanel>
                 <StackPanel Grid.Column="3">
                     <TextBlock Text="含み損益" Style="{StaticResource LabelTextStyle}" />
-                    <TextBlock Text="{Binding UnrealizedGainJpy}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource ProfitBrush}" />
+                    <TextBlock Text="{Binding UnrealizedGainJpy}" FontSize="22" FontWeight="SemiBold">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasPositiveGain}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource ProfitBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding HasNegativeGain}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource LossBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                     <TextBlock Text="{Binding UnrealizedGainRateJpy}" Style="{StaticResource SubtleTextStyle}" />
                 </StackPanel>
                 <StackPanel Grid.Column="4">

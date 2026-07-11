@@ -21,6 +21,11 @@ public sealed class StockRowViewModel
     public StockSnapshot Snapshot { get; }
     public bool IsAggregated => Snapshots.Count > 1;
     public int StockId => Snapshot.Position.Stock.Id;
+    public string CanonicalSecurityKey => SecurityIdentityService.BuildCanonicalKey(Snapshot.Position);
+    public string DetailKey => IsAggregated
+        ? CanonicalSecurityKey
+        : SecurityIdentityService.BuildPositionKey(Snapshot.Position);
+    public string DetailScopeLabel => IsAggregated ? "全口座集約" : $"{Broker} / {AccountType}";
     public bool IsMutualFund => Snapshots.All(x => x.Position.IsMutualFund);
     public string AssetTypeLabel => IsMutualFund ? "投資信託" : "株式";
     public string Ticker => Snapshot.Position.Stock.Ticker;

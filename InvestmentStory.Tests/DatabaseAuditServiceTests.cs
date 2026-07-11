@@ -20,6 +20,16 @@ public sealed class DatabaseAuditServiceTests
             Assert.Equal(0, audit.DuplicatePositionGroups);
             Assert.Equal(0, audit.DuplicateDividendRows);
             Assert.Equal(0, audit.DuplicateTradeRows);
+            Assert.Equal(0, audit.DuplicateTransactionRows);
+            Assert.Equal(0, audit.DuplicateMutualFundGroups);
+            Assert.True(audit.SecurityMasters > 0);
+            Assert.True(audit.Positions > 0);
+            Assert.True(audit.Transactions >= 0);
+            Assert.True(audit.DividendPayments >= 0);
+            Assert.True(audit.ZeroPriceInboundEvents >= 0);
+            Assert.True(audit.StockSplitCandidates >= 0);
+            Assert.True(audit.MissingTransactionHistoryPositions >= 0);
+            Assert.True(audit.UnknownCostPositions >= 0);
             Assert.Equal(0, audit.OrphanHoldings);
             Assert.Equal(0, audit.OrphanDividends);
             Assert.Equal(0, audit.OrphanTrades);

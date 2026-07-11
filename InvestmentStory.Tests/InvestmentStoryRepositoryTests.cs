@@ -211,6 +211,63 @@ public sealed class InvestmentStoryRepositoryTests
         }
     }
 
+    [Fact]
+    public void SavePosition_UpsertsMutualFundHoldingByCanonicalFundCode_WhenDisplayNameChanges()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_fund_canonical_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+
+            var first = CreateMutualFundPosition(
+                unitsHeld: 411_318m,
+                averageCostNav: 29_499m,
+                currentNav: 40_579m,
+                acquisitionAmount: 1_213_346m,
+                marketValue: 1_669_087m,
+                unrealizedGainLoss: 455_741m);
+            first.Stock.Name = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド";
+            first.Stock.Ticker = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド";
+            first.MutualFund.FundName = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド";
+            first.MutualFund.FundCode = "SBI-V-SP500";
+
+            var second = CreateMutualFundPosition(
+                unitsHeld: 420_000m,
+                averageCostNav: 30_000m,
+                currentNav: 41_000m,
+                acquisitionAmount: 1_260_000m,
+                marketValue: 1_722_000m,
+                unrealizedGainLoss: 462_000m);
+            second.Stock.Name = "SBI V S&P500 Index Fund";
+            second.Stock.Ticker = "SBI V S&P500 Index Fund";
+            second.MutualFund.FundName = "SBI V S&P500 Index Fund";
+            second.MutualFund.FundCode = "SBI-V-SP500";
+
+            var firstId = repository.SavePosition(first);
+            var secondId = repository.SavePosition(second);
+
+            var loadedFunds = repository.GetPositions()
+                .Where(x => x.Stock.AssetType == AssetTypes.MutualFund &&
+                            x.MutualFund.FundCode == "SBI-V-SP500")
+                .ToList();
+
+            Assert.Equal(firstId, secondId);
+            var loaded = Assert.Single(loadedFunds);
+            Assert.Equal(420_000m, loaded.MutualFund.UnitsHeld);
+            Assert.Equal(41_000m, loaded.MutualFund.CurrentNav);
+            Assert.Equal(1_722_000m, loaded.MutualFund.MarketValue);
+            Assert.StartsWith("FUND:", loaded.Stock.CanonicalSecurityKey, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
     private static StockPosition CreateMutualFundPosition(
         decimal unitsHeld,
         decimal averageCostNav,

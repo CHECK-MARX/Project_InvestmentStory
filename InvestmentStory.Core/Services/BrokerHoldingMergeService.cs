@@ -428,6 +428,7 @@ public sealed class BrokerHoldingMergeService
             {
                 Id = source.Stock.Id,
                 AssetType = source.Stock.AssetType,
+                CanonicalSecurityKey = source.Stock.CanonicalSecurityKey,
                 Name = source.Stock.Name,
                 Ticker = source.Stock.Ticker,
                 Country = source.Stock.Country,

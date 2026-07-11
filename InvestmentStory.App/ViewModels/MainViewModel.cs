@@ -23,6 +23,8 @@ public sealed class MainViewModel : ObservableObject
         new YahooFinanceStockLookupService());
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
     private int? _selectedDetailStockId;
+    private string? _selectedDetailKey;
+    private bool _selectedDetailIsAggregate;
     private object _currentPage;
     private string _currentTitle = "ダッシュボード";
     private bool _isSidebarCollapsed;
@@ -72,7 +74,8 @@ public sealed class MainViewModel : ObservableObject
             RefreshSelectedMarketData,
             RefreshAllMarketData,
             RefreshMissingMarketData,
-            SaveStockListDisplayMode);
+            SaveStockListDisplayMode,
+            ShowStockDetail);
         StockList.SelectedDisplayMode = settings.StockListDisplayMode;
         StockEditor = new StockEditorViewModel(SaveStock, DeleteStock);
         StockDetail = new StockDetailViewModel();
@@ -109,7 +112,13 @@ public sealed class MainViewModel : ObservableObject
         ShowStockEditorCommand = new RelayCommand(NewDetailedStock);
         ShowStockDetailCommand = new RelayCommand(() =>
         {
-            var stockId = StockList.SelectedRow?.StockId ?? _snapshots.FirstOrDefault()?.Position.Stock.Id;
+            if (StockList.SelectedRow is not null)
+            {
+                ShowStockDetail(StockList.SelectedRow);
+                return;
+            }
+
+            var stockId = _snapshots.FirstOrDefault()?.Position.Stock.Id;
             if (stockId is not null)
             {
                 ShowStockDetail(stockId.Value);
@@ -269,8 +278,8 @@ public sealed class MainViewModel : ObservableObject
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
-        var detailSnapshot = ResolveDetailSnapshot();
-        UpdateStockDetail(detailSnapshot);
+        var detailSnapshots = ResolveDetailSnapshots();
+        UpdateStockDetail(detailSnapshots);
     }
 
     private void RecordCurrentPortfolioSnapshot()
@@ -514,6 +523,8 @@ public sealed class MainViewModel : ObservableObject
     {
         var stockId = _repository.SavePosition(position);
         _selectedDetailStockId = stockId;
+        _selectedDetailKey = null;
+        _selectedDetailIsAggregate = false;
         LoadData();
         ShowStockDetail(stockId);
     }
@@ -524,6 +535,8 @@ public sealed class MainViewModel : ObservableObject
         if (_selectedDetailStockId == stockId)
         {
             _selectedDetailStockId = null;
+            _selectedDetailKey = null;
+            _selectedDetailIsAggregate = false;
         }
 
         LoadData();
@@ -533,24 +546,37 @@ public sealed class MainViewModel : ObservableObject
     private void ShowStockDetail(int stockId)
     {
         _selectedDetailStockId = stockId;
+        _selectedDetailKey = null;
+        _selectedDetailIsAggregate = false;
         var snapshot = _snapshots.FirstOrDefault(x => x.Position.Stock.Id == stockId);
-        UpdateStockDetail(snapshot);
+        UpdateStockDetail(snapshot is null ? Array.Empty<StockSnapshot>() : new[] { snapshot });
         Navigate(StockDetail, "銘柄詳細");
     }
 
-    private void UpdateStockDetail(StockSnapshot? snapshot)
+    private void ShowStockDetail(StockRowViewModel row)
     {
-        if (snapshot is null)
+        _selectedDetailStockId = row.StockId;
+        _selectedDetailKey = row.DetailKey;
+        _selectedDetailIsAggregate = row.IsAggregated;
+        UpdateStockDetail(row.Snapshots);
+        Navigate(StockDetail, "驫俶氛隧ｳ邏ｰ");
+    }
+
+    private void UpdateStockDetail(IReadOnlyList<StockSnapshot> snapshots)
+    {
+        if (snapshots.Count == 0)
         {
-            StockDetail.Update(null, null, Array.Empty<BrokerTrade>(), Array.Empty<DataQualityInfo>());
+            StockDetail.Update((StockSnapshot?)null, null, Array.Empty<BrokerTrade>(), Array.Empty<DataQualityInfo>());
             return;
         }
 
+        var snapshot = snapshots[0];
+        var stockIds = snapshots.Select(x => x.Position.Stock.Id).ToList();
         StockDetail.Update(
-            snapshot,
-            _storyGenerator.Generate(snapshot),
-            _repository.GetBrokerTrades(snapshot.Position.Stock.Id),
-            _repository.GetDataQualityInfos(snapshot.Position.Stock.Id));
+            snapshots,
+            snapshots.Count == 1 ? _storyGenerator.Generate(snapshot) : BuildAggregateStory(snapshots),
+            _repository.GetBrokerTrades(stockIds),
+            _repository.GetDataQualityInfos(stockIds));
     }
 
     private void RefreshSelectedMarketData(int stockId)
@@ -840,19 +866,52 @@ public sealed class MainViewModel : ObservableObject
         _repository.SaveApiFetchLogs(logs);
     }
 
-    private StockSnapshot? ResolveDetailSnapshot()
+    private IReadOnlyList<StockSnapshot> ResolveDetailSnapshots()
     {
+        if (_selectedDetailIsAggregate && !string.IsNullOrWhiteSpace(_selectedDetailKey))
+        {
+            var aggregated = _snapshots
+                .Where(x => string.Equals(SecurityIdentityService.BuildCanonicalKey(x.Position), _selectedDetailKey, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (aggregated.Count > 0)
+            {
+                return aggregated;
+            }
+        }
+
+        if (!_selectedDetailIsAggregate && !string.IsNullOrWhiteSpace(_selectedDetailKey))
+        {
+            var selectedByKey = _snapshots
+                .Where(x => string.Equals(SecurityIdentityService.BuildPositionKey(x.Position), _selectedDetailKey, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (selectedByKey.Count > 0)
+            {
+                return selectedByKey;
+            }
+        }
+
         if (_selectedDetailStockId is not null)
         {
             var selected = _snapshots.FirstOrDefault(x => x.Position.Stock.Id == _selectedDetailStockId);
             if (selected is not null)
             {
-                return selected;
+                return new[] { selected };
             }
         }
 
         var first = _snapshots.FirstOrDefault();
         _selectedDetailStockId = first?.Position.Stock.Id;
-        return first;
+        return first is null ? Array.Empty<StockSnapshot>() : new[] { first };
+    }
+
+    private static string BuildAggregateStory(IReadOnlyList<StockSnapshot> snapshots)
+    {
+        var first = snapshots[0];
+        var quantity = snapshots.Sum(x => x.Position.IsMutualFund ? x.Position.MutualFund.UnitsHeld : x.Position.CurrentHolding.CurrentShares);
+        var marketValue = snapshots.Sum(x => x.CurrentMarketValueJpy);
+        var costBasis = snapshots.Sum(x => x.PurchaseTotalJpy);
+        var gainLoss = marketValue - costBasis;
+        var brokers = snapshots.Select(x => x.Position.Stock.Broker).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        return $"{first.Position.Stock.Ticker} / {first.Position.Stock.Name} は全口座集約で {snapshots.Count:N0} ポジション、{brokers:N0} 証券会社に分かれています。保有数量合計は {quantity:N2}、取得金額合計は {Formatters.Jpy(costBasis)}、評価額合計は {Formatters.Jpy(marketValue)}、含み損益は {Formatters.SignedJpy(gainLoss)} です。取引履歴とデータ品質は対象ポジション全件を集約して表示しています。";
     }
 }

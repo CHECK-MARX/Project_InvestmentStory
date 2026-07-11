@@ -4,6 +4,7 @@ public sealed class Stock
 {
     public int Id { get; set; }
     public string AssetType { get; set; } = AssetTypes.Stock;
+    public string CanonicalSecurityKey { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Ticker { get; set; } = string.Empty;
     public string Country { get; set; } = "米国";

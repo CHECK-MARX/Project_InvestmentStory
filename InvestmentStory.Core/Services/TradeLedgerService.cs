@@ -26,8 +26,21 @@ public sealed class TradeLedgerService
             var averageCostJpy = currentQuantity > 0m ? remainingCostJpy / currentQuantity : 0m;
             var realized = 0m;
             var realizedJpy = 0m;
+            var eventType = NormalizeTradeType(trade.TradeType);
+            var zeroPriceInbound = signedQuantity > 0m && trade.UnitPrice <= 0m && trade.SettlementAmountJpy == 0m;
+            var stockSplitCandidate = zeroPriceInbound && IsStockSplitCandidate(currentQuantity, signedQuantity);
 
-            if (signedQuantity > 0m)
+            if (stockSplitCandidate)
+            {
+                currentQuantity += signedQuantity;
+                eventType = "StockSplit";
+            }
+            else if (zeroPriceInbound)
+            {
+                currentQuantity += signedQuantity;
+                eventType = "TransferIn";
+            }
+            else if (signedQuantity > 0m)
             {
                 currentQuantity += signedQuantity;
                 remainingCost += signedQuantity * trade.UnitPrice;
@@ -68,7 +81,7 @@ public sealed class TradeLedgerService
                 Broker = trade.Broker,
                 AccountType = AccountTypeNormalizer.Normalize(trade.Account),
                 CustodyType = trade.Account,
-                TradeType = NormalizeTradeType(trade.TradeType),
+                TradeType = eventType,
                 Quantity = quantity,
                 SignedQuantity = signedQuantity,
                 UnitPrice = trade.UnitPrice,
@@ -85,6 +98,18 @@ public sealed class TradeLedgerService
         }
 
         return result;
+    }
+
+    private static bool IsStockSplitCandidate(decimal currentQuantity, decimal addedQuantity)
+    {
+        if (currentQuantity <= 0m || addedQuantity <= 0m)
+        {
+            return false;
+        }
+
+        var postQuantity = currentQuantity + addedQuantity;
+        var ratio = postQuantity / currentQuantity;
+        return ratio == decimal.Round(ratio, 0) && ratio is 2m or 3m or 4m or 5m or 10m;
     }
 
     private static decimal InferSignedQuantity(BrokerTradeRecord trade)

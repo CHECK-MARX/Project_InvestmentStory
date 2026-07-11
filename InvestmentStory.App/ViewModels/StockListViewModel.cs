@@ -12,6 +12,7 @@ public sealed class StockListViewModel : ObservableObject
     private readonly Action _createNew;
     private readonly Action<int> _edit;
     private readonly Action<int> _showDetail;
+    private readonly Action<StockRowViewModel>? _showDetailRow;
     private readonly Action<int> _delete;
     private readonly Action<int> _refreshSelected;
     private readonly Action _refreshAll;
@@ -33,11 +34,13 @@ public sealed class StockListViewModel : ObservableObject
         Action<int> refreshSelected,
         Action refreshAll,
         Action refreshMissing,
-        Action<string>? displayModeChanged = null)
+        Action<string>? displayModeChanged = null,
+        Action<StockRowViewModel>? showDetailRow = null)
     {
         _createNew = createNew;
         _edit = edit;
         _showDetail = showDetail;
+        _showDetailRow = showDetailRow;
         _delete = delete;
         _refreshSelected = refreshSelected;
         _refreshAll = refreshAll;
@@ -45,7 +48,7 @@ public sealed class StockListViewModel : ObservableObject
         _displayModeChanged = displayModeChanged ?? (_ => { });
         NewCommand = new RelayCommand(_createNew);
         EditCommand = new RelayCommand(() => ExecuteSelected(_edit), HasSelection);
-        DetailCommand = new RelayCommand(() => ExecuteSelected(_showDetail), HasSelection);
+        DetailCommand = new RelayCommand(ExecuteDetail, HasSelection);
         DeleteCommand = new RelayCommand(() => ExecuteSelected(_delete), HasSelection);
         RefreshSelectedCommand = new RelayCommand(() => ExecuteSelected(_refreshSelected), HasSelection);
         RefreshAllCommand = new RelayCommand(_refreshAll);
@@ -168,7 +171,7 @@ public sealed class StockListViewModel : ObservableObject
 
     private void RebuildRows()
     {
-        var selectedId = SelectedRow?.StockId;
+        var selectedKey = SelectedRow?.DetailKey;
         Rows.Clear();
         var visibleSnapshots = _allSnapshots.Where(ShouldShow).ToList();
         var rows = SelectedGroupingMode == "銘柄集約"
@@ -182,7 +185,7 @@ public sealed class StockListViewModel : ObservableObject
             Rows.Add(row);
         }
 
-        SelectedRow = Rows.FirstOrDefault(x => x.StockId == selectedId) ?? Rows.FirstOrDefault();
+        SelectedRow = Rows.FirstOrDefault(x => x.DetailKey == selectedKey) ?? Rows.FirstOrDefault();
     }
 
     private bool ShouldShow(StockSnapshot snapshot)
@@ -248,13 +251,7 @@ public sealed class StockListViewModel : ObservableObject
 
     private static string AggregateKey(StockSnapshot snapshot)
     {
-        var stock = snapshot.Position.Stock;
-        if (!string.IsNullOrWhiteSpace(stock.Ticker))
-        {
-            return $"{stock.AssetType}:{stock.Ticker.Trim().ToUpperInvariant()}";
-        }
-
-        return $"{stock.AssetType}:{stock.Name.Trim().ToUpperInvariant()}";
+        return SecurityIdentityService.BuildCanonicalKey(snapshot.Position);
     }
 
     private bool HasSelection() => SelectedRow is not null;
@@ -267,5 +264,21 @@ public sealed class StockListViewModel : ObservableObject
         {
             action(SelectedRow.StockId);
         }
+    }
+
+    private void ExecuteDetail()
+    {
+        if (SelectedRow is null)
+        {
+            return;
+        }
+
+        if (_showDetailRow is not null)
+        {
+            _showDetailRow(SelectedRow);
+            return;
+        }
+
+        _showDetail(SelectedRow.StockId);
     }
 }

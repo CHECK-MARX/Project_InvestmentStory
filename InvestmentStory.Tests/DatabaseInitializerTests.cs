@@ -132,11 +132,62 @@ public sealed class DatabaseInitializerTests
                 Assert.Equal(1_686_405d, (double)valueCommand.ExecuteScalar()!, precision: 0);
             }
 
-            Assert.NotEmpty(Directory.GetFiles(Path.GetDirectoryName(path)!, $"{Path.GetFileName(path)}.backup_*"));
+            Assert.NotEmpty(Directory.GetFiles(
+                Path.GetDirectoryName(path)!,
+                $"{Path.GetFileNameWithoutExtension(path)}_*_backup{Path.GetExtension(path)}"));
         }
         finally
         {
             foreach (var file in Directory.GetFiles(Path.GetDirectoryName(path)!, $"{Path.GetFileName(path)}*"))
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
+    public void Initialize_NormalizesExistingZeroPriceInboundSplitCandidate()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"investment_story_split_repair_{Guid.NewGuid():N}.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+
+            using (var connection = Open(path))
+            {
+                var stockId = InsertStock(connection, "NVDA", "NVIDIA", "米国", "USD", "SBI証券");
+                Execute(connection, """
+                    INSERT INTO BrokerTrades
+                        (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                         Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                         AfterTradeQuantity, AfterTradeAverageCost, Source)
+                    VALUES
+                        ($stockId, '2024-06-10', '2024-06-10', 'SBI証券', 'Specific', 'Specific', '入庫',
+                         45, 45, 0, 'USD', 160, 0, 50, 29, 'SBI取引履歴CSV');
+                    """,
+                    ("$stockId", stockId));
+            }
+
+            new DatabaseInitializer().Initialize(path);
+
+            using (var connection = Open(path))
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT TradeType
+                    FROM BrokerTrades
+                    WHERE Source = 'SBI取引履歴CSV'
+                      AND Quantity = 45
+                    LIMIT 1;
+                    """;
+                Assert.Equal("StockSplit", (string)command.ExecuteScalar()!);
+            }
+        }
+        finally
+        {
+            foreach (var file in Directory.GetFiles(
+                Path.GetDirectoryName(path)!,
+                $"{Path.GetFileNameWithoutExtension(path)}*{Path.GetExtension(path)}"))
             {
                 File.Delete(file);
             }
@@ -195,6 +246,28 @@ public sealed class DatabaseInitializerTests
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT last_insert_rowid();";
         return (long)command.ExecuteScalar()!;
+    }
+
+    private static long InsertStock(
+        SqliteConnection connection,
+        string ticker,
+        string name,
+        string country,
+        string currency,
+        string broker)
+    {
+        Execute(connection, """
+            INSERT INTO Stocks
+                (Name, Ticker, Country, Currency, Broker, AccountType, CustodyType)
+            VALUES
+                ($name, $ticker, $country, $currency, $broker, 'Specific', 'Specific');
+            """,
+            ("$name", name),
+            ("$ticker", ticker),
+            ("$country", country),
+            ("$currency", currency),
+            ("$broker", broker));
+        return LastInsertId(connection);
     }
 
     private static void Execute(SqliteConnection connection, string sql, params (string Name, object Value)[] parameters)
