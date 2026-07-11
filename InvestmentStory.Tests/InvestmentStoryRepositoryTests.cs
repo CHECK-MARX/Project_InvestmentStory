@@ -163,4 +163,116 @@ public sealed class InvestmentStoryRepositoryTests
             }
         }
     }
+
+    [Fact]
+    public void SavePosition_UpsertsMutualFundHoldingByPositionIdentity()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_fund_upsert_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+
+            var first = CreateMutualFundPosition(
+                unitsHeld: 411_318m,
+                averageCostNav: 29_499m,
+                currentNav: 40_579m,
+                acquisitionAmount: 1_213_346m,
+                marketValue: 1_669_087m,
+                unrealizedGainLoss: 455_741m);
+            var second = CreateMutualFundPosition(
+                unitsHeld: 411_318m,
+                averageCostNav: 29_499m,
+                currentNav: 41_000m,
+                acquisitionAmount: 1_213_346m,
+                marketValue: 1_686_405m,
+                unrealizedGainLoss: 473_059m);
+
+            var firstId = repository.SavePosition(first);
+            var secondId = repository.SavePosition(second);
+
+            var funds = repository.GetPositions()
+                .Where(x => x.Stock.AssetType == AssetTypes.MutualFund && x.Stock.Ticker == "FUND:SBI-V-SP500")
+                .ToList();
+
+            Assert.Equal(firstId, secondId);
+            var loaded = Assert.Single(funds);
+            Assert.Equal(411_318m, loaded.MutualFund.UnitsHeld);
+            Assert.Equal(41_000m, loaded.MutualFund.CurrentNav);
+            Assert.Equal(1_686_405m, loaded.MutualFund.MarketValue);
+            Assert.Equal(473_059m, loaded.MutualFund.UnrealizedGainLoss);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    private static StockPosition CreateMutualFundPosition(
+        decimal unitsHeld,
+        decimal averageCostNav,
+        decimal currentNav,
+        decimal acquisitionAmount,
+        decimal marketValue,
+        decimal unrealizedGainLoss)
+    {
+        return new StockPosition
+        {
+            Stock = new Stock
+            {
+                AssetType = AssetTypes.MutualFund,
+                Name = "SBI V S&P500 Index Fund",
+                Ticker = "FUND:SBI-V-SP500",
+                Country = "Japan",
+                Currency = "JPY",
+                Broker = "SBI",
+                AccountType = AccountTypes.NisaGrowth,
+                CustodyType = AccountTypes.NisaGrowth,
+                Sector = "MutualFund",
+                DataSource = "SBI CSV"
+            },
+            Purchase = new Purchase
+            {
+                PurchaseDate = new DateTime(2026, 7, 11),
+                Shares = unitsHeld,
+                UnitPrice = averageCostNav,
+                ExchangeRate = 1m,
+                ExchangeRateSource = "SBI CSV",
+                ExchangeRateInputType = "CSV"
+            },
+            Split = new StockSplit
+            {
+                SplitDate = new DateTime(2026, 7, 11),
+                SplitRatio = 1m
+            },
+            CurrentHolding = new CurrentHolding
+            {
+                CurrentShares = unitsHeld,
+                CurrentPrice = currentNav,
+                CurrentExchangeRate = 1m,
+                CurrentPriceSource = "SBI CSV",
+                CurrentPriceAcquiredAt = new DateTime(2026, 7, 11),
+                UpdatedAt = new DateTime(2026, 7, 11)
+            },
+            MutualFund = new MutualFundHolding
+            {
+                FundName = "SBI V S&P500 Index Fund",
+                UnitsHeld = unitsHeld,
+                UnitBase = 10_000m,
+                AverageCostNav = averageCostNav,
+                CurrentNav = currentNav,
+                AcquisitionAmount = acquisitionAmount,
+                MarketValue = marketValue,
+                UnrealizedGainLoss = unrealizedGainLoss,
+                NavDate = new DateTime(2026, 7, 11),
+                NavSource = "SBI CSV",
+                DistributionMethod = "Reinvest",
+                AccountType = AccountTypes.NisaGrowth,
+                TotalPurchaseAmount = acquisitionAmount
+            }
+        };
+    }
 }

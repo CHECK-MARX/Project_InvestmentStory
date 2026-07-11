@@ -150,9 +150,19 @@ public sealed class InvestmentStoryRepository
     public int SavePosition(StockPosition position)
     {
         ArgumentNullException.ThrowIfNull(position);
+        NormalizePositionForPersistence(position);
 
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+
+        if (position.Stock.Id == 0)
+        {
+            var existingStockId = FindStockIdByIdentity(connection, transaction, position.Stock);
+            if (existingStockId != 0)
+            {
+                position.Stock.Id = existingStockId;
+            }
+        }
 
         var stockId = position.Stock.Id == 0
             ? InsertStock(connection, transaction, position.Stock)
@@ -163,6 +173,7 @@ public sealed class InvestmentStoryRepository
         position.Split.StockId = stockId;
         position.CurrentHolding.StockId = stockId;
         position.MutualFund.StockId = stockId;
+        HydrateChildIdsForSave(connection, transaction, position);
 
         SavePurchase(connection, transaction, position.Purchase);
         SaveSplit(connection, transaction, position.Split);
@@ -798,6 +809,109 @@ public sealed class InvestmentStoryRepository
         return connection;
     }
 
+    private static void NormalizePositionForPersistence(StockPosition position)
+    {
+        if (position.IsMutualFund)
+        {
+            var securityId = PositionIdentityService.ResolveSecurityId(position);
+            var normalizedSecurityId = PositionIdentityService.NormalizeSecurityId(securityId, AssetTypes.MutualFund);
+            if (!string.IsNullOrWhiteSpace(normalizedSecurityId))
+            {
+                position.Stock.Ticker = normalizedSecurityId;
+                if (string.IsNullOrWhiteSpace(position.MutualFund.FundCode))
+                {
+                    position.MutualFund.FundCode = normalizedSecurityId;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(position.MutualFund.FundName))
+            {
+                position.MutualFund.FundName = position.Stock.Name;
+            }
+
+            if (string.IsNullOrWhiteSpace(position.MutualFund.AccountType))
+            {
+                position.MutualFund.AccountType = string.IsNullOrWhiteSpace(position.Stock.CustodyType)
+                    ? position.Stock.AccountType
+                    : position.Stock.CustodyType;
+            }
+        }
+
+        PositionIdentityService.NormalizeForPersistence(position.Stock);
+    }
+
+    private static int FindStockIdByIdentity(SqliteConnection connection, SqliteTransaction transaction, Stock stock)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT Id
+            FROM Stocks
+            WHERE Broker = $broker
+              AND Ticker = $ticker
+              AND AssetType = $assetType
+              AND AccountType = $accountType
+              AND CustodyType = $custodyType
+              AND Currency = $currency
+            ORDER BY Id DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$broker", stock.Broker);
+        command.Parameters.AddWithValue("$ticker", stock.Ticker);
+        command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
+        command.Parameters.AddWithValue("$accountType", AccountTypeNormalizer.Normalize(stock.AccountType));
+        command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
+        command.Parameters.AddWithValue("$currency", NormalizeCurrency(stock.Currency));
+
+        var value = command.ExecuteScalar();
+        return value is null || value == DBNull.Value ? 0 : Convert.ToInt32(value);
+    }
+
+    private static void HydrateChildIdsForSave(SqliteConnection connection, SqliteTransaction transaction, StockPosition position)
+    {
+        if (position.Purchase.Id == 0)
+        {
+            position.Purchase.Id = GetChildId(connection, transaction, "Purchases", position.Stock.Id, "PurchaseDate ASC, Id ASC");
+        }
+
+        if (position.Split.Id == 0)
+        {
+            position.Split.Id = GetChildId(connection, transaction, "StockSplits", position.Stock.Id, "SplitDate DESC, Id DESC");
+        }
+
+        if (position.CurrentHolding.Id == 0)
+        {
+            position.CurrentHolding.Id = GetChildId(connection, transaction, "CurrentHoldings", position.Stock.Id, "Id DESC");
+        }
+
+        if (position.MutualFund.Id == 0)
+        {
+            position.MutualFund.Id = GetChildId(connection, transaction, "MutualFundHoldings", position.Stock.Id, "Id DESC");
+        }
+    }
+
+    private static int GetChildId(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName,
+        int stockId,
+        string orderBy)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT Id
+            FROM {tableName}
+            WHERE StockId = $stockId
+            ORDER BY {orderBy}
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+
+        var value = command.ExecuteScalar();
+        return value is null || value == DBNull.Value ? 0 : Convert.ToInt32(value);
+    }
+
     private static int InsertStock(SqliteConnection connection, SqliteTransaction transaction, Stock stock)
     {
         using var command = connection.CreateCommand();
@@ -1180,6 +1294,8 @@ public sealed class InvestmentStoryRepository
 
     private static void AddStockParameters(SqliteCommand command, Stock stock)
     {
+        PositionIdentityService.NormalizeForPersistence(stock);
+
         command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
         command.Parameters.AddWithValue("$name", stock.Name);
         command.Parameters.AddWithValue("$ticker", stock.Ticker);

@@ -18,6 +18,8 @@ public sealed class DatabaseInitializer
         Execute(connection, "PRAGMA foreign_keys = ON;");
         CreateTables(connection);
         MigrateTables(connection);
+        RepairCsvReimportDuplicates(connection, databasePath);
+        CreateCsvIdempotencyIndexes(connection);
         SeedSampleData(connection);
     }
 
@@ -535,6 +537,320 @@ public sealed class DatabaseInitializer
             WHERE DividendStatus = '配当未入力';
             """);
     }
+
+    private static void RepairCsvReimportDuplicates(SqliteConnection connection, string databasePath)
+    {
+        NormalizeStockIdentityColumns(connection);
+
+        var duplicatePositionGroups = ReadDuplicatePositionGroups(connection);
+        var duplicateDividendCount = CountDuplicateDividendRows(connection);
+        if (duplicatePositionGroups.Count > 0 || duplicateDividendCount > 0)
+        {
+            BackupDatabase(databasePath);
+        }
+
+        DeduplicateDividendPayments(connection);
+
+        foreach (var group in duplicatePositionGroups)
+        {
+            var rows = ReadDuplicatePositionRows(connection, group);
+            if (rows.Count <= 1)
+            {
+                continue;
+            }
+
+            var target = rows
+                .OrderByDescending(x => x.PositionValue)
+                .ThenByDescending(x => x.UpdatedAt)
+                .ThenByDescending(x => x.Id)
+                .First();
+
+            foreach (var duplicate in rows.Where(x => x.Id != target.Id))
+            {
+                MergeDuplicatePosition(connection, target.Id, duplicate.Id);
+            }
+        }
+    }
+
+    private static void NormalizeStockIdentityColumns(SqliteConnection connection)
+    {
+        Execute(connection, """
+            UPDATE Stocks
+            SET AssetType = CASE
+                    WHEN AssetType = 'MutualFund' OR UPPER(Ticker) LIKE 'FUND:%' THEN 'MutualFund'
+                    ELSE 'Stock'
+                END,
+                Broker = REPLACE(REPLACE(TRIM(Broker), ' ', ''), '　', ''),
+                Ticker = CASE
+                    WHEN AssetType = 'MutualFund' OR UPPER(Ticker) LIKE 'FUND:%'
+                        THEN UPPER(REPLACE(REPLACE(TRIM(Ticker), ' ', ''), '　', ''))
+                    ELSE UPPER(TRIM(Ticker))
+                END,
+                Currency = CASE
+                    WHEN UPPER(TRIM(Currency)) = '' OR UPPER(TRIM(Currency)) = 'YEN' THEN 'JPY'
+                    ELSE UPPER(TRIM(Currency))
+                END,
+                CustodyType = CASE
+                    WHEN TRIM(CustodyType) = '' THEN AccountType
+                    ELSE REPLACE(REPLACE(TRIM(CustodyType), ' ', ''), '　', '')
+                END;
+            """);
+    }
+
+    private static void CreateCsvIdempotencyIndexes(SqliteConnection connection)
+    {
+        Execute(connection, """
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_Stocks_PositionIdentity
+            ON Stocks(Broker, Ticker, AssetType, AccountType, CustodyType, Currency);
+            """);
+
+        Execute(connection, """
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_DividendPayments_ImportIdentity
+            ON DividendPayments(
+                StockId, Broker, AccountType, DividendStatus, PaymentDate, Currency,
+                Quantity, DividendPerShare, GrossAmount, TotalTaxAmount, NetAmount, NetAmountJpy
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS CsvImportLogs (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                FileName TEXT NOT NULL DEFAULT '',
+                FileSize INTEGER NOT NULL DEFAULT 0,
+                FileHash TEXT NOT NULL DEFAULT '',
+                Broker TEXT NOT NULL DEFAULT '',
+                CsvType TEXT NOT NULL DEFAULT '',
+                ImportedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                RowCount INTEGER NOT NULL DEFAULT 0,
+                InsertedCount INTEGER NOT NULL DEFAULT 0,
+                UpdatedCount INTEGER NOT NULL DEFAULT 0,
+                SkippedCount INTEGER NOT NULL DEFAULT 0,
+                ConflictCount INTEGER NOT NULL DEFAULT 0,
+                Result TEXT NOT NULL DEFAULT '',
+                ErrorSummary TEXT NOT NULL DEFAULT ''
+            );
+            """);
+
+        Execute(connection, """
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_CsvImportLogs_FileHash
+            ON CsvImportLogs(FileHash, Broker, CsvType)
+            WHERE FileHash <> '';
+            """);
+    }
+
+    private static void DeduplicateDividendPayments(SqliteConnection connection)
+    {
+        Execute(connection, """
+            DELETE FROM DividendPayments
+            WHERE Id NOT IN (
+                SELECT MAX(Id)
+                FROM DividendPayments
+                GROUP BY
+                    StockId, Broker, AccountType, DividendStatus, PaymentDate, Currency,
+                    Quantity, DividendPerShare, GrossAmount, TotalTaxAmount, NetAmount, NetAmountJpy
+            );
+            """);
+    }
+
+    private static int CountDuplicateDividendRows(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COALESCE(SUM(RowCount - 1), 0)
+            FROM (
+                SELECT COUNT(*) AS RowCount
+                FROM DividendPayments
+                GROUP BY
+                    StockId, Broker, AccountType, DividendStatus, PaymentDate, Currency,
+                    Quantity, DividendPerShare, GrossAmount, TotalTaxAmount, NetAmount, NetAmountJpy
+                HAVING COUNT(*) > 1
+            );
+            """;
+
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static IReadOnlyList<DuplicatePositionGroup> ReadDuplicatePositionGroups(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Broker, Ticker, AssetType, AccountType, CustodyType, Currency
+            FROM Stocks
+            GROUP BY Broker, Ticker, AssetType, AccountType, CustodyType, Currency
+            HAVING COUNT(*) > 1;
+            """;
+
+        var groups = new List<DuplicatePositionGroup>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            groups.Add(new DuplicatePositionGroup(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5)));
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<DuplicatePositionRow> ReadDuplicatePositionRows(
+        SqliteConnection connection,
+        DuplicatePositionGroup group)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                s.Id,
+                CASE
+                    WHEN IFNULL(mf.MarketValue, 0) > 0 THEN IFNULL(mf.MarketValue, 0)
+                    ELSE IFNULL(ch.CurrentShares, 0) * IFNULL(ch.CurrentPrice, 0) * IFNULL(ch.CurrentExchangeRate, 1)
+                END AS PositionValue,
+                COALESCE(NULLIF(mf.UpdatedAt, ''), NULLIF(ch.UpdatedAt, ''), NULLIF(s.UpdatedAt, ''), '') AS UpdatedAt
+            FROM Stocks s
+            LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
+            LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
+            WHERE s.Broker = $broker
+              AND s.Ticker = $ticker
+              AND s.AssetType = $assetType
+              AND s.AccountType = $accountType
+              AND s.CustodyType = $custodyType
+              AND s.Currency = $currency;
+            """;
+        command.Parameters.AddWithValue("$broker", group.Broker);
+        command.Parameters.AddWithValue("$ticker", group.Ticker);
+        command.Parameters.AddWithValue("$assetType", group.AssetType);
+        command.Parameters.AddWithValue("$accountType", group.AccountType);
+        command.Parameters.AddWithValue("$custodyType", group.CustodyType);
+        command.Parameters.AddWithValue("$currency", group.Currency);
+
+        var rows = new List<DuplicatePositionRow>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new DuplicatePositionRow(
+                reader.GetInt32(0),
+                Convert.ToDecimal(reader.GetValue(1)),
+                ParseDateTime(reader.GetString(2))));
+        }
+
+        return rows;
+    }
+
+    private static void MergeDuplicatePosition(SqliteConnection connection, int targetId, int duplicateId)
+    {
+        Execute(connection, """
+            UPDATE Stocks
+            SET Memo = (SELECT Memo FROM Stocks WHERE Id = $duplicateId)
+            WHERE Id = $targetId
+              AND TRIM(Memo) = ''
+              AND EXISTS (SELECT 1 FROM Stocks WHERE Id = $duplicateId AND TRIM(Memo) <> '');
+            """,
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, """
+            DELETE FROM DataQualityInfos
+            WHERE Id IN (
+                SELECT d.Id
+                FROM DataQualityInfos d
+                INNER JOIN DataQualityInfos t ON t.StockId = $targetId AND t.FieldName = d.FieldName
+                WHERE d.StockId = $duplicateId
+            );
+            """,
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, "UPDATE DataQualityInfos SET StockId = $targetId WHERE StockId = $duplicateId;",
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, """
+            DELETE FROM BrokerTrades
+            WHERE Id IN (
+                SELECT d.Id
+                FROM BrokerTrades d
+                INNER JOIN BrokerTrades t
+                    ON t.StockId = $targetId
+                   AND t.TradeDate = d.TradeDate
+                   AND t.SettlementDate = d.SettlementDate
+                   AND t.Broker = d.Broker
+                   AND t.AccountType = d.AccountType
+                   AND t.TradeType = d.TradeType
+                   AND t.Quantity = d.Quantity
+                   AND t.UnitPrice = d.UnitPrice
+                   AND t.SettlementAmountJpy = d.SettlementAmountJpy
+                   AND t.Source = d.Source
+                WHERE d.StockId = $duplicateId
+            );
+            """,
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, "UPDATE BrokerTrades SET StockId = $targetId WHERE StockId = $duplicateId;",
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, """
+            DELETE FROM DividendPayments
+            WHERE Id IN (
+                SELECT d.Id
+                FROM DividendPayments d
+                INNER JOIN DividendPayments t
+                    ON t.StockId = $targetId
+                   AND t.Broker = d.Broker
+                   AND t.AccountType = d.AccountType
+                   AND t.DividendStatus = d.DividendStatus
+                   AND t.PaymentDate = d.PaymentDate
+                   AND t.Currency = d.Currency
+                   AND t.Quantity = d.Quantity
+                   AND t.DividendPerShare = d.DividendPerShare
+                   AND t.GrossAmount = d.GrossAmount
+                   AND t.TotalTaxAmount = d.TotalTaxAmount
+                   AND t.NetAmount = d.NetAmount
+                   AND t.NetAmountJpy = d.NetAmountJpy
+                WHERE d.StockId = $duplicateId
+            );
+            """,
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, "UPDATE DividendPayments SET StockId = $targetId WHERE StockId = $duplicateId;",
+            ("$targetId", targetId),
+            ("$duplicateId", duplicateId));
+
+        Execute(connection, "DELETE FROM Stocks WHERE Id = $duplicateId;",
+            ("$duplicateId", duplicateId));
+    }
+
+    private static void BackupDatabase(string databasePath)
+    {
+        if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath))
+        {
+            return;
+        }
+
+        var backupPath = $"{databasePath}.backup_{DateTime.Now:yyyyMMddHHmmss}";
+        if (!File.Exists(backupPath))
+        {
+            File.Copy(databasePath, backupPath);
+        }
+    }
+
+    private static DateTime ParseDateTime(string value) =>
+        DateTime.TryParse(value, out var date) ? date : DateTime.MinValue;
+
+    private sealed record DuplicatePositionGroup(
+        string Broker,
+        string Ticker,
+        string AssetType,
+        string AccountType,
+        string CustodyType,
+        string Currency);
+
+    private sealed record DuplicatePositionRow(int Id, decimal PositionValue, DateTime UpdatedAt);
 
     private static void BackfillDividendPaymentExtensions(SqliteConnection connection)
     {

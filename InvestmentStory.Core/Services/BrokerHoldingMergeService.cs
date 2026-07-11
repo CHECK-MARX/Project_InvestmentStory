@@ -25,12 +25,31 @@ public sealed class BrokerHoldingMergeService
         BrokerHoldingRecord source,
         DateTime acquiredAt)
     {
-        var sourceAccountType = AccountTypeNormalizer.Normalize(source.Account);
+        var sourceKey = PositionIdentityService.BuildKey(source);
         var exactMatches = existingPositions
-            .Where(x => IsSameBroker(x.Stock.Broker, source.Broker) &&
-                        IsSameTicker(x.Stock.Ticker, source.Ticker) &&
-                        IsSameAccountType(x.Stock.AccountType, sourceAccountType))
+            .Where(x => string.Equals(PositionIdentityService.BuildKey(x), sourceKey, StringComparison.OrdinalIgnoreCase))
             .ToList();
+
+        if (exactMatches.Count == 0)
+        {
+            var sourceAccountType = AccountTypeNormalizer.Normalize(source.Account);
+            exactMatches = existingPositions
+                .Where(x => IsSameBroker(x.Stock.Broker, source.Broker) &&
+                            IsSameTicker(x.Stock.Ticker, source.Ticker) &&
+                            IsSameAccountType(x.Stock.AccountType, sourceAccountType) &&
+                            IsSameCustodyType(x.Stock.CustodyType, source.Account))
+                .ToList();
+        }
+
+        if (exactMatches.Count > 1)
+        {
+            exactMatches = exactMatches
+                .OrderByDescending(x => x.CurrentHolding.UpdatedAt)
+                .ThenByDescending(x => x.IsMutualFund ? x.MutualFund.MarketValue : x.CurrentHolding.CurrentShares * x.CurrentHolding.CurrentPrice)
+                .ThenByDescending(x => x.Stock.Id)
+                .Take(1)
+                .ToList();
+        }
 
         if (exactMatches.Count == 1)
         {
@@ -533,6 +552,18 @@ public sealed class BrokerHoldingMergeService
         var source = AccountTypeNormalizer.Normalize(sourceAccountType);
         return source == AccountTypes.Unknown ||
                string.Equals(existing, source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSameCustodyType(string existingCustodyType, string sourceCustodyType)
+    {
+        if (string.IsNullOrWhiteSpace(sourceCustodyType))
+        {
+            return true;
+        }
+
+        var existing = PositionIdentityService.NormalizeCustodyType(existingCustodyType, sourceCustodyType);
+        var source = PositionIdentityService.NormalizeCustodyType(sourceCustodyType, sourceCustodyType);
+        return string.Equals(existing, source, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeTicker(string ticker)

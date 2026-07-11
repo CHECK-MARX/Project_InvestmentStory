@@ -108,4 +108,71 @@ public sealed class BrokerHoldingMergeServiceTests
         Assert.Equal("楽天証券", decision.Merged.Stock.Broker);
         Assert.Equal("KO", decision.Merged.Stock.Ticker);
     }
+
+    [Fact]
+    public void MergeHoldings_UsesSingleRepresentative_WhenDuplicateIdentityAlreadyExists()
+    {
+        var service = new BrokerHoldingMergeService();
+        var older = CreateExistingPosition(
+            id: 1,
+            shares: 10m,
+            currentPrice: 50m,
+            updatedAt: new DateTime(2026, 1, 1));
+        var newer = CreateExistingPosition(
+            id: 2,
+            shares: 20m,
+            currentPrice: 55m,
+            updatedAt: new DateTime(2026, 7, 1));
+        var brokerHolding = new BrokerHoldingRecord
+        {
+            Broker = "SBI",
+            Ticker = "KO",
+            Name = "Coca-Cola",
+            Account = AccountTypes.Specific,
+            Shares = 20m,
+            AverageAcquisitionPrice = 45m,
+            CurrentPrice = 60m,
+            Currency = "USD"
+        };
+
+        var result = service.MergeHoldings(new[] { older, newer }, new[] { brokerHolding }, DateTime.Now);
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal(BrokerMergeAction.Overwrite, decision.Action);
+        Assert.NotNull(decision.Existing);
+        Assert.Equal(2, decision.Existing.Stock.Id);
+        Assert.NotNull(decision.Merged);
+        Assert.Equal(60m, decision.Merged.CurrentHolding.CurrentPrice);
+    }
+
+    private static StockPosition CreateExistingPosition(int id, decimal shares, decimal currentPrice, DateTime updatedAt)
+    {
+        return new StockPosition
+        {
+            Stock = new Stock
+            {
+                Id = id,
+                AssetType = AssetTypes.Stock,
+                Ticker = "KO",
+                Name = "Coca-Cola",
+                Broker = "SBI",
+                AccountType = AccountTypes.Specific,
+                CustodyType = AccountTypes.Specific,
+                Currency = "USD"
+            },
+            CurrentHolding = new CurrentHolding
+            {
+                CurrentShares = shares,
+                CurrentPrice = currentPrice,
+                UpdatedAt = updatedAt
+            },
+            Purchase = new Purchase
+            {
+                Shares = shares,
+                UnitPrice = 45m,
+                ExchangeRate = 160m
+            },
+            Split = new StockSplit { SplitRatio = 1m }
+        };
+    }
 }
