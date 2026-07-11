@@ -1023,13 +1023,14 @@ public sealed class DatabaseInitializer
                 .ThenBy(x => x.Id)
                 .First();
 
-            Execute(connection, "UPDATE Stocks SET Ticker = 'CMBT', Name = 'CMB テック' WHERE Id = $targetId;", ("$targetId", target.Id));
+            Execute(
+                connection,
+                "UPDATE Stocks SET Ticker = 'CMBT', Name = 'CMB テック' WHERE Id = $targetId;",
+                ("$targetId", target.Id));
+
             foreach (var duplicate in stocks.Where(x => x.Id != target.Id))
             {
-                Execute(connection, "UPDATE DividendPayments SET StockId = $targetId WHERE StockId = $duplicateId;",
-                    ("$targetId", target.Id),
-                    ("$duplicateId", duplicate.Id));
-                Execute(connection, "DELETE FROM Stocks WHERE Id = $duplicateId;", ("$duplicateId", duplicate.Id));
+                MergeDuplicatePosition(connection, target.Id, duplicate.Id);
             }
         }
     }

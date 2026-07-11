@@ -533,6 +533,7 @@ public sealed class CsvImportViewModel : ObservableObject
 
             var createdStocks = 0;
             var updatedStocks = 0;
+            var unchangedStocks = 0;
             var reviewHoldings = 0;
             var skippedTradeGroups = 0;
             var createdReferenceStocks = 0;
@@ -551,6 +552,12 @@ public sealed class CsvImportViewModel : ObservableObject
                     {
                         reviewHoldings++;
                         ImportLogs.Add($"要確認: {decision.Source.Broker} {decision.Source.Ticker} {decision.Source.Name} / {decision.Reason}");
+                        continue;
+                    }
+
+                    if (decision.Action == BrokerMergeAction.Overwrite && decision.ChangedFields.Count == 0)
+                    {
+                        unchangedStocks++;
                         continue;
                     }
 
@@ -655,12 +662,12 @@ public sealed class CsvImportViewModel : ObservableObject
             _saveBrokerTrades?.Invoke(statement.Trades);
             _afterImport?.Invoke();
             AddStatementSummaryLogs(statement);
-            ImportLogs.Add($"保有反映: 新規 {createdStocks}件 / 更新 {updatedStocks}件 / 要確認 {reviewHoldings}件 / 取引復元見送り {skippedTradeGroups}件");
+            ImportLogs.Add($"保有反映: 新規 {createdStocks}件 / 更新 {updatedStocks}件 / 変更なし {unchangedStocks}件 / 要確認 {reviewHoldings}件 / 取引復元見送り {skippedTradeGroups}件");
             ImportLogs.Add($"配当専用仮銘柄: {createdReferenceStocks}件（銘柄一覧の「現在保有のみ」には表示しません）");
             ImportLogs.Add($"配当登録: {importedDividends}件 / 既存実績更新 {updatedDividends}件 / 予定置換 {replacedDividends}件 / スキップ {skippedDividends}件");
 
             Message = statement.CanUpdateHoldings
-                ? $"{sourceLabel} を一括取込しました。保有反映: 新規 {createdStocks}件、更新 {updatedStocks}件、要確認 {reviewHoldings}件。配当登録: {importedDividends}件、既存実績更新: {updatedDividends}件、予定置換: {replacedDividends}件。"
+                ? BuildImportResultMessage(sourceLabel, createdStocks, updatedStocks, unchangedStocks, reviewHoldings, importedDividends, updatedDividends, replacedDividends, skippedDividends)
                 : $"{sourceLabel} を取り込みました。現在保有は更新せず、配当登録: {importedDividends}件、既存実績更新: {updatedDividends}件、予定置換: {replacedDividends}件。";
         }
         catch (Exception ex)
@@ -695,6 +702,30 @@ public sealed class CsvImportViewModel : ObservableObject
         {
             ImportLogs.Add($"投資成績計算外として読み飛ばし: {statement.IgnoredRowCount}行");
         }
+    }
+
+    private static string BuildImportResultMessage(
+        string sourceLabel,
+        int createdStocks,
+        int updatedStocks,
+        int unchangedStocks,
+        int reviewHoldings,
+        int importedDividends,
+        int updatedDividends,
+        int replacedDividends,
+        int skippedDividends)
+    {
+        if (createdStocks == 0 &&
+            updatedStocks == 0 &&
+            reviewHoldings == 0 &&
+            importedDividends == 0 &&
+            updatedDividends == 0 &&
+            replacedDividends == 0)
+        {
+            return $"{sourceLabel} を再取込しました。新規追加0件、更新0件、重複スキップ{skippedDividends}件、変更なし{unchangedStocks}件。資産合計に変更はありません。";
+        }
+
+        return $"{sourceLabel} を一括取込しました。保有反映: 新規 {createdStocks}件、更新 {updatedStocks}件、変更なし {unchangedStocks}件、要確認 {reviewHoldings}件。配当登録: {importedDividends}件、既存実績更新: {updatedDividends}件、予定置換: {replacedDividends}件、重複スキップ: {skippedDividends}件。";
     }
 
     private static StockPosition? CreatePositionFromTrades(

@@ -452,6 +452,7 @@ public sealed class InvestmentStoryRepository
 
         return new AppSettings
         {
+            DataDisplayMode = GetSetting(values, nameof(AppSettings.DataDisplayMode), DataDisplayModes.Normal),
             MarketDataMode = GetSetting(values, nameof(AppSettings.MarketDataMode), "Web/API"),
             UsMarketDataProvider = GetSetting(values, nameof(AppSettings.UsMarketDataProvider), "Alpha Vantage"),
             JapanMarketDataProvider = GetSetting(values, nameof(AppSettings.JapanMarketDataProvider), "Yahoo Finance"),
@@ -477,6 +478,7 @@ public sealed class InvestmentStoryRepository
 
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+        UpsertSetting(connection, transaction, nameof(AppSettings.DataDisplayMode), settings.DataDisplayMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.MarketDataMode), settings.MarketDataMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.UsMarketDataProvider), settings.UsMarketDataProvider);
         UpsertSetting(connection, transaction, nameof(AppSettings.JapanMarketDataProvider), settings.JapanMarketDataProvider);

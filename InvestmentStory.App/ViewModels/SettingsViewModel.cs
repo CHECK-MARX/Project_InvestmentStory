@@ -87,6 +87,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         var settings = new AppSettings
         {
+            DataDisplayMode = _loadSettings().DataDisplayMode,
             MarketDataMode = MarketDataMode,
             UsMarketDataProvider = UsMarketDataProvider,
             JapanMarketDataProvider = JapanMarketDataProvider,

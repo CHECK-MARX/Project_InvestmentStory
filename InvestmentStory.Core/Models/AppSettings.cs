@@ -2,6 +2,7 @@ namespace InvestmentStory.Core.Models;
 
 public sealed class AppSettings
 {
+    public string DataDisplayMode { get; set; } = "Normal";
     public string MarketDataMode { get; set; } = "Web/API";
     public string UsMarketDataProvider { get; set; } = "Alpha Vantage";
     public string JapanMarketDataProvider { get; set; } = "Yahoo Finance";

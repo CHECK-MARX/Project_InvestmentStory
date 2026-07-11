@@ -352,8 +352,7 @@ public sealed class SbiStatementCsvParser
 
     private static IReadOnlyList<string> ReadLines(string filePath)
     {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        return File.ReadAllLines(filePath, Encoding.GetEncoding(932));
+        return CsvFileEncoding.ReadAllLines(filePath);
     }
 
     private static int FindHeaderIndex(IReadOnlyList<string> lines, params string[] requiredColumns)

@@ -227,6 +227,47 @@ public sealed class PortfolioAnalyticsServiceTests
         Assert.Equal(5m, sale.AfterTradeQuantity);
     }
 
+    [Fact]
+    public void BuildFxSensitivity_CalculatesUsdJpyImpact()
+    {
+        var service = new PortfolioAnalyticsService();
+        var snapshots = new[]
+        {
+            new StockSnapshot
+            {
+                Position = new StockPosition
+                {
+                    Stock = new Stock { Ticker = "AAPL", Currency = "USD" },
+                    CurrentHolding = new CurrentHolding { CurrentExchangeRate = 160m }
+                },
+                CurrentMarketValue = 1_000m,
+                CurrentMarketValueJpy = 160_000m
+            },
+            new StockSnapshot
+            {
+                Position = new StockPosition
+                {
+                    Stock = new Stock { Ticker = "7203", Currency = "JPY" }
+                },
+                CurrentMarketValue = 50_000m,
+                CurrentMarketValueJpy = 50_000m
+            }
+        };
+
+        var result = service.BuildFxSensitivity(snapshots, 160m);
+
+        Assert.Contains(result, x =>
+            x.RateDelta == 10m &&
+            x.UsdJpyRate == 170m &&
+            x.TotalMarketValueJpy == 220_000m &&
+            x.ChangeFromCurrentJpy == 10_000m);
+        Assert.Contains(result, x =>
+            x.RateDelta == -10m &&
+            x.UsdJpyRate == 150m &&
+            x.TotalMarketValueJpy == 200_000m &&
+            x.ChangeFromCurrentJpy == -10_000m);
+    }
+
     private static DividendPayment Payment(int stockId, DateTime date, string status, decimal netAmountJpy) =>
         new()
         {

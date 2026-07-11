@@ -288,6 +288,53 @@ public sealed class PortfolioAnalyticsService
         };
     }
 
+    public IReadOnlyList<FxSensitivityPoint> BuildFxSensitivity(
+        IEnumerable<StockSnapshot> snapshots,
+        decimal currentUsdJpyRate)
+    {
+        var snapshotList = snapshots.ToList();
+        if (currentUsdJpyRate <= 0m)
+        {
+            currentUsdJpyRate = snapshotList
+                .Where(x => x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Position.CurrentHolding.CurrentExchangeRate)
+                .FirstOrDefault(x => x > 0m);
+        }
+
+        if (currentUsdJpyRate <= 0m)
+        {
+            return Array.Empty<FxSensitivityPoint>();
+        }
+
+        var totalMarketValueJpy = snapshotList.Sum(x => x.CurrentMarketValueJpy);
+        var foreignMarketValueUsd = snapshotList
+            .Where(x => x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
+            .Sum(x => x.CurrentMarketValue);
+        if (foreignMarketValueUsd <= 0m)
+        {
+            return Array.Empty<FxSensitivityPoint>();
+        }
+
+        var currentForeignMarketValueJpy = foreignMarketValueUsd * currentUsdJpyRate;
+        var nonForeignMarketValueJpy = totalMarketValueJpy - currentForeignMarketValueJpy;
+        var deltas = new[] { -10m, -5m, -1m, 1m, 5m, 10m };
+
+        return deltas
+            .Select(delta =>
+            {
+                var rate = Math.Max(0m, currentUsdJpyRate + delta);
+                var marketValue = nonForeignMarketValueJpy + foreignMarketValueUsd * rate;
+                return new FxSensitivityPoint
+                {
+                    RateDelta = delta,
+                    UsdJpyRate = rate,
+                    TotalMarketValueJpy = marketValue,
+                    ChangeFromCurrentJpy = marketValue - totalMarketValueJpy
+                };
+            })
+            .ToList();
+    }
+
     private static bool HasActualReplacement(IReadOnlyList<DividendPayment> allPayments, DividendPayment planned)
     {
         if (planned.ReplacedByDividendId is not null || planned.MatchedActualDividendId is not null)

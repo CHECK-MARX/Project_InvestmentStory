@@ -229,6 +229,39 @@
                     </StackPanel>
                 </Border>
             </Grid>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,8,0,0">
+                <StackPanel>
+                    <TextBlock Text="為替感応度" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="USD/JPYが変動した場合の総資産への影響です。外貨建て資産のみを対象に概算します。"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,12" />
+                    <ItemsControl ItemsSource="{Binding FxSensitivityRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="80" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="150" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding RateDelta}" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding UsdJpyRate}" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                    <Grid Grid.Column="2" Height="14" Background="{DynamicResource ElevatedSurfaceBrush}" VerticalAlignment="Center">
+                                        <Border Width="{Binding BarWidth}" Background="{DynamicResource AccentBlueBrush}" HorizontalAlignment="Left" CornerRadius="7" />
+                                    </Grid>
+                                    <TextBlock Grid.Column="3" Text="{Binding ChangeFromCurrent}" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Column="4" Text="{Binding TotalMarketValue}" HorizontalAlignment="Right" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

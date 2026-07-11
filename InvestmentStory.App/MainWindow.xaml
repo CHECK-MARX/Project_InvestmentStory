@@ -7,7 +7,7 @@
         xmlns:vm="clr-namespace:InvestmentStory.App.ViewModels"
         xmlns:infra="clr-namespace:InvestmentStory.App.Infrastructure"
         mc:Ignorable="d"
-        Title="Investment Story"
+        Title="{Binding WindowTitle}"
         Height="820"
         Width="1280"
         MinHeight="720"
@@ -166,11 +166,35 @@
                     BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="0,0,0,1">
                 <DockPanel Margin="24,0">
-                    <Button DockPanel.Dock="Right"
-                            Content="再読込"
-                            Command="{Binding RefreshCommand}"
-                            Style="{StaticResource ActionButtonStyle}"
-                            VerticalAlignment="Center" />
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="サンプル初期化"
+                                Command="{Binding ResetSampleDataCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Visibility="{Binding SampleModeVisibility}" />
+                        <Button Content="{Binding SampleModeToggleText}"
+                                Command="{Binding ToggleSampleModeCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="再読込"
+                                Command="{Binding RefreshCommand}"
+                                Style="{StaticResource ActionButtonStyle}" />
+                    </StackPanel>
+                    <Border DockPanel.Dock="Right"
+                            Background="{DynamicResource WarningBrush}"
+                            CornerRadius="8"
+                            Padding="10,4"
+                            Margin="0,0,12,0"
+                            VerticalAlignment="Center"
+                            Visibility="{Binding SampleModeVisibility}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding DataModeBadge}"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource WindowBackgroundBrush}" />
+                            <TextBlock Text="{Binding DataModeDescription}"
+                                       FontSize="10"
+                                       Foreground="{DynamicResource WindowBackgroundBrush}" />
+                        </StackPanel>
+                    </Border>
                     <TextBlock Text="{Binding CurrentTitle}"
                                FontSize="26"
                                FontWeight="SemiBold"

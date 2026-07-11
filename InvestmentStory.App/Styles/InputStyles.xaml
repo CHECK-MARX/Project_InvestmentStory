@@ -44,12 +44,18 @@
                             BorderBrush="Transparent"
                             BorderThickness="1"
                             Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True"
                             TextElement.Foreground="{TemplateBinding Foreground}">
                         <ContentPresenter VerticalAlignment="Center"
                                           RecognizesAccessKey="True"
+                                          ContentSource="Content"
                                           TextElement.Foreground="{TemplateBinding Foreground}" />
                     </Border>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource RowHoverBackgroundBrush}" />
+                            <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+                        </Trigger>
                         <Trigger Property="IsHighlighted" Value="True">
                             <Setter TargetName="Root" Property="Background" Value="{DynamicResource RowHoverBackgroundBrush}" />
                             <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentBlueBrush}" />
@@ -124,13 +130,16 @@
                                     BorderBrush="{DynamicResource AccentBlueBrush}"
                                     BorderThickness="1"
                                     CornerRadius="4"
+                                    SnapsToDevicePixels="True"
                                     TextElement.Foreground="{DynamicResource PrimaryTextBrush}"
                                     MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
                                     MaxHeight="{TemplateBinding MaxDropDownHeight}">
                                 <ScrollViewer Padding="0"
                                               CanContentScroll="True"
                                               Background="{DynamicResource SurfaceBackgroundBrush}">
-                                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+                                    <StackPanel IsItemsHost="True"
+                                                Background="{DynamicResource SurfaceBackgroundBrush}"
+                                                KeyboardNavigation.DirectionalNavigation="Contained" />
                                 </ScrollViewer>
                             </Border>
                         </Popup>

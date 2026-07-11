@@ -45,3 +45,11 @@ public sealed class SnapshotComparison
     public decimal? UnrealizedDayChangeJpy { get; init; }
     public decimal? UnrealizedMonthChangeJpy { get; init; }
 }
+
+public sealed class FxSensitivityPoint
+{
+    public decimal RateDelta { get; init; }
+    public decimal UsdJpyRate { get; init; }
+    public decimal TotalMarketValueJpy { get; init; }
+    public decimal ChangeFromCurrentJpy { get; init; }
+}

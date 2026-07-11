@@ -13,8 +13,7 @@ public sealed class SbiDistributionCsvParser
             throw new FileNotFoundException("CSVファイルが見つかりません。", filePath);
         }
 
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        var lines = File.ReadAllLines(filePath, Encoding.GetEncoding(932));
+        var lines = CsvFileEncoding.ReadAllLines(filePath);
         var headerIndex = Array.FindIndex(lines, line =>
             line.Contains("受渡日", StringComparison.Ordinal) &&
             line.Contains("銘柄名", StringComparison.Ordinal) &&
@@ -75,8 +74,7 @@ public sealed class SbiDistributionCsvParser
             return false;
         }
 
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        return File.ReadLines(filePath, Encoding.GetEncoding(932)).Take(12).Any(line =>
+        return CsvFileEncoding.ReadLines(filePath).Take(12).Any(line =>
             line.Contains("受渡日", StringComparison.Ordinal) &&
             line.Contains("銘柄名", StringComparison.Ordinal) &&
             line.Contains("受取額", StringComparison.Ordinal));

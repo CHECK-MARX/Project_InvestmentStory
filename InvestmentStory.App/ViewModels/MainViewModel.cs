@@ -9,7 +9,8 @@ namespace InvestmentStory.App.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
-    private readonly InvestmentStoryRepository _repository;
+    private readonly InvestmentStoryRepository _normalRepository;
+    private InvestmentStoryRepository _repository;
     private readonly InvestmentCalculator _calculator = new();
     private readonly StoryGenerator _storyGenerator = new();
     private readonly DividendScheduleService _dividendScheduleService = new();
@@ -25,15 +26,34 @@ public sealed class MainViewModel : ObservableObject
     private object _currentPage;
     private string _currentTitle = "ダッシュボード";
     private bool _isSidebarCollapsed;
+    private bool _isSampleMode;
+
+    private static readonly IReadOnlyDictionary<string, (decimal Price, decimal AnnualDividend)> SampleQuotes =
+        new Dictionary<string, (decimal Price, decimal AnnualDividend)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["7203"] = (3050m, 90m),
+            ["9433"] = (4980m, 145m),
+            ["8593"] = (1382m, 48m),
+            ["8058"] = (3275m, 110m),
+            ["AAPL"] = (313.39m, 1.04m),
+            ["MSFT"] = (503.50m, 3.32m),
+            ["NVDA"] = (196m, 1m),
+            ["KO"] = (82.96m, 2.08m),
+            ["MO"] = (72.96m, 4.24m),
+            ["NFLX"] = (76.18m, 0m),
+            ["TSLA"] = (416m, 0m),
+            ["AMD"] = (563m, 0m)
+        };
 
     public MainViewModel()
     {
-        _repository = new InvestmentStoryRepository();
-        _repository.Initialize();
-        var settings = _repository.GetSettings();
+        _normalRepository = new InvestmentStoryRepository();
+        _normalRepository.Initialize();
+        _repository = _normalRepository;
+        var settings = _normalRepository.GetSettings();
         ThemeManager.Apply(settings.ThemeMode);
         _isSidebarCollapsed = settings.IsSidebarCollapsed;
-        _exchangeRateService = new ExchangeRateProviderFactory(_repository.GetSettings);
+        _exchangeRateService = new ExchangeRateProviderFactory(() => _repository.GetSettings());
 
         Dashboard = new DashboardViewModel(RecordCurrentPortfolioSnapshot);
         SimpleRegistration = new SimpleRegistrationViewModel(
@@ -42,7 +62,7 @@ public sealed class MainViewModel : ObservableObject
             _exchangeRateService,
             _stockLookupService,
             _marketDataService,
-            _repository.GetSettings,
+            () => _repository.GetSettings(),
             SaveApiFetchLogs);
         StockList = new StockListViewModel(
             ShowSimpleRegistration,
@@ -65,19 +85,19 @@ public sealed class MainViewModel : ObservableObject
         PassiveIncome = new PassiveIncomeViewModel(SaveGoal);
         Simulation = new SimulationViewModel(_calculator);
         CsvImport = new CsvImportViewModel(
-            _repository.GetPositions,
-            _repository.SavePosition,
+            () => _repository.GetPositions(),
+            position => _repository.SavePosition(position),
             payment => _repository.SaveDividendPayment(payment),
-            _repository.GetDividendPayments,
-            _repository.SaveBrokerTrades,
+            () => _repository.GetDividendPayments(),
+            records => _repository.SaveBrokerTrades(records),
             LoadData);
         BrokerIntegration = new BrokerIntegrationViewModel(
-            _repository.GetSettings,
-            _repository.SaveSettings,
+            () => _repository.GetSettings(),
+            appSettings => _repository.SaveSettings(appSettings),
             () => Navigate(CsvImport, "CSV取込"));
         Settings = new SettingsViewModel(
-            _repository.GetSettings,
-            _repository.SaveSettings,
+            () => _repository.GetSettings(),
+            appSettings => _repository.SaveSettings(appSettings),
             () => _repository.GetRecentApiFetchLogs(100),
             ApplySavedUiSettings);
 
@@ -107,6 +127,13 @@ public sealed class MainViewModel : ObservableObject
         });
         RefreshCommand = new RelayCommand(LoadData);
         ToggleSidebarCommand = new RelayCommand(ToggleSidebar);
+        ToggleSampleModeCommand = new RelayCommand(ToggleSampleMode);
+        ResetSampleDataCommand = new RelayCommand(ResetSampleData);
+
+        if (DataDisplayModes.IsSample(settings.DataDisplayMode))
+        {
+            EnableSampleMode(settings, persistNormalSetting: false);
+        }
 
         LoadData();
     }
@@ -136,6 +163,8 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ShowSettingsCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand ToggleSidebarCommand { get; }
+    public ICommand ToggleSampleModeCommand { get; }
+    public ICommand ResetSampleDataCommand { get; }
 
     public object CurrentPage
     {
@@ -149,7 +178,14 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _currentTitle, value);
     }
 
-    public string DatabasePath => _repository.DatabasePath;
+    public string WindowTitle => IsSampleMode ? "Investment Story - Sample" : "Investment Story";
+    public string DatabasePath => IsSampleMode
+        ? $"{DatabasePaths.SampleSessionDatabaseFileName} / 通常DBは非表示"
+        : _repository.DatabasePath;
+    public string DataModeBadge => IsSampleMode ? "SAMPLE MODE" : "NORMAL MODE";
+    public string DataModeDescription => IsSampleMode ? "サンプルデータ表示中" : "通常データ表示中";
+    public string SampleModeToggleText => IsSampleMode ? "通常データへ戻る" : "サンプルモード";
+    public Visibility SampleModeVisibility => IsSampleMode ? Visibility.Visible : Visibility.Collapsed;
 
     public bool IsSidebarCollapsed
     {
@@ -171,11 +207,28 @@ public sealed class MainViewModel : ObservableObject
     public Visibility SidebarFooterVisibility => IsSidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
     public string SidebarToggleText => IsSidebarCollapsed ? ">" : "<";
 
+    public bool IsSampleMode
+    {
+        get => _isSampleMode;
+        private set
+        {
+            if (SetProperty(ref _isSampleMode, value))
+            {
+                OnPropertyChanged(nameof(WindowTitle));
+                OnPropertyChanged(nameof(DatabasePath));
+                OnPropertyChanged(nameof(DataModeBadge));
+                OnPropertyChanged(nameof(DataModeDescription));
+                OnPropertyChanged(nameof(SampleModeToggleText));
+                OnPropertyChanged(nameof(SampleModeVisibility));
+            }
+        }
+    }
+
     private void LoadData()
     {
         var positions = _repository.GetPositions();
-        var usdJpyQuote = _exchangeRateService.GetUsdJpyRate();
-        if (ApplyLatestExchangeRate(positions, usdJpyQuote))
+        var usdJpyQuote = GetUsdJpyRate();
+        if (!IsSampleMode && ApplyLatestExchangeRate(positions, usdJpyQuote))
         {
             positions = _repository.GetPositions();
         }
@@ -224,8 +277,26 @@ public sealed class MainViewModel : ObservableObject
     {
         var dividends = _repository.GetDividendPayments();
         var realizedGainLossJpy = _repository.GetAllBrokerTrades().Sum(x => x.RealizedGainLossJpy);
-        SaveCurrentPortfolioSnapshot(dividends, realizedGainLossJpy, _exchangeRateService.GetUsdJpyRate());
+        SaveCurrentPortfolioSnapshot(dividends, realizedGainLossJpy, GetUsdJpyRate());
         LoadData();
+    }
+
+    private ExchangeRateQuote GetUsdJpyRate()
+    {
+        if (!IsSampleMode)
+        {
+            return _exchangeRateService.GetUsdJpyRate();
+        }
+
+        return new ExchangeRateQuote
+        {
+            BaseCurrency = "USD",
+            QuoteCurrency = "JPY",
+            Rate = 162.35m,
+            AcquiredAt = DateTime.Now,
+            Source = "SampleExchangeRateService",
+            InputType = "Sample"
+        };
     }
 
     private void SaveCurrentPortfolioSnapshot(
@@ -319,6 +390,87 @@ public sealed class MainViewModel : ObservableObject
         settings.IsSidebarCollapsed = IsSidebarCollapsed;
         _repository.SaveSettings(settings);
     }
+
+    private void ToggleSampleMode()
+    {
+        if (IsSampleMode)
+        {
+            DisableSampleMode();
+            return;
+        }
+
+        EnableSampleMode(_normalRepository.GetSettings(), persistNormalSetting: true);
+        LoadData();
+        Navigate(Dashboard, "ダッシュボード");
+    }
+
+    private void ResetSampleData()
+    {
+        if (!IsSampleMode)
+        {
+            return;
+        }
+
+        EnableSampleMode(_normalRepository.GetSettings(), persistNormalSetting: false);
+        LoadData();
+        Navigate(Dashboard, "ダッシュボード");
+    }
+
+    private void EnableSampleMode(AppSettings baseSettings, bool persistNormalSetting)
+    {
+        if (persistNormalSetting)
+        {
+            var normalSettings = CopySettings(_normalRepository.GetSettings());
+            normalSettings.DataDisplayMode = DataDisplayModes.Sample;
+            _normalRepository.SaveSettings(normalSettings);
+        }
+
+        var sampleSettings = CopySettings(baseSettings);
+        sampleSettings.DataDisplayMode = DataDisplayModes.Sample;
+        sampleSettings.MarketDataMode = "Mock";
+        sampleSettings.ExchangeRateProvider = "Mock";
+        sampleSettings.BrokerDataMode = "Sample";
+        _repository = SampleDataSeeder.ResetSampleSessionDatabase(sampleSettings);
+        _selectedDetailStockId = null;
+        IsSampleMode = true;
+        Settings.Load();
+    }
+
+    private void DisableSampleMode()
+    {
+        var normalSettings = CopySettings(_normalRepository.GetSettings());
+        normalSettings.DataDisplayMode = DataDisplayModes.Normal;
+        _normalRepository.SaveSettings(normalSettings);
+        _repository = _normalRepository;
+        _selectedDetailStockId = null;
+        IsSampleMode = false;
+        DatabasePaths.DeleteSampleSessionDatabase();
+        Settings.Load();
+        LoadData();
+        Navigate(Dashboard, "ダッシュボード");
+    }
+
+    private static AppSettings CopySettings(AppSettings source) =>
+        new()
+        {
+            DataDisplayMode = source.DataDisplayMode,
+            MarketDataMode = source.MarketDataMode,
+            UsMarketDataProvider = source.UsMarketDataProvider,
+            JapanMarketDataProvider = source.JapanMarketDataProvider,
+            ExchangeRateProvider = source.ExchangeRateProvider,
+            BrokerDataMode = source.BrokerDataMode,
+            AlphaVantageApiKey = source.AlphaVantageApiKey,
+            JQuantsApiKey = source.JQuantsApiKey,
+            ApiTimeoutSeconds = source.ApiTimeoutSeconds,
+            UseLastValueOnApiFailure = source.UseLastValueOnApiFailure,
+            SaveLoginCredentials = source.SaveLoginCredentials,
+            EnableApiResponseLog = source.EnableApiResponseLog,
+            ThemeMode = source.ThemeMode,
+            IsSidebarCollapsed = source.IsSidebarCollapsed,
+            StockListDisplayMode = source.StockListDisplayMode,
+            LastDashboardCompositionMode = source.LastDashboardCompositionMode,
+            LastOpenedPage = source.LastOpenedPage
+        };
 
     private void SaveStockListDisplayMode(string displayMode)
     {
@@ -431,6 +583,12 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
+        if (IsSampleMode)
+        {
+            RefreshSampleMarketData(targets);
+            return;
+        }
+
         var settings = BuildLiveMarketDataSettings(_repository.GetSettings());
         var updated = 0;
         var failed = 0;
@@ -480,6 +638,46 @@ public sealed class MainViewModel : ObservableObject
         var latestText = latestPriceAt == DateTime.MinValue ? string.Empty : $" 最終株価取得: {latestPriceAt:yyyy/MM/dd HH:mm}";
         var sourceText = sources.Count == 0 ? string.Empty : $" 取得元: {string.Join(", ", sources.Take(3))}";
         StockList.Message = $"API更新を実行しました。更新 {updated}件、失敗 {failed}件。{latestText}{sourceText}{errorText}";
+    }
+
+    private void RefreshSampleMarketData(IReadOnlyList<StockPosition> targets)
+    {
+        var updated = 0;
+        foreach (var position in targets)
+        {
+            var symbol = ResolveMarketDataSymbol(position);
+            if (!SampleQuotes.TryGetValue(symbol, out var quote))
+            {
+                continue;
+            }
+
+            position.CurrentHolding.CurrentPrice = quote.Price;
+            position.CurrentHolding.AnnualDividendPerShare = quote.AnnualDividend;
+            position.CurrentHolding.CurrentPriceAcquiredAt = DateTime.Now;
+            position.CurrentHolding.CurrentPriceSource = "SampleMarketDataService";
+            position.CurrentHolding.DividendInfoAcquiredAt = DateTime.Now;
+            position.CurrentHolding.DividendInfoSource = "SampleDividendDataService";
+            position.CurrentHolding.DividendStatus = quote.AnnualDividend > 0m ? "配当あり" : "配当なし";
+            position.CurrentHolding.DividendFrequency = quote.AnnualDividend > 0m ? "年4回" : "なし";
+            if (position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
+            {
+                position.CurrentHolding.CurrentExchangeRate = 162.35m;
+                position.CurrentHolding.ExchangeRateAcquiredAt = DateTime.Now;
+                position.CurrentHolding.ExchangeRateSource = "SampleExchangeRateService";
+                position.CurrentHolding.ExchangeRateInputType = "Sample";
+            }
+            else
+            {
+                position.CurrentHolding.CurrentExchangeRate = 1m;
+            }
+
+            position.CurrentHolding.UpdatedAt = DateTime.Today;
+            _repository.SavePosition(position);
+            updated++;
+        }
+
+        LoadData();
+        StockList.Message = $"サンプルモードの固定データで更新しました。更新 {updated}件。外部APIは呼び出していません。";
     }
 
     private static AppSettings BuildLiveMarketDataSettings(AppSettings settings)
@@ -634,6 +832,11 @@ public sealed class MainViewModel : ObservableObject
 
     private void SaveApiFetchLogs(IEnumerable<ApiFetchLogEntry> logs)
     {
+        if (IsSampleMode)
+        {
+            return;
+        }
+
         _repository.SaveApiFetchLogs(logs);
     }
 

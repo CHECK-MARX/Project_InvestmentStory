@@ -2,12 +2,14 @@ using System.Collections.ObjectModel;
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
 
 namespace InvestmentStory.App.ViewModels;
 
 public sealed class DashboardViewModel : ObservableObject
 {
     private readonly Action _recordSnapshot;
+    private readonly PortfolioAnalyticsService _analyticsService = new();
     private DashboardSummary _summary = new();
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
     private IReadOnlyList<PortfolioSnapshot> _portfolioSnapshots = Array.Empty<PortfolioSnapshot>();
@@ -61,6 +63,7 @@ public sealed class DashboardViewModel : ObservableObject
     public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
     public ObservableCollection<PortfolioSnapshotRowViewModel> PortfolioHistoryRows { get; } = new();
     public ObservableCollection<ChartBarRowViewModel> CompositionBars { get; } = new();
+    public ObservableCollection<FxSensitivityRowViewModel> FxSensitivityRows { get; } = new();
 
     public string SelectedCompositionMode
     {
@@ -112,6 +115,7 @@ public sealed class DashboardViewModel : ObservableObject
         RebuildAssetBars();
         RebuildPortfolioHistoryRows(portfolioSnapshots);
         RebuildCompositionBars();
+        RebuildFxSensitivityRows();
         RefreshAllProperties();
     }
 
@@ -228,6 +232,17 @@ public sealed class DashboardViewModel : ObservableObject
         return valuedSnapshots
             .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Country) ? "未設定" : x.Position.Stock.Country)
             .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+    }
+
+    private void RebuildFxSensitivityRows()
+    {
+        FxSensitivityRows.Clear();
+        var rows = _analyticsService.BuildFxSensitivity(_snapshots, _summary.CurrentUsdJpyRate);
+        var maxChange = rows.Count == 0 ? 0m : rows.Max(x => Math.Abs(x.ChangeFromCurrentJpy));
+        foreach (var row in rows)
+        {
+            FxSensitivityRows.Add(new FxSensitivityRowViewModel(row, maxChange));
+        }
     }
 
     private DateTime? ResolveHistoryStartDate(DateTime today) =>
