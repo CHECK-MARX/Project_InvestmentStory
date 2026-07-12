@@ -652,7 +652,8 @@ public sealed class InvestmentStoryRepository
             return;
         }
 
-        var positions = GetPositions()
+        var positionList = GetPositions();
+        var positions = positionList
             .GroupBy(x => SecurityIdentityService.BuildPositionKey(x), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         var ledgerBuilder = new TradeLedgerService();
@@ -660,7 +661,8 @@ public sealed class InvestmentStoryRepository
 
         foreach (var group in records.GroupBy(BuildTradePositionKey, StringComparer.OrdinalIgnoreCase))
         {
-            if (!positions.TryGetValue(group.Key, out var position))
+            var position = ResolveTradePosition(group.Key, group.First(), positions, positionList);
+            if (position is null)
             {
                 continue;
             }
@@ -681,6 +683,7 @@ public sealed class InvestmentStoryRepository
             InsertBrokerTrade(connection, transaction, trade);
         }
 
+        NormalizeZeroPriceInboundSplitsFromCurrentHoldings(connection, transaction, ledgers.Select(x => x.StockId));
         transaction.Commit();
     }
 
@@ -703,6 +706,106 @@ public sealed class InvestmentStoryRepository
             WHERE StockId IN ({string.Join(", ", parameterNames)})
               AND TradeType = 'InitialPosition'
               AND Source = 'HoldingsSnapshot';
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static StockPosition? ResolveTradePosition(
+        string exactKey,
+        BrokerTradeRecord trade,
+        IReadOnlyDictionary<string, StockPosition> positionsByExactKey,
+        IReadOnlyList<StockPosition> positions)
+    {
+        if (positionsByExactKey.TryGetValue(exactKey, out var exact))
+        {
+            return exact;
+        }
+
+        var normalizedBroker = PositionIdentityService.NormalizeBroker(trade.Broker);
+        var normalizedTicker = SecuritySymbolNormalizer.NormalizeTicker(trade.Ticker);
+        var normalizedAccount = AccountTypeNormalizer.Normalize(trade.Account);
+        var normalizedCurrency = NormalizeCurrency(trade.Currency);
+
+        var candidates = positions
+            .Where(x => !x.IsMutualFund)
+            .Where(x => PositionIdentityService.NormalizeBroker(x.Stock.Broker).Equals(normalizedBroker, StringComparison.OrdinalIgnoreCase))
+            .Where(x => SecuritySymbolNormalizer.NormalizeTicker(x.Stock.Ticker).Equals(normalizedTicker, StringComparison.OrdinalIgnoreCase))
+            .Where(x => NormalizeCurrency(x.Stock.Currency).Equals(normalizedCurrency, StringComparison.OrdinalIgnoreCase))
+            .Select(x => new
+            {
+                Position = x,
+                Account = AccountTypeNormalizer.Normalize(x.Stock.AccountType),
+                Custody = AccountTypeNormalizer.Normalize(x.Stock.CustodyType)
+            })
+            .Where(x => normalizedAccount == AccountTypes.Unknown ||
+                        x.Account == normalizedAccount ||
+                        x.Custody == normalizedAccount ||
+                        x.Account == AccountTypes.Unknown)
+            .Select(x => new
+            {
+                x.Position,
+                Score =
+                    (x.Account == normalizedAccount ? 100 : 0) +
+                    (x.Custody == normalizedAccount ? 50 : 0) +
+                    (x.Position.CurrentHolding.CurrentShares > 0m ? 10 : 0) +
+                    (x.Position.Purchase.Shares > 0m ? 5 : 0)
+            })
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Position.CurrentHolding.CurrentShares)
+            .ThenBy(x => x.Position.Stock.Id)
+            .ToList();
+
+        return candidates.FirstOrDefault()?.Position;
+    }
+
+    private static void NormalizeZeroPriceInboundSplitsFromCurrentHoldings(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IEnumerable<int> stockIds)
+    {
+        var ids = stockIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        var parameterNames = AddIdParameters(command, ids);
+        command.CommandText = $"""
+            UPDATE BrokerTrades
+            SET TradeType = 'StockSplit',
+                AfterTradeQuantity = (
+                    SELECT ch.CurrentShares
+                    FROM CurrentHoldings ch
+                    WHERE ch.StockId = BrokerTrades.StockId
+                    LIMIT 1
+                ),
+                AfterTradeAverageCost = COALESCE((
+                    SELECT CASE
+                        WHEN ch.CurrentShares <= 0 THEN BrokerTrades.AfterTradeAverageCost
+                        WHEN s.AssetType = 'MutualFund' THEN NULLIF(mf.AverageCostNav, 0)
+                        ELSE NULLIF(p.Shares * p.UnitPrice / ch.CurrentShares, 0)
+                    END
+                    FROM CurrentHoldings ch
+                    INNER JOIN Stocks s ON s.Id = ch.StockId
+                    LEFT JOIN Purchases p ON p.StockId = ch.StockId
+                    LEFT JOIN MutualFundHoldings mf ON mf.StockId = ch.StockId
+                    WHERE ch.StockId = BrokerTrades.StockId
+                    LIMIT 1
+                ), AfterTradeAverageCost)
+            WHERE StockId IN ({string.Join(", ", parameterNames)})
+              AND SignedQuantity > 0
+              AND UnitPrice = 0
+              AND SettlementAmountJpy = 0
+              AND TradeType IN ('TransferIn', '入庫')
+              AND EXISTS (
+                  SELECT 1
+                  FROM CurrentHoldings ch
+                  WHERE ch.StockId = BrokerTrades.StockId
+                    AND ch.CurrentShares > BrokerTrades.SignedQuantity
+                    AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
+              );
             """;
         command.ExecuteNonQuery();
     }
@@ -1387,7 +1490,7 @@ public sealed class InvestmentStoryRepository
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT OR IGNORE INTO BrokerTrades
+            INSERT INTO BrokerTrades
                 (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
                  Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
                  FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
@@ -1396,7 +1499,20 @@ public sealed class InvestmentStoryRepository
                 ($stockId, $tradeDate, $settlementDate, $broker, $accountType, $custodyType, $tradeType,
                  $quantity, $signedQuantity, $unitPrice, $currency, $exchangeRate, $settlementAmountJpy,
                  $feeJpy, $taxJpy, $realizedGainLoss, $realizedGainLossJpy, $afterTradeQuantity,
-                 $afterTradeAverageCost, $source, $sourceFile, CURRENT_TIMESTAMP);
+                 $afterTradeAverageCost, $source, $sourceFile, CURRENT_TIMESTAMP)
+            ON CONFLICT(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source)
+            DO UPDATE SET
+                CustodyType = excluded.CustodyType,
+                SignedQuantity = excluded.SignedQuantity,
+                Currency = excluded.Currency,
+                ExchangeRate = excluded.ExchangeRate,
+                FeeJpy = excluded.FeeJpy,
+                TaxJpy = excluded.TaxJpy,
+                RealizedGainLoss = excluded.RealizedGainLoss,
+                RealizedGainLossJpy = excluded.RealizedGainLossJpy,
+                AfterTradeQuantity = excluded.AfterTradeQuantity,
+                AfterTradeAverageCost = excluded.AfterTradeAverageCost,
+                SourceFile = excluded.SourceFile;
             """;
         command.Parameters.AddWithValue("$stockId", trade.StockId);
         command.Parameters.AddWithValue("$tradeDate", ToDateText(trade.TradeDate));

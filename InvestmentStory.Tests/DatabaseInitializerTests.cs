@@ -319,6 +319,68 @@ public sealed class DatabaseInitializerTests
     }
 
     [Fact]
+    public void Initialize_NormalizesTransferInSplitCandidateUsingCurrentHoldings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"investment_story_current_holding_split_repair_{Guid.NewGuid():N}.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+
+            using (var connection = Open(path))
+            {
+                var stockId = InsertStock(connection, "TSLA", "Tesla", "US", "USD", "Nomura");
+                Execute(connection, """
+                    INSERT INTO Purchases (StockId, PurchaseDate, Shares, UnitPrice, ExchangeRate, Fee)
+                    VALUES ($stockId, '2022-08-31', 30, 170.723398984269, 161.46, 0);
+                    """,
+                    ("$stockId", stockId));
+                Execute(connection, """
+                    INSERT INTO CurrentHoldings (StockId, CurrentShares, CurrentPrice, CurrentExchangeRate, UpdatedAt)
+                    VALUES ($stockId, 30, 419.77, 161.672, '2026-07-12');
+                    """,
+                    ("$stockId", stockId));
+                Execute(connection, """
+                    INSERT INTO BrokerTrades
+                        (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                         Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                         AfterTradeQuantity, AfterTradeAverageCost, Source)
+                    VALUES
+                        ($stockId, '2022-08-31', '2022-08-31', 'Nomura', 'Specific', 'Specific', 'TransferIn',
+                         20, 20, 0, 'USD', 138.77, 0, 20, 0, 'Nomura CSV');
+                    """,
+                    ("$stockId", stockId));
+            }
+
+            new DatabaseInitializer().Initialize(path);
+
+            using (var connection = Open(path))
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT TradeType, AfterTradeQuantity, AfterTradeAverageCost
+                    FROM BrokerTrades
+                    WHERE Source = 'Nomura CSV'
+                    LIMIT 1;
+                    """;
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal("StockSplit", reader.GetString(0));
+                Assert.Equal(30d, reader.GetDouble(1), precision: 0);
+                Assert.Equal(170.723398984269d, reader.GetDouble(2), precision: 6);
+            }
+        }
+        finally
+        {
+            foreach (var file in Directory.GetFiles(
+                Path.GetDirectoryName(path)!,
+                $"{Path.GetFileNameWithoutExtension(path)}*{Path.GetExtension(path)}"))
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
     public void Initialize_BackfillsInitialPositionTradesFromCurrentHoldings()
     {
         var path = Path.Combine(Path.GetTempPath(), $"investment_story_initial_position_{Guid.NewGuid():N}.db");

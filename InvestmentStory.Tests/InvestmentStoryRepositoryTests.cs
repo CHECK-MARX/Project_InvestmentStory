@@ -322,6 +322,114 @@ public sealed class InvestmentStoryRepositoryTests
         }
     }
 
+    [Fact]
+    public void SaveBrokerTrades_MatchesExistingUsPosition_WhenCsvHasNoMarketSegment()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_trade_market_fallback_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+
+            repository.SavePosition(new StockPosition
+            {
+                Stock = new Stock
+                {
+                    Name = "Beyond Meat",
+                    Ticker = "BYND",
+                    Country = "米国",
+                    Currency = "USD",
+                    Broker = "野村証券",
+                    AccountType = AccountTypes.Specific,
+                    CustodyType = "特定",
+                    Market = "NASDAQ",
+                    DataSource = "Nomura Holdings CSV"
+                },
+                Purchase = new Purchase
+                {
+                    PurchaseDate = new DateTime(2021, 11, 5),
+                    Shares = 20m,
+                    UnitPrice = 85.25m,
+                    ExchangeRate = 114.98m
+                },
+                Split = new StockSplit { SplitRatio = 1m },
+                CurrentHolding = new CurrentHolding
+                {
+                    CurrentShares = 20m,
+                    CurrentPrice = 0.73m,
+                    CurrentExchangeRate = 162m
+                }
+            });
+
+            var records = new[]
+            {
+                new BrokerTradeRecord
+                {
+                    Broker = "野村証券",
+                    Account = "特定",
+                    Ticker = "BYND",
+                    Name = "ビヨンド ミート インク",
+                    TradeType = "現物買付",
+                    TradeDate = new DateTime(2021, 11, 5),
+                    SettlementDate = new DateTime(2021, 11, 9),
+                    Quantity = 10m,
+                    SignedQuantity = 10m,
+                    UnitPrice = 104.51m,
+                    SettlementAmountJpy = 124_055m,
+                    FeeJpy = 2_389m,
+                    ExchangeRate = 114.23m,
+                    Currency = "USD",
+                    Source = "野村取引履歴CSV"
+                },
+                new BrokerTradeRecord
+                {
+                    Broker = "野村証券",
+                    Account = "特定",
+                    Ticker = "BYND",
+                    Name = "ビヨンド ミート インク",
+                    TradeType = "現物買付",
+                    TradeDate = new DateTime(2022, 1, 12),
+                    SettlementDate = new DateTime(2022, 1, 14),
+                    Quantity = 10m,
+                    SignedQuantity = 10m,
+                    UnitPrice = 66m,
+                    SettlementAmountJpy = 81_085m,
+                    FeeJpy = 2_389m,
+                    ExchangeRate = 115.73m,
+                    Currency = "USD",
+                    Source = "野村取引履歴CSV"
+                }
+            };
+
+            repository.SaveBrokerTrades(new[] { records[1] });
+            repository.SaveBrokerTrades(records);
+
+            var position = repository.GetPositions().Single(x =>
+                x.Stock.Ticker == "BYND" &&
+                x.Stock.Broker == "野村証券" &&
+                x.Stock.AccountType == AccountTypes.Specific);
+            var trades = repository.GetBrokerTrades(position.Stock.Id)
+                .OrderBy(x => x.TradeDate)
+                .ToList();
+
+            Assert.Equal(2, trades.Count);
+            Assert.Equal(new DateTime(2021, 11, 5), trades[0].TradeDate);
+            Assert.Equal(104.51m, trades[0].UnitPrice);
+            Assert.Equal(10m, trades[0].AfterTradeQuantity);
+            Assert.Equal(new DateTime(2022, 1, 12), trades[1].TradeDate);
+            Assert.Equal(66m, trades[1].UnitPrice);
+            Assert.Equal(20m, trades[1].AfterTradeQuantity);
+            Assert.Equal(85.255m, trades[1].AfterTradeAverageCost, precision: 3);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
     private static StockPosition CreateMutualFundPosition(
         decimal unitsHeld,
         decimal averageCostNav,

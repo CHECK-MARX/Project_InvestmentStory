@@ -1,6 +1,7 @@
 <UserControl x:Class="InvestmentStory.App.Views.StockDetailView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:InvestmentStory.App.Controls">
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -194,12 +195,49 @@
                                     </StackPanel>
                                 </Border>
                             </UniformGrid>
-                            <Border Style="{StaticResource MetricCardStyle}" Height="220">
-                                <TextBlock Text="株価推移グラフは、履歴データ取得機能の追加後にここへ表示します。"
-                                           Foreground="{DynamicResource SecondaryTextBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           TextWrapping="Wrap" />
+                            <Border Style="{StaticResource MetricCardStyle}" MinHeight="520">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding PriceChartTitle}"
+                                                   Style="{StaticResource SectionTitleStyle}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,14,8" />
+                                        <ComboBox Grid.Column="1"
+                                                  ItemsSource="{Binding ChartPeriods}"
+                                                  SelectedItem="{Binding SelectedChartPeriod, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  Width="120"
+                                                  Margin="0,0,10,8" />
+                                        <Button Grid.Column="2"
+                                                Content="チャート更新"
+                                                Command="{Binding RefreshPriceChartCommand}"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Margin="0,0,12,8" />
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding PriceChartStatus}"
+                                                   Style="{StaticResource SubtleTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,8" />
+                                    </Grid>
+                                    <controls:PriceChartControl Grid.Row="1"
+                                                                MinHeight="430"
+                                                                Points="{Binding PriceChartPoints}"
+                                                                CurrentPrice="{Binding ChartCurrentPriceValue}"
+                                                                AverageCost="{Binding ChartAverageCostValue}"
+                                                                Currency="{Binding ChartCurrency}"
+                                                                LineOnly="{Binding IsPriceChartLineOnly}"
+                                                                StatusMessage="{Binding PriceChartStatus}" />
+                                </Grid>
                             </Border>
                         </StackPanel>
                     </ScrollViewer>

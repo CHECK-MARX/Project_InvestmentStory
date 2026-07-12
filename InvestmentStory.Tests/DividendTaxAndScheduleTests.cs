@@ -114,6 +114,7 @@ public sealed class DividendTaxAndScheduleTests
                 StockId = 1,
                 PaymentDate = new DateTime(2026, 6, 20),
                 DividendStatus = DividendConstants.Estimated,
+                Source = DividendConstants.SourceEstimatedFromAnnualDividend,
                 Quantity = 50m,
                 Currency = "USD",
                 ExchangeRate = 160m,
@@ -147,6 +148,68 @@ public sealed class DividendTaxAndScheduleTests
     }
 
     [Fact]
+    public void ScheduleService_IgnoresImplausibleHistoricalPerShare()
+    {
+        var service = new DividendScheduleService();
+        var position = CreatePosition(currentShares: 20m, annualDividendPerShare: 5.24m, currentPrice: 267m, stockId: 2);
+        var existing = new[]
+        {
+            new DividendPayment
+            {
+                Id = 30,
+                StockId = 2,
+                PaymentDate = new DateTime(2026, 6, 10),
+                DividendStatus = DividendConstants.Actual,
+                Quantity = 20m,
+                DividendPerShare = 192.1395m,
+                GrossAmount = 3842.79m,
+                Currency = "USD",
+                ExchangeRate = 161.672m
+            }
+        };
+
+        var result = service.BuildSchedules(
+            new[] { position },
+            existing,
+            UsProfiles(),
+            new DateTime(2026, 7, 12));
+
+        Assert.NotEmpty(result.Schedules);
+        Assert.DoesNotContain(result.Schedules, x => x.DividendPerShare > 50m);
+        Assert.All(result.Schedules, x => Assert.Equal(1.31m, x.DividendPerShare));
+    }
+
+    [Fact]
+    public void ScheduleService_UsesHistoricalPaymentDayWhenAvailable()
+    {
+        var service = new DividendScheduleService();
+        var position = CreatePosition(currentShares: 20m, annualDividendPerShare: 5.24m, currentPrice: 267m, stockId: 3);
+        var existing = new[]
+        {
+            new DividendPayment
+            {
+                Id = 40,
+                StockId = 3,
+                PaymentDate = new DateTime(2025, 9, 11),
+                DividendStatus = DividendConstants.Actual,
+                Quantity = 20m,
+                DividendPerShare = 1.31m,
+                GrossAmount = 26.20m,
+                Currency = "USD",
+                ExchangeRate = 160m
+            }
+        };
+
+        var result = service.BuildSchedules(
+            new[] { position },
+            existing,
+            UsProfiles(),
+            new DateTime(2026, 1, 1));
+
+        Assert.Contains(result.Schedules, x => x.PaymentDate == new DateTime(2026, 9, 11));
+    }
+
+    [Fact]
     public void ReconciliationService_CsvActualReplacesMatchingSchedule()
     {
         var existing = new[]
@@ -156,7 +219,7 @@ public sealed class DividendTaxAndScheduleTests
                 Id = 1,
                 StockId = 1,
                 AccountType = DividendConstants.AccountSpecific,
-                Broker = "SBI証券",
+                Broker = "SBI",
                 PaymentDate = new DateTime(2026, 6, 20),
                 DividendStatus = DividendConstants.Estimated,
                 Currency = "USD",
@@ -169,7 +232,7 @@ public sealed class DividendTaxAndScheduleTests
         {
             StockId = 1,
             AccountType = DividendConstants.AccountSpecific,
-            Broker = "SBI証券",
+            Broker = "SBI",
             PaymentDate = new DateTime(2026, 6, 22),
             DividendStatus = DividendConstants.Actual,
             Currency = "USD",
@@ -185,30 +248,36 @@ public sealed class DividendTaxAndScheduleTests
         Assert.Equal(1, decision.ReplaceTargets[0].Id);
     }
 
-    private static StockPosition CreatePosition(decimal currentShares, decimal annualDividendPerShare)
+    private static StockPosition CreatePosition(
+        decimal currentShares,
+        decimal annualDividendPerShare,
+        decimal currentPrice = 100m,
+        int stockId = 1)
     {
         return new StockPosition
         {
             Stock = new Stock
             {
-                Id = 1,
+                Id = stockId,
                 Name = "PepsiCo",
                 Ticker = "PEP",
-                Country = "米国",
+                Country = "US",
                 Currency = "USD",
-                Broker = "SBI証券"
+                Broker = "SBI",
+                AccountType = DividendConstants.AccountSpecific
             },
             CurrentHolding = new CurrentHolding
             {
-                StockId = 1,
+                StockId = stockId,
                 CurrentShares = currentShares,
-                CurrentPrice = 100m,
+                CurrentPrice = currentPrice,
                 CurrentExchangeRate = 160m,
                 ExchangeRateAcquiredAt = new DateTime(2026, 1, 1),
                 ExchangeRateSource = "Yahoo Finance",
                 ExchangeRateInputType = "API",
                 AnnualDividendPerShare = annualDividendPerShare,
-                DividendStatus = "配当あり"
+                DividendStatus = "配当あり",
+                DividendFrequency = "年4回"
             }
         };
     }

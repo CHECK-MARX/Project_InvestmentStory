@@ -752,7 +752,7 @@ public sealed class DatabaseInitializer
             WHERE SignedQuantity > 0
               AND UnitPrice = 0
               AND SettlementAmountJpy = 0
-              AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+              AND TradeType NOT IN ('OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
             """;
 
         return Convert.ToInt32(command.ExecuteScalar());
@@ -763,15 +763,61 @@ public sealed class DatabaseInitializer
         Execute(connection, """
             UPDATE BrokerTrades
             SET TradeType = CASE
-                    WHEN AfterTradeQuantity > SignedQuantity
-                     AND ROUND(AfterTradeQuantity / NULLIF(AfterTradeQuantity - SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
+                    WHEN (AfterTradeQuantity > SignedQuantity
+                       AND ROUND(AfterTradeQuantity / NULLIF(AfterTradeQuantity - SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10))
+                      OR EXISTS (
+                          SELECT 1
+                          FROM CurrentHoldings ch
+                          WHERE ch.StockId = BrokerTrades.StockId
+                            AND ch.CurrentShares > BrokerTrades.SignedQuantity
+                            AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
+                      )
                         THEN 'StockSplit'
                     ELSE 'TransferIn'
+                END,
+                AfterTradeQuantity = CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM CurrentHoldings ch
+                        WHERE ch.StockId = BrokerTrades.StockId
+                          AND ch.CurrentShares > BrokerTrades.SignedQuantity
+                          AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
+                    )
+                        THEN (
+                            SELECT ch.CurrentShares
+                            FROM CurrentHoldings ch
+                            WHERE ch.StockId = BrokerTrades.StockId
+                            LIMIT 1
+                        )
+                    ELSE AfterTradeQuantity
+                END,
+                AfterTradeAverageCost = CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM CurrentHoldings ch
+                        WHERE ch.StockId = BrokerTrades.StockId
+                          AND ch.CurrentShares > BrokerTrades.SignedQuantity
+                          AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
+                    )
+                        THEN COALESCE((
+                            SELECT CASE
+                                WHEN ch.CurrentShares <= 0 THEN BrokerTrades.AfterTradeAverageCost
+                                WHEN s.AssetType = 'MutualFund' THEN NULLIF(mf.AverageCostNav, 0)
+                                ELSE NULLIF(p.Shares * p.UnitPrice / ch.CurrentShares, 0)
+                            END
+                            FROM CurrentHoldings ch
+                            INNER JOIN Stocks s ON s.Id = ch.StockId
+                            LEFT JOIN Purchases p ON p.StockId = ch.StockId
+                            LEFT JOIN MutualFundHoldings mf ON mf.StockId = ch.StockId
+                            WHERE ch.StockId = BrokerTrades.StockId
+                            LIMIT 1
+                        ), AfterTradeAverageCost)
+                    ELSE AfterTradeAverageCost
                 END
             WHERE SignedQuantity > 0
               AND UnitPrice = 0
               AND SettlementAmountJpy = 0
-              AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+              AND TradeType NOT IN ('OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
             """);
     }
 

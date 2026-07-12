@@ -16,33 +16,50 @@ public sealed class DividendScheduleService
         ArgumentNullException.ThrowIfNull(existingPayments);
         ArgumentNullException.ThrowIfNull(taxProfiles);
 
-        var existing = existingPayments.ToList();
+        var existing = existingPayments
+            .Where(x => !string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
+            .ToList();
         var profiles = taxProfiles.ToList();
         var schedules = new List<DividendPayment>();
+        var generatedKeys = new HashSet<ScheduleKey>();
         var created = 0;
         var updated = 0;
         var paymentDue = 0;
 
         foreach (var position in positions.Where(IsScheduleTarget))
         {
-            var months = ResolveDividendMonths(position, existing, asOf);
+            var actualHistory = GetActualHistory(position, existing, asOf);
+            var months = ResolveDividendMonths(position, actualHistory, existing);
             if (months.Count == 0)
             {
                 continue;
             }
 
-            var accountType = ResolveAccountType(position.Stock.Broker);
-            var perPaymentDividend = ResolveDividendPerShare(position, existing, months.Count);
+            var accountType = ResolveAccountType(position);
             var profile = ResolveTaxProfile(position, profiles, accountType);
             var paymentYear = asOf.Year;
+            var reliableActuals = actualHistory
+                .Where(x => IsPlausibleDividendPerShare(position, x.DividendPerShare, months.Count))
+                .ToList();
 
             foreach (var month in months)
             {
-                var paymentDate = new DateTime(paymentYear, month, Math.Min(20, DateTime.DaysInMonth(paymentYear, month)));
+                var paymentDate = ResolvePaymentDate(actualHistory, existing, position.Stock.Id, paymentYear, month);
+                if (HasActualPaymentForMonth(position.Stock.Id, existing, paymentDate.Year, paymentDate.Month))
+                {
+                    continue;
+                }
+
+                var perPaymentDividend = ResolveDividendPerShare(position, reliableActuals, month, months.Count);
+                if (perPaymentDividend <= 0m)
+                {
+                    continue;
+                }
+
                 var status = paymentDate.Date < asOf.Date ? DividendConstants.PaymentDue : DividendConstants.Estimated;
                 var existingSchedule = existing
                     .Where(x => x.StockId == position.Stock.Id)
-                    .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus))
+                    .Where(IsGeneratedSchedule)
                     .FirstOrDefault(x => x.PaymentDate.Year == paymentDate.Year && x.PaymentDate.Month == paymentDate.Month);
 
                 var schedule = existingSchedule ?? new DividendPayment();
@@ -65,7 +82,7 @@ public sealed class DividendScheduleService
                 schedule.FiscalYear = paymentDate.Year;
                 schedule.FiscalQuarter = $"Q{((paymentDate.Month - 1) / 3) + 1}";
                 schedule.DividendStatus = status;
-                schedule.Source = HasHistory(position.Stock.Id, existing)
+                schedule.Source = actualHistory.Count > 0
                     ? DividendConstants.SourceEstimatedFromHistory
                     : DividendConstants.SourceEstimatedFromAnnualDividend;
                 schedule.SourcePriority = 20;
@@ -99,7 +116,9 @@ public sealed class DividendScheduleService
                 schedule.IsForeignStock = !IsJpy(position.Stock.Currency);
                 schedule.TaxProfileId = profile.Id == 0 ? null : profile.Id;
                 schedule.UpdatedAt = DateTime.Now;
-                schedule.Memo = "配当予定の概算です。実際の入金額は証券会社CSVを正とします。";
+                schedule.Memo = actualHistory.Count > 0
+                    ? "過去の配当実績から推定した配当予定です。実際の入金額は証券会社CSVを正とします。"
+                    : "年間配当情報から推定した配当予定です。実際の入金額は証券会社CSVを正とします。";
 
                 if (schedule.Id == 0)
                 {
@@ -117,27 +136,64 @@ public sealed class DividendScheduleService
                 }
 
                 schedules.Add(schedule);
+                generatedKeys.Add(new ScheduleKey(position.Stock.Id, paymentDate.Year, paymentDate.Month));
             }
         }
+
+        var obsoleteScheduleIds = existing
+            .Where(IsGeneratedSchedule)
+            .Where(x => x.PaymentDate.Year == asOf.Year)
+            .Where(x => !generatedKeys.Contains(new ScheduleKey(x.StockId, x.PaymentDate.Year, x.PaymentDate.Month)))
+            .Select(x => x.Id)
+            .Where(x => x > 0)
+            .Distinct()
+            .ToList();
 
         return new DividendScheduleUpdateResult
         {
             Schedules = schedules,
             CreatedCount = created,
             UpdatedCount = updated,
-            PaymentDueCount = paymentDue
+            PaymentDueCount = paymentDue,
+            ObsoleteScheduleIds = obsoleteScheduleIds
         };
     }
 
     private static bool IsScheduleTarget(StockPosition position) =>
+        !position.IsMutualFund &&
         position.CurrentHolding.CurrentShares > 0m &&
         position.CurrentHolding.AnnualDividendPerShare > 0m &&
-        !string.Equals(position.CurrentHolding.DividendStatus, "配当なし", StringComparison.Ordinal);
+        !IsNoDividendStatus(position.CurrentHolding.DividendStatus);
 
-    private static IReadOnlyList<int> ResolveDividendMonths(
+    private static bool IsNoDividendStatus(string status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return false;
+        }
+
+        return status.Contains("配当なし", StringComparison.Ordinal) ||
+               status.Contains("なし", StringComparison.Ordinal);
+    }
+
+    private static IReadOnlyList<DividendPayment> GetActualHistory(
         StockPosition position,
         IReadOnlyList<DividendPayment> existing,
         DateTime asOf)
+    {
+        var from = asOf.AddYears(-5);
+        return existing
+            .Where(x => x.StockId == position.Stock.Id)
+            .Where(x => DividendConstants.IsActual(x.DividendStatus))
+            .Where(x => x.PaymentDate >= from && x.PaymentDate <= asOf.AddYears(1))
+            .OrderByDescending(x => x.PaymentDate)
+            .ToList();
+    }
+
+    private static IReadOnlyList<int> ResolveDividendMonths(
+        StockPosition position,
+        IReadOnlyList<DividendPayment> actualHistory,
+        IReadOnlyList<DividendPayment> existing)
     {
         var configuredMonths = ParseMonths(position.CurrentHolding.DividendMonths);
         if (configuredMonths.Count > 0)
@@ -145,41 +201,90 @@ public sealed class DividendScheduleService
             return configuredMonths;
         }
 
-        var historyMonths = existing
-            .Where(x => x.StockId == position.Stock.Id)
-            .Where(x => DividendConstants.IsActual(x.DividendStatus))
-            .Where(x => x.PaymentDate >= asOf.AddYears(-2))
-            .Select(x => x.PaymentDate.Month)
-            .ToList();
+        var frequencyMonths = FrequencyToMonths(position.CurrentHolding.DividendFrequency);
+        if (frequencyMonths.Count > 0)
+        {
+            return frequencyMonths;
+        }
 
-        var existingScheduleMonths = existing
-            .Where(x => x.StockId == position.Stock.Id)
-            .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus))
+        var historyMonths = actualHistory
             .Select(x => x.PaymentDate.Month)
-            .ToList();
-
-        var inferredMonths = historyMonths
-            .Concat(existingScheduleMonths)
             .Distinct()
             .Order()
             .ToList();
-        if (inferredMonths.Count > 0)
+        if (historyMonths.Count > 0)
         {
-            return inferredMonths;
+            return historyMonths;
         }
 
-        return FrequencyToMonths(position.CurrentHolding.DividendFrequency);
+        return existing
+            .Where(x => x.StockId == position.Stock.Id)
+            .Where(IsGeneratedSchedule)
+            .Select(x => x.PaymentDate.Month)
+            .Distinct()
+            .Order()
+            .ToList();
     }
+
+    private static DateTime ResolvePaymentDate(
+        IReadOnlyList<DividendPayment> actualHistory,
+        IReadOnlyList<DividendPayment> existing,
+        int stockId,
+        int year,
+        int month)
+    {
+        var sameMonthDay = actualHistory
+            .Where(x => x.PaymentDate.Month == month)
+            .OrderByDescending(x => x.PaymentDate)
+            .Select(x => x.PaymentDate.Day)
+            .FirstOrDefault();
+        if (sameMonthDay > 0)
+        {
+            return SafeDate(year, month, sameMonthDay);
+        }
+
+        var commonHistoryDay = actualHistory
+            .Where(x => x.PaymentDate != default)
+            .GroupBy(x => x.PaymentDate.Day)
+            .OrderByDescending(x => x.Count())
+            .ThenByDescending(x => x.Max(y => y.PaymentDate))
+            .Select(x => x.Key)
+            .FirstOrDefault();
+        if (commonHistoryDay > 0)
+        {
+            return SafeDate(year, month, commonHistoryDay);
+        }
+
+        var existingDay = existing
+            .Where(x => x.StockId == stockId)
+            .Where(IsGeneratedSchedule)
+            .Where(x => x.PaymentDate.Month == month)
+            .OrderByDescending(x => x.UpdatedAt)
+            .Select(x => x.PaymentDate.Day)
+            .FirstOrDefault();
+
+        return SafeDate(year, month, existingDay > 0 ? existingDay : 20);
+    }
+
+    private static DateTime SafeDate(int year, int month, int day) =>
+        new(year, month, Math.Clamp(day, 1, DateTime.DaysInMonth(year, month)));
 
     private static decimal ResolveDividendPerShare(
         StockPosition position,
-        IReadOnlyList<DividendPayment> existing,
+        IReadOnlyList<DividendPayment> reliableActuals,
+        int month,
         int paymentCount)
     {
-        var latestActual = existing
-            .Where(x => x.StockId == position.Stock.Id)
-            .Where(x => DividendConstants.IsActual(x.DividendStatus))
-            .Where(x => x.DividendPerShare > 0m)
+        var sameMonthActual = reliableActuals
+            .Where(x => x.PaymentDate.Month == month)
+            .OrderByDescending(x => x.PaymentDate)
+            .FirstOrDefault();
+        if (sameMonthActual is not null)
+        {
+            return sameMonthActual.DividendPerShare;
+        }
+
+        var latestActual = reliableActuals
             .OrderByDescending(x => x.PaymentDate)
             .FirstOrDefault();
         if (latestActual is not null)
@@ -187,11 +292,85 @@ public sealed class DividendScheduleService
             return latestActual.DividendPerShare;
         }
 
-        return paymentCount <= 0 ? 0m : position.CurrentHolding.AnnualDividendPerShare / paymentCount;
+        var annualDividend = position.CurrentHolding.AnnualDividendPerShare;
+        if (!IsPlausibleAnnualDividendPerShare(position, annualDividend))
+        {
+            return 0m;
+        }
+
+        return paymentCount <= 0 ? 0m : annualDividend / paymentCount;
     }
 
-    private static bool HasHistory(int stockId, IReadOnlyList<DividendPayment> existing) =>
-        existing.Any(x => x.StockId == stockId && DividendConstants.IsActual(x.DividendStatus));
+    private static bool IsPlausibleDividendPerShare(StockPosition position, decimal dividendPerShare, int paymentCount)
+    {
+        if (dividendPerShare <= 0m)
+        {
+            return false;
+        }
+
+        var currency = NormalizeCurrency(position.Stock.Currency);
+        if (currency == "USD" && dividendPerShare > 50m)
+        {
+            return false;
+        }
+
+        if (currency == "JPY" && dividendPerShare > 10000m)
+        {
+            return false;
+        }
+
+        var price = position.CurrentHolding.CurrentPrice;
+        if (price <= 0m)
+        {
+            return true;
+        }
+
+        if (dividendPerShare > price * 0.20m)
+        {
+            return false;
+        }
+
+        var annualizedDividend = dividendPerShare * Math.Max(paymentCount, 1);
+        return annualizedDividend / price <= 0.40m;
+    }
+
+    private static bool IsPlausibleAnnualDividendPerShare(StockPosition position, decimal annualDividendPerShare)
+    {
+        if (annualDividendPerShare <= 0m)
+        {
+            return false;
+        }
+
+        var currency = NormalizeCurrency(position.Stock.Currency);
+        if (currency == "USD" && annualDividendPerShare > 200m)
+        {
+            return false;
+        }
+
+        if (currency == "JPY" && annualDividendPerShare > 50000m)
+        {
+            return false;
+        }
+
+        var price = position.CurrentHolding.CurrentPrice;
+        return price <= 0m || annualDividendPerShare / price <= 0.40m;
+    }
+
+    private static bool HasActualPaymentForMonth(
+        int stockId,
+        IReadOnlyList<DividendPayment> existing,
+        int year,
+        int month) =>
+        existing.Any(x =>
+            x.StockId == stockId &&
+            DividendConstants.IsActual(x.DividendStatus) &&
+            x.PaymentDate.Year == year &&
+            x.PaymentDate.Month == month);
+
+    private static bool IsGeneratedSchedule(DividendPayment payment) =>
+        DividendConstants.IsUnconfirmed(payment.DividendStatus) &&
+        (string.Equals(payment.Source, DividendConstants.SourceEstimatedFromHistory, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(payment.Source, DividendConstants.SourceEstimatedFromAnnualDividend, StringComparison.OrdinalIgnoreCase));
 
     private static TaxProfile ResolveTaxProfile(StockPosition position, IReadOnlyList<TaxProfile> taxProfiles, string accountType)
     {
@@ -213,10 +392,18 @@ public sealed class DividendScheduleService
                };
     }
 
-    private static string ResolveAccountType(string broker)
+    private static string ResolveAccountType(StockPosition position)
     {
-        _ = broker;
-        return DividendConstants.AccountSpecific;
+        var accountType = DividendConstants.NormalizeAccountType(position.Stock.AccountType);
+        if (accountType != DividendConstants.AccountUnknown)
+        {
+            return accountType;
+        }
+
+        accountType = DividendConstants.NormalizeAccountType(position.Stock.CustodyType);
+        return accountType == DividendConstants.AccountUnknown
+            ? DividendConstants.AccountSpecific
+            : accountType;
     }
 
     private static IReadOnlyList<int> ParseMonths(string value)
@@ -269,11 +456,14 @@ public sealed class DividendScheduleService
     }
 
     private static bool IsJpy(string currency) => NormalizeCurrency(currency) == "JPY";
+
+    private readonly record struct ScheduleKey(int StockId, int Year, int Month);
 }
 
 public sealed class DividendScheduleUpdateResult
 {
     public IReadOnlyList<DividendPayment> Schedules { get; init; } = Array.Empty<DividendPayment>();
+    public IReadOnlyList<int> ObsoleteScheduleIds { get; init; } = Array.Empty<int>();
     public int CreatedCount { get; init; }
     public int UpdatedCount { get; init; }
     public int PaymentDueCount { get; init; }

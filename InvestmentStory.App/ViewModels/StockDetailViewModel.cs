@@ -3,6 +3,7 @@ using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Input;
 
 namespace InvestmentStory.App.ViewModels;
 
@@ -13,6 +14,19 @@ public sealed class StockDetailViewModel : ObservableObject
     private IReadOnlyList<BrokerTrade> _trades = Array.Empty<BrokerTrade>();
     private bool _hasSyntheticInitialPositionTrades;
     private string _story = "銘柄一覧から銘柄を選択してください。";
+    private IReadOnlyList<PriceChartPointViewModel> _priceChartPoints = Array.Empty<PriceChartPointViewModel>();
+    private string _selectedChartPeriod = "6か月";
+    private string _priceChartStatus = "銘柄を選択するとチャートを取得します。";
+    private decimal _chartCurrentPriceValue;
+    private decimal _chartAverageCostValue;
+    private string _chartCurrency = "JPY";
+
+    public StockDetailViewModel()
+    {
+        RefreshPriceChartCommand = new RelayCommand(() => PriceChartRefreshRequested?.Invoke(this, EventArgs.Empty));
+    }
+
+    public event EventHandler? PriceChartRefreshRequested;
 
     public bool HasStock => _snapshot is not null;
     public bool IsAggregated => _snapshots.Count > 1;
@@ -135,15 +149,70 @@ public sealed class StockDetailViewModel : ObservableObject
 
     public ObservableCollection<BrokerTradeRowViewModel> TradeRows { get; } = new();
     public ObservableCollection<DataQualityRowViewModel> DataQualityRows { get; } = new();
+    public IReadOnlyList<string> ChartPeriods { get; } = new[] { "1か月", "3か月", "6か月", "1年", "3年", "5年", "全期間" };
+    public ICommand RefreshPriceChartCommand { get; }
+    public string PriceChartTitle => IsMutualFund ? "基準価額チャート" : "価格チャート";
+    public bool IsPriceChartLineOnly => IsMutualFund;
+    public IReadOnlyList<PriceChartPointViewModel> PriceChartPoints => _priceChartPoints;
+    public string SelectedChartPeriod
+    {
+        get => _selectedChartPeriod;
+        set
+        {
+            if (SetProperty(ref _selectedChartPeriod, value))
+            {
+                PriceChartRefreshRequested?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public string PriceChartStatus
+    {
+        get => _priceChartStatus;
+        private set => SetProperty(ref _priceChartStatus, value);
+    }
+
+    public decimal ChartCurrentPriceValue
+    {
+        get => _chartCurrentPriceValue;
+        private set => SetProperty(ref _chartCurrentPriceValue, value);
+    }
+
+    public decimal ChartAverageCostValue
+    {
+        get => _chartAverageCostValue;
+        private set => SetProperty(ref _chartAverageCostValue, value);
+    }
+
+    public string ChartCurrency
+    {
+        get => _chartCurrency;
+        private set => SetProperty(ref _chartCurrency, value);
+    }
+
     public string TradeCount => $"{_trades.Count:N0}件";
-    public string TotalBuyAmountJpy => Formatters.Jpy(_trades.Where(IsBuyTrade).Sum(x => Math.Abs(x.SettlementAmountJpy)));
+    public string TotalBuyAmountJpy => Formatters.Jpy(TotalBuyAmountForDisplayJpy);
     public string TotalSaleAmountJpy => Formatters.Jpy(_trades.Where(IsSellTrade).Sum(x => Math.Abs(x.SettlementAmountJpy)));
     public string RealizedGainLossJpy => Formatters.SignedJpy(_trades.Sum(x => x.RealizedGainLossJpy));
-    public string CurrentTradeQuantity => _trades.Count == 0 ? "-" : Formatters.Number(_trades.OrderByDescending(x => x.TradeDate).ThenByDescending(x => x.Id).First().AfterTradeQuantity);
-    public string AverageTradeCost => _trades.Count == 0
-        ? "-"
-        : Formatters.Money(_trades.OrderByDescending(x => x.TradeDate).ThenByDescending(x => x.Id).First().AfterTradeAverageCost, _snapshot?.Position.Stock.Currency ?? "JPY");
-    public string TradeDataWarning => _trades.Count == 0
+    public string CurrentTradeQuantity => CanUseReconstructedTradeSummary
+        ? Formatters.Number(ReconstructedTradeQuantity)
+        : SnapshotQuantity > 0m
+            ? Formatters.Number(SnapshotQuantity)
+            : _trades.Count == 0
+            ? "-"
+            : Formatters.Number(LatestTrade.AfterTradeQuantity);
+    public string AverageTradeCost => CanUseReconstructedTradeSummary && ReconstructedAverageTradeCost > 0m
+        ? Formatters.Money(ReconstructedAverageTradeCost, _snapshot?.Position.Stock.Currency ?? "JPY")
+        : SnapshotQuantity > 0m
+            ? Formatters.Money(SnapshotAverageCost, _snapshot?.Position.Stock.Currency ?? "JPY")
+            : _trades.Count == 0
+            ? "-"
+            : Formatters.Money(LatestTrade.AfterTradeAverageCost, _snapshot?.Position.Stock.Currency ?? "JPY");
+    public string TradeDataWarning => HasTradeQuantityMismatch
+        ? "取引履歴CSVの復元数量と保有残高CSVの数量が一致しないため、現在数量・平均取得単価・取得額は保有残高CSVを優先しています。実現損益は取引履歴CSVから計算した参考値です。"
+        : ShouldUseSnapshotCostBasisForBuyAmount && _trades.Count > 0 && ActualBuyAmountJpy <= 0m
+            ? "取引履歴CSVの約定金額が不足しているため、累計買付額は保有残高CSVの取得額を優先しています。実現損益は取引履歴CSVから計算した参考値です。"
+            : _trades.Count == 0
         ? "取引履歴CSVが未取込です。保有残高CSVまたは手入力の数量・取得単価を優先して表示しています。"
         : _hasSyntheticInitialPositionTrades
             ? "取引履歴CSVがないポジションは、保有残高CSVまたは手入力値から「初期保有」として表示しています。通常の買付・売却件数や実現損益には含めません。"
@@ -152,6 +221,87 @@ public sealed class StockDetailViewModel : ObservableObject
     private decimal FundUnitBase => _snapshot is null
         ? 10000m
         : MutualFundCalculator.NormalizeUnitBase(_snapshot.Position.MutualFund.UnitBase);
+
+    private BrokerTrade LatestTrade => _trades
+        .OrderByDescending(x => x.TradeDate)
+        .ThenByDescending(x => x.Id)
+        .First();
+
+    private decimal SnapshotQuantity => _snapshot is null
+        ? 0m
+        : Sum(x => x.Position.IsMutualFund
+            ? x.Position.MutualFund.UnitsHeld
+            : x.Position.CurrentHolding.CurrentShares);
+
+    private decimal SnapshotAverageCost
+    {
+        get
+        {
+            if (_snapshot is null || SnapshotQuantity <= 0m)
+            {
+                return 0m;
+            }
+
+            return IsMutualFund
+                ? WeightedFundNav(x => x.PurchaseTotalJpy)
+                : DivideOrZero(Sum(x => x.PurchaseTotal), SnapshotQuantity);
+        }
+    }
+
+    private decimal SnapshotCostBasisJpy => _snapshot is null || SnapshotQuantity <= 0m
+        ? 0m
+        : Sum(x => x.PurchaseTotalJpy);
+
+    private decimal ActualBuyAmountJpy => _trades
+        .Where(IsBuyTrade)
+        .Sum(x => Math.Abs(x.SettlementAmountJpy));
+
+    private decimal ReconstructedTradeQuantity => _trades.Count == 0
+        ? 0m
+        : _trades
+            .GroupBy(x => x.StockId)
+            .Select(x => x
+                .OrderByDescending(y => y.TradeDate)
+                .ThenByDescending(y => y.Id)
+                .First()
+                .AfterTradeQuantity)
+            .Sum();
+
+    private decimal ReconstructedAverageTradeCost
+    {
+        get
+        {
+            var latestRows = _trades
+                .GroupBy(x => x.StockId)
+                .Select(x => x
+                    .OrderByDescending(y => y.TradeDate)
+                    .ThenByDescending(y => y.Id)
+                    .First())
+                .Where(x => x.AfterTradeQuantity > 0m)
+                .ToList();
+
+            var quantity = latestRows.Sum(x => x.AfterTradeQuantity);
+            return quantity <= 0m
+                ? 0m
+                : latestRows.Sum(x => x.AfterTradeQuantity * x.AfterTradeAverageCost) / quantity;
+        }
+    }
+
+    private bool HasTradeQuantityMismatch => _trades.Count > 0
+        && SnapshotQuantity > 0m
+        && Math.Abs(ReconstructedTradeQuantity - SnapshotQuantity) > 0.0001m;
+
+    private bool CanUseReconstructedTradeSummary => _trades.Count > 0
+        && ReconstructedTradeQuantity > 0m
+        && !HasTradeQuantityMismatch;
+
+    private bool ShouldUseSnapshotCostBasisForBuyAmount => _snapshot is not null
+        && SnapshotQuantity > 0m
+        && (ActualBuyAmountJpy <= 0m || HasTradeQuantityMismatch || _hasSyntheticInitialPositionTrades);
+
+    private decimal TotalBuyAmountForDisplayJpy => ShouldUseSnapshotCostBasisForBuyAmount
+        ? SnapshotCostBasisJpy
+        : ActualBuyAmountJpy;
 
     public void Update(
         StockSnapshot? snapshot,
@@ -172,6 +322,10 @@ public sealed class StockDetailViewModel : ObservableObject
         _snapshot = snapshots.FirstOrDefault();
         (_trades, _hasSyntheticInitialPositionTrades) = BuildDisplayTrades(snapshots, trades ?? Array.Empty<BrokerTrade>());
         _story = story ?? "銘柄一覧から銘柄を選択してください。";
+        UpdateChartReferenceValues();
+        SetPriceChartMessage(_snapshot is null
+            ? "銘柄を選択するとチャートを取得します。"
+            : "チャートを取得中です。");
 
         TradeRows.Clear();
         foreach (var trade in _trades.OrderByDescending(x => x.TradeDate).ThenByDescending(x => x.Id))
@@ -186,6 +340,87 @@ public sealed class StockDetailViewModel : ObservableObject
         }
 
         RefreshAllProperties();
+    }
+
+    public void SetPriceChartLoading(string symbol)
+    {
+        _priceChartPoints = Array.Empty<PriceChartPointViewModel>();
+        OnPropertyChanged(nameof(PriceChartPoints));
+        PriceChartStatus = $"{symbol} のチャートを取得中です。";
+    }
+
+    public void SetPriceChartMessage(string message)
+    {
+        _priceChartPoints = Array.Empty<PriceChartPointViewModel>();
+        OnPropertyChanged(nameof(PriceChartPoints));
+        PriceChartStatus = message;
+    }
+
+    public void SetPriceHistory(PriceHistoryResult result)
+    {
+        if (!result.IsSuccess || result.Points.Count == 0)
+        {
+            SetPriceChartMessage(string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? "チャート履歴データを取得できませんでした。"
+                : result.ErrorMessage);
+            return;
+        }
+
+        _priceChartPoints = BuildPriceChartPoints(result.Points);
+        OnPropertyChanged(nameof(PriceChartPoints));
+        var first = _priceChartPoints.First();
+        var last = _priceChartPoints.Last();
+        PriceChartStatus = $"{result.Source} / {result.Symbol} / {first.Date:yyyy/MM/dd} - {last.Date:yyyy/MM/dd} / {_priceChartPoints.Count:N0}本";
+    }
+
+    private void UpdateChartReferenceValues()
+    {
+        if (_snapshot is null)
+        {
+            ChartCurrentPriceValue = 0m;
+            ChartAverageCostValue = 0m;
+            ChartCurrency = "JPY";
+            return;
+        }
+
+        ChartCurrency = _snapshot.Position.Stock.Currency;
+        ChartCurrentPriceValue = IsMutualFund
+            ? WeightedFundNav(x => x.CurrentMarketValueJpy)
+            : _snapshot.Position.CurrentHolding.CurrentPrice;
+        ChartAverageCostValue = SnapshotAverageCost;
+    }
+
+    private static IReadOnlyList<PriceChartPointViewModel> BuildPriceChartPoints(IReadOnlyList<PriceHistoryPoint> points)
+    {
+        var ordered = points.OrderBy(x => x.Date).ToList();
+        var rows = new List<PriceChartPointViewModel>(ordered.Count);
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var point = ordered[i];
+            rows.Add(new PriceChartPointViewModel
+            {
+                Date = point.Date,
+                Open = point.Open,
+                High = point.High,
+                Low = point.Low,
+                Close = point.Close,
+                Volume = point.Volume,
+                MovingAverage5 = MovingAverage(ordered, i, 5),
+                MovingAverage25 = MovingAverage(ordered, i, 25)
+            });
+        }
+
+        return rows;
+    }
+
+    private static decimal? MovingAverage(IReadOnlyList<PriceHistoryPoint> points, int index, int period)
+    {
+        if (index + 1 < period)
+        {
+            return null;
+        }
+
+        return points.Skip(index + 1 - period).Take(period).Average(x => x.Close);
     }
 
     private string Money(Func<StockSnapshot, decimal> selector)

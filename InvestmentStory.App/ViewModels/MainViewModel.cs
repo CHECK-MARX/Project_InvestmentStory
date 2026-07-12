@@ -18,13 +18,17 @@ public sealed class MainViewModel : ObservableObject
     private readonly DataQualityService _dataQualityService = new();
     private readonly IExchangeRateService _exchangeRateService;
     private readonly IMarketDataService _marketDataService = new MarketDataProviderFactory();
+    private readonly IPriceHistoryService _priceHistoryService = new YahooFinancePriceHistoryService();
+    private readonly IFundMarketDataService _fundMarketDataService = new SbiFundMarketDataService();
     private readonly IStockLookupService _stockLookupService = new CompositeStockLookupService(
         new LocalStockLookupService(),
         new YahooFinanceStockLookupService());
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
+    private IReadOnlyList<StockSnapshot> _currentDetailSnapshots = Array.Empty<StockSnapshot>();
     private int? _selectedDetailStockId;
     private string? _selectedDetailKey;
     private bool _selectedDetailIsAggregate;
+    private int _detailChartRequestVersion;
     private object _currentPage;
     private string _currentTitle = "ダッシュボード";
     private bool _isSidebarCollapsed;
@@ -79,6 +83,7 @@ public sealed class MainViewModel : ObservableObject
         StockList.SelectedDisplayMode = settings.StockListDisplayMode;
         StockEditor = new StockEditorViewModel(SaveStock, DeleteStock);
         StockDetail = new StockDetailViewModel();
+        StockDetail.PriceChartRefreshRequested += (_, _) => RefreshSelectedDetailChart();
         Dividends = new DividendsViewModel(
             SaveDividend,
             DeleteDividend,
@@ -569,6 +574,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void UpdateStockDetail(IReadOnlyList<StockSnapshot> snapshots)
     {
+        _currentDetailSnapshots = snapshots;
         if (snapshots.Count == 0)
         {
             StockDetail.Update((StockSnapshot?)null, null, Array.Empty<BrokerTrade>(), Array.Empty<DataQualityInfo>());
@@ -582,6 +588,234 @@ public sealed class MainViewModel : ObservableObject
             snapshots.Count == 1 ? _storyGenerator.Generate(snapshot) : BuildAggregateStoryForDisplay(snapshots),
             _repository.GetBrokerTrades(stockIds),
             _repository.GetDataQualityInfos(stockIds));
+        RefreshSelectedDetailChart();
+    }
+
+    private async void RefreshSelectedDetailChart()
+    {
+        var snapshots = _currentDetailSnapshots;
+        if (snapshots.Count == 0)
+        {
+            StockDetail.SetPriceChartMessage("銘柄を選択するとチャートを取得します。");
+            return;
+        }
+
+        var position = snapshots[0].Position;
+        if (position.IsMutualFund)
+        {
+            RefreshSelectedFundNavChart(snapshots);
+            return;
+        }
+
+        var symbol = ResolveMarketDataSymbol(position);
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            StockDetail.SetPriceChartMessage("チャート取得対象のコードがありません。");
+            return;
+        }
+
+        var requestVersion = ++_detailChartRequestVersion;
+        StockDetail.SetPriceChartLoading(symbol);
+        try
+        {
+            var (range, interval) = ResolveChartRange(StockDetail.SelectedChartPeriod);
+            var result = IsSampleMode
+                ? CreateSamplePriceHistory(symbol, position.Stock.Currency, range)
+                : await Task.Run(() => _priceHistoryService.GetHistory(symbol, BuildLiveMarketDataSettings(_repository.GetSettings()), range, interval));
+
+            if (requestVersion != _detailChartRequestVersion)
+            {
+                return;
+            }
+
+            SaveApiFetchLogs(result.Logs);
+            StockDetail.SetPriceHistory(result);
+        }
+        catch (Exception ex)
+        {
+            if (requestVersion == _detailChartRequestVersion)
+            {
+                StockDetail.SetPriceChartMessage($"チャート取得に失敗しました: {ex.Message}");
+            }
+        }
+    }
+
+    private static (string Range, string Interval) ResolveChartRange(string selectedPeriod) =>
+        selectedPeriod switch
+        {
+            "1か月" => ("1mo", "1d"),
+            "3か月" => ("3mo", "1d"),
+            "1年" => ("1y", "1d"),
+            "3年" => ("3y", "1wk"),
+            "5年" => ("5y", "1wk"),
+            "全期間" => ("max", "1mo"),
+            _ => ("6mo", "1d")
+        };
+
+    private async void RefreshSelectedFundNavChart(IReadOnlyList<StockSnapshot> snapshots)
+    {
+        if (snapshots.Count == 0)
+        {
+            StockDetail.SetPriceChartMessage("投資信託を選択すると基準価額チャートを取得します。");
+            return;
+        }
+
+        var position = snapshots[0].Position;
+        var query = ResolveFundHistoryQuery(position);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            StockDetail.SetPriceChartMessage("基準価額履歴を取得するための投資信託コードを特定できませんでした。");
+            return;
+        }
+
+        var requestVersion = ++_detailChartRequestVersion;
+        StockDetail.SetPriceChartLoading(position.MutualFund.FundName);
+        try
+        {
+            var (from, to) = ResolveChartDateRange(StockDetail.SelectedChartPeriod);
+            var navPoints = IsSampleMode
+                ? CreateSampleFundNavHistory(position, from, to)
+                : await _fundMarketDataService.GetNavHistoryAsync(query, from, to);
+
+            if (requestVersion != _detailChartRequestVersion)
+            {
+                return;
+            }
+
+            var pricePoints = navPoints
+                .OrderBy(x => x.Date)
+                .Select(x => new PriceHistoryPoint
+                {
+                    Date = x.Date,
+                    Open = x.Nav,
+                    High = x.Nav,
+                    Low = x.Nav,
+                    Close = x.Nav,
+                    Volume = 0m
+                })
+                .ToList();
+
+            if (pricePoints.Count < 2)
+            {
+                StockDetail.SetPriceChartMessage("基準価額履歴データを取得できませんでした。SBI投信コードに未対応の可能性があります。");
+                return;
+            }
+
+            StockDetail.SetPriceHistory(PriceHistoryResult.Success(query, "SBI証券 基準価額履歴", pricePoints));
+        }
+        catch (Exception ex)
+        {
+            if (requestVersion == _detailChartRequestVersion)
+            {
+                StockDetail.SetPriceChartMessage($"基準価額チャート取得に失敗しました: {ex.Message}");
+            }
+        }
+    }
+
+    private static string ResolveFundHistoryQuery(StockPosition position)
+    {
+        var candidates = new[]
+        {
+            position.MutualFund.AssociationCode,
+            position.MutualFund.FundCode,
+            position.MutualFund.FundName,
+            position.Stock.Ticker,
+            position.Stock.Name
+        };
+
+        return candidates.FirstOrDefault(x => !string.IsNullOrWhiteSpace(SbiFundMarketDataService.ResolveFundSecurityCode(x))) ?? string.Empty;
+    }
+
+    private static (DateTime From, DateTime To) ResolveChartDateRange(string selectedPeriod)
+    {
+        var to = DateTime.Today;
+        var from = selectedPeriod switch
+        {
+            "1か月" => to.AddMonths(-1),
+            "3か月" => to.AddMonths(-3),
+            "1年" => to.AddYears(-1),
+            "3年" => to.AddYears(-3),
+            "5年" => to.AddYears(-5),
+            "全期間" => new DateTime(2010, 1, 1),
+            _ => to.AddMonths(-6)
+        };
+        return (from, to);
+    }
+
+    private static IReadOnlyList<FundNavHistoryPoint> CreateSampleFundNavHistory(StockPosition position, DateTime from, DateTime to)
+    {
+        var random = new Random(Math.Abs(position.Stock.Ticker.GetHashCode()));
+        var current = position.MutualFund.CurrentNav > 0m ? position.MutualFund.CurrentNav : 30000m;
+        var days = Math.Max(20, (to.Date - from.Date).Days);
+        var start = Math.Max(1000m, current * 0.72m);
+        var points = new List<FundNavHistoryPoint>();
+        for (var i = 0; i <= days; i++)
+        {
+            var date = from.Date.AddDays(i);
+            if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            {
+                continue;
+            }
+
+            var progress = days == 0 ? 1m : (decimal)i / days;
+            var noise = (decimal)(random.NextDouble() - 0.45) * current * 0.006m;
+            var nav = Math.Max(100m, start + (current - start) * progress + noise);
+            points.Add(new FundNavHistoryPoint
+            {
+                Date = date,
+                Nav = decimal.Round(nav, 0)
+            });
+        }
+
+        return points;
+    }
+
+    private static PriceHistoryResult CreateSamplePriceHistory(string symbol, string currency, string range)
+    {
+        var days = range switch
+        {
+            "1mo" => 22,
+            "3mo" => 66,
+            "1y" => 252,
+            "3y" => 156,
+            "5y" => 260,
+            "max" => 180,
+            _ => 132
+        };
+
+        var seed = Math.Abs(symbol.GetHashCode());
+        var random = new Random(seed);
+        var basePrice = SampleQuotes.TryGetValue(symbol, out var quote)
+            ? quote.Price
+            : currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? 1500m : 80m;
+        var price = Math.Max(1m, basePrice * 0.78m);
+        var start = DateTime.Today.AddDays(-days);
+        var points = new List<PriceHistoryPoint>();
+        for (var i = 0; i < days; i++)
+        {
+            var date = start.AddDays(i);
+            if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            {
+                continue;
+            }
+
+            var drift = (decimal)(random.NextDouble() - 0.46) * basePrice * 0.018m;
+            var open = Math.Max(0.01m, price);
+            var close = Math.Max(0.01m, open + drift);
+            var spread = Math.Max(0.01m, Math.Abs(drift) + basePrice * (decimal)random.NextDouble() * 0.012m);
+            points.Add(new PriceHistoryPoint
+            {
+                Date = date,
+                Open = decimal.Round(open, 2),
+                High = decimal.Round(Math.Max(open, close) + spread, 2),
+                Low = decimal.Round(Math.Max(0.01m, Math.Min(open, close) - spread), 2),
+                Close = decimal.Round(close, 2),
+                Volume = random.Next(500_000, 8_000_000)
+            });
+            price = close;
+        }
+
+        return PriceHistoryResult.Success(symbol, "SamplePriceHistory", points);
     }
 
     private void RefreshSelectedMarketData(int stockId)
@@ -850,6 +1084,11 @@ public sealed class MainViewModel : ObservableObject
         foreach (var schedule in result.Schedules)
         {
             _repository.SaveDividendPayment(schedule);
+        }
+
+        foreach (var obsoleteScheduleId in result.ObsoleteScheduleIds)
+        {
+            _repository.DeleteDividendPayment(obsoleteScheduleId);
         }
 
         LoadData();
