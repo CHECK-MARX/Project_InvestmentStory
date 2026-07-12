@@ -226,15 +226,43 @@ public sealed class InvestmentCalculatorTests
             AssumedDividendYieldRate = 4m,
             AnnualDividendGrowthRate = 5m,
             TargetAnnualPassiveIncome = 300_000m,
-            StartYear = 2026
+            StartYear = 2026,
+            StartMonth = 1
         });
 
         Assert.Equal(10, result.Projections.Count);
+        Assert.Equal(120, result.MonthlyProjections.Count);
+        Assert.Equal(new DateTime(2026, 2, 1), result.MonthlyProjections[0].YearMonth);
+        Assert.True(result.MonthlyProjections[^1].AnnualPassiveIncome > result.MonthlyProjections[0].AnnualPassiveIncome);
         Assert.Equal(153_000m, result.Projections[0].AnnualPassiveIncome);
         Assert.Equal(53_000m, result.Projections[0].YearOverYearIncrease);
         Assert.Equal(51m, result.Projections[0].TargetAchievementRate);
         Assert.Equal(2030, result.TargetAchievementYear);
         Assert.Equal(4, result.YearsToTarget);
+    }
+
+    [Fact]
+    public void SimulateTsumitateNisa_ProjectsMonthlyMarketValueAndTarget()
+    {
+        var result = _calculator.SimulateTsumitateNisa(new TsumitateNisaSimulationInput
+        {
+            CurrentMarketValueJpy = 1_000_000m,
+            CurrentCostJpy = 800_000m,
+            MonthlyContributionJpy = 100_000m,
+            ExpectedAnnualReturnRate = 0m,
+            TargetMarketValueJpy = 2_000_000m,
+            StartYear = 2026,
+            StartMonth = 1
+        }, months: 12);
+
+        Assert.Equal(12, result.Projections.Count);
+        Assert.Equal(new DateTime(2026, 2, 1), result.Projections[0].YearMonth);
+        Assert.Equal(2_200_000m, result.Projections[^1].MarketValueJpy);
+        Assert.Equal(2_000_000m, result.Projections[^1].CostJpy);
+        Assert.Equal(200_000m, result.Projections[^1].GainLossJpy);
+        Assert.Equal(10m, result.Projections[^1].GainLossRate);
+        Assert.Equal(new DateTime(2026, 11, 1), result.TargetAchievementMonth);
+        Assert.Equal(10, result.MonthsToTarget);
     }
 
     [Fact]

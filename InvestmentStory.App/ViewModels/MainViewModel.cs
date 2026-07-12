@@ -16,6 +16,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly DividendScheduleService _dividendScheduleService = new();
     private readonly PortfolioAnalyticsService _portfolioAnalyticsService = new();
     private readonly DataQualityService _dataQualityService = new();
+    private readonly MutualFundAssetSimulationService _mutualFundAssetSimulationService = new();
     private readonly IExchangeRateService _exchangeRateService;
     private readonly IMarketDataService _marketDataService = new MarketDataProviderFactory();
     private readonly IPriceHistoryService _priceHistoryService = new YahooFinancePriceHistoryService();
@@ -91,7 +92,10 @@ public sealed class MainViewModel : ObservableObject
             _repository.GetTaxProfiles,
             _repository.SaveTaxProfile);
         PassiveIncome = new PassiveIncomeViewModel(SaveGoal);
-        Simulation = new SimulationViewModel(_calculator);
+        Simulation = new SimulationViewModel(
+            _mutualFundAssetSimulationService,
+            () => _repository.GetSettings(),
+            appSettings => _repository.SaveSettings(appSettings));
         CsvImport = new CsvImportViewModel(
             () => _repository.GetPositions(),
             position => _repository.SavePosition(position),
@@ -281,6 +285,7 @@ public sealed class MainViewModel : ObservableObject
         Dividends.Update(positions, dividends);
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
+        Simulation.UpdateMutualFundPortfolio(positions);
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
         var detailSnapshots = ResolveDetailSnapshots();
@@ -488,7 +493,13 @@ public sealed class MainViewModel : ObservableObject
             IsSidebarCollapsed = source.IsSidebarCollapsed,
             StockListDisplayMode = source.StockListDisplayMode,
             LastDashboardCompositionMode = source.LastDashboardCompositionMode,
-            LastOpenedPage = source.LastOpenedPage
+            LastOpenedPage = source.LastOpenedPage,
+            MutualFundSimulationScopeKey = source.MutualFundSimulationScopeKey,
+            MutualFundSimulationMonthlyContributionJpy = source.MutualFundSimulationMonthlyContributionJpy,
+            MutualFundSimulationExpectedAnnualReturnRate = source.MutualFundSimulationExpectedAnnualReturnRate,
+            MutualFundSimulationTargetAmountJpy = source.MutualFundSimulationTargetAmountJpy,
+            MutualFundSimulationProjectionYears = source.MutualFundSimulationProjectionYears,
+            MutualFundSimulationTargetYears = source.MutualFundSimulationTargetYears
         };
 
     private void SaveStockListDisplayMode(string displayMode)

@@ -247,6 +247,7 @@ public sealed class InvestmentCalculator
         ArgumentNullException.ThrowIfNull(input);
 
         var projections = new List<PassiveIncomeProjection>();
+        var monthlyProjections = SimulatePassiveIncomeMonthly(input, years * 12);
         var annualIncome = input.CurrentAnnualPassiveIncome;
         var yearlyNewIncome = input.MonthlyAdditionalInvestment * 12m * (input.AssumedDividendYieldRate / 100m);
         int? achievementYear = null;
@@ -277,9 +278,82 @@ public sealed class InvestmentCalculator
         return new PassiveIncomeSimulationResult
         {
             Projections = projections,
+            MonthlyProjections = monthlyProjections,
             TargetAchievementYear = achievementYear,
             YearsToTarget = yearsToTarget
         };
+    }
+
+    public TsumitateNisaSimulationResult SimulateTsumitateNisa(TsumitateNisaSimulationInput input, int months = 240)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+
+        var projections = new List<TsumitateNisaProjection>();
+        var marketValue = input.CurrentMarketValueJpy;
+        var cost = input.CurrentCostJpy;
+        var contributionTotal = 0m;
+        var monthlyReturnRate = CalculateMonthlyRate(input.ExpectedAnnualReturnRate);
+        var start = CreateStartMonth(input.StartYear, input.StartMonth);
+        DateTime? achievementMonth = null;
+        int? monthsToTarget = null;
+
+        for (var i = 1; i <= months; i++)
+        {
+            marketValue = (marketValue + input.MonthlyContributionJpy) * (1m + monthlyReturnRate);
+            cost += input.MonthlyContributionJpy;
+            contributionTotal += input.MonthlyContributionJpy;
+            var gainLoss = marketValue - cost;
+            var yearMonth = start.AddMonths(i);
+
+            projections.Add(new TsumitateNisaProjection
+            {
+                YearMonth = yearMonth,
+                MonthsFromNow = i,
+                MarketValueJpy = marketValue,
+                CostJpy = cost,
+                GainLossJpy = gainLoss,
+                GainLossRate = CalculateRate(gainLoss, cost),
+                CumulativeContributionJpy = contributionTotal,
+                TargetAchievementRate = CalculateRate(marketValue, input.TargetMarketValueJpy)
+            });
+
+            if (achievementMonth is null && input.TargetMarketValueJpy > 0m && marketValue >= input.TargetMarketValueJpy)
+            {
+                achievementMonth = yearMonth;
+                monthsToTarget = i;
+            }
+        }
+
+        return new TsumitateNisaSimulationResult
+        {
+            Projections = projections,
+            TargetAchievementMonth = achievementMonth,
+            MonthsToTarget = monthsToTarget
+        };
+    }
+
+    private IReadOnlyList<PassiveIncomeMonthlyProjection> SimulatePassiveIncomeMonthly(PassiveIncomeSimulationInput input, int months)
+    {
+        var projections = new List<PassiveIncomeMonthlyProjection>();
+        var annualIncome = input.CurrentAnnualPassiveIncome;
+        var monthlyGrowthRate = CalculateMonthlyRate(input.AnnualDividendGrowthRate);
+        var monthlyNewAnnualIncome = input.MonthlyAdditionalInvestment * (input.AssumedDividendYieldRate / 100m);
+        var start = CreateStartMonth(input.StartYear, input.StartMonth);
+
+        for (var i = 1; i <= months; i++)
+        {
+            annualIncome = annualIncome * (1m + monthlyGrowthRate) + monthlyNewAnnualIncome;
+            projections.Add(new PassiveIncomeMonthlyProjection
+            {
+                YearMonth = start.AddMonths(i),
+                MonthsFromNow = i,
+                AnnualPassiveIncome = annualIncome,
+                MonthlyPassiveIncome = annualIncome / 12m,
+                TargetAchievementRate = CalculateRate(annualIncome, input.TargetAnnualPassiveIncome)
+            });
+        }
+
+        return projections;
     }
 
     public decimal CalculatePurchaseTotal(decimal shares, decimal unitPrice) => shares * unitPrice;
@@ -295,6 +369,23 @@ public sealed class InvestmentCalculator
 
     private static decimal DivideOrZero(decimal numerator, decimal denominator) =>
         denominator == 0m ? 0m : numerator / denominator;
+
+    private static decimal CalculateMonthlyRate(decimal annualRate)
+    {
+        if (annualRate == 0m)
+        {
+            return 0m;
+        }
+
+        return (decimal)Math.Pow((double)(1m + annualRate / 100m), 1d / 12d) - 1m;
+    }
+
+    private static DateTime CreateStartMonth(int year, int month)
+    {
+        var safeYear = Math.Clamp(year, 1900, 9999);
+        var safeMonth = Math.Clamp(month, 1, 12);
+        return new DateTime(safeYear, safeMonth, 1);
+    }
 
     private static decimal NormalizeExchangeRate(string currency, decimal exchangeRate)
     {

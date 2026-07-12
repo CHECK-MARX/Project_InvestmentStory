@@ -1,3 +1,4 @@
+using System.Globalization;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using Microsoft.Data.Sqlite;
@@ -471,7 +472,13 @@ public sealed class InvestmentStoryRepository
             IsSidebarCollapsed = GetBoolSetting(values, nameof(AppSettings.IsSidebarCollapsed), false),
             StockListDisplayMode = GetSetting(values, nameof(AppSettings.StockListDisplayMode), "基本"),
             LastDashboardCompositionMode = GetSetting(values, nameof(AppSettings.LastDashboardCompositionMode), "Country"),
-            LastOpenedPage = GetSetting(values, nameof(AppSettings.LastOpenedPage), "Dashboard")
+            LastOpenedPage = GetSetting(values, nameof(AppSettings.LastOpenedPage), "Dashboard"),
+            MutualFundSimulationScopeKey = GetSetting(values, nameof(AppSettings.MutualFundSimulationScopeKey), MutualFundSimulationScopeKeys.AllAccounts),
+            MutualFundSimulationMonthlyContributionJpy = GetDecimalSetting(values, nameof(AppSettings.MutualFundSimulationMonthlyContributionJpy), 100_000m),
+            MutualFundSimulationExpectedAnnualReturnRate = GetDecimalSetting(values, nameof(AppSettings.MutualFundSimulationExpectedAnnualReturnRate), 5m),
+            MutualFundSimulationTargetAmountJpy = GetDecimalSetting(values, nameof(AppSettings.MutualFundSimulationTargetAmountJpy), 20_000_000m),
+            MutualFundSimulationProjectionYears = GetIntSetting(values, nameof(AppSettings.MutualFundSimulationProjectionYears), 20),
+            MutualFundSimulationTargetYears = GetIntSetting(values, nameof(AppSettings.MutualFundSimulationTargetYears), 20)
         };
     }
 
@@ -498,6 +505,12 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.StockListDisplayMode), settings.StockListDisplayMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.LastDashboardCompositionMode), settings.LastDashboardCompositionMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.LastOpenedPage), settings.LastOpenedPage);
+        UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationScopeKey), settings.MutualFundSimulationScopeKey);
+        UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationMonthlyContributionJpy), settings.MutualFundSimulationMonthlyContributionJpy.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationExpectedAnnualReturnRate), settings.MutualFundSimulationExpectedAnnualReturnRate.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationTargetAmountJpy), settings.MutualFundSimulationTargetAmountJpy.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationProjectionYears), settings.MutualFundSimulationProjectionYears.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationTargetYears), settings.MutualFundSimulationTargetYears.ToString(CultureInfo.InvariantCulture));
         transaction.Commit();
     }
 
@@ -1805,6 +1818,12 @@ public sealed class InvestmentStoryRepository
 
     private static int GetIntSetting(IReadOnlyDictionary<string, string> values, string key, int defaultValue) =>
         values.TryGetValue(key, out var value) && int.TryParse(value, out var parsed) ? parsed : defaultValue;
+
+    private static decimal GetDecimalSetting(IReadOnlyDictionary<string, string> values, string key, decimal defaultValue) =>
+        values.TryGetValue(key, out var value) &&
+        decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : defaultValue;
 
     private static bool GetBoolSetting(IReadOnlyDictionary<string, string> values, string key, bool defaultValue) =>
         values.TryGetValue(key, out var value) && bool.TryParse(value, out var parsed) ? parsed : defaultValue;

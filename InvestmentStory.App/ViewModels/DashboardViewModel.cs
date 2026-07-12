@@ -64,6 +64,7 @@ public sealed class DashboardViewModel : ObservableObject
     public ObservableCollection<PortfolioSnapshotRowViewModel> PortfolioHistoryRows { get; } = new();
     public ObservableCollection<ChartBarRowViewModel> CompositionBars { get; } = new();
     public ObservableCollection<FxSensitivityRowViewModel> FxSensitivityRows { get; } = new();
+    public ObservableCollection<NisaDashboardSummaryViewModel> NisaSummaries { get; } = new();
 
     public string SelectedCompositionMode
     {
@@ -116,6 +117,7 @@ public sealed class DashboardViewModel : ObservableObject
         RebuildPortfolioHistoryRows(portfolioSnapshots);
         RebuildCompositionBars();
         RebuildFxSensitivityRows();
+        RebuildNisaSummaries();
         RefreshAllProperties();
     }
 
@@ -243,6 +245,34 @@ public sealed class DashboardViewModel : ObservableObject
         {
             FxSensitivityRows.Add(new FxSensitivityRowViewModel(row, maxChange));
         }
+    }
+
+    private void RebuildNisaSummaries()
+    {
+        NisaSummaries.Clear();
+        var order = new[] { AccountTypes.NisaGrowth, AccountTypes.NisaAccumulation, AccountTypes.NisaLegacy };
+        var groups = _snapshots
+            .Where(x => x.CurrentMarketValueJpy > 0m || x.PurchaseTotalJpy > 0m)
+            .GroupBy(ResolveAccountType)
+            .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var accountType in order)
+        {
+            if (!groups.TryGetValue(accountType, out var rows) || rows.Count == 0)
+            {
+                continue;
+            }
+
+            NisaSummaries.Add(new NisaDashboardSummaryViewModel(accountType, rows));
+        }
+    }
+
+    private static string ResolveAccountType(StockSnapshot snapshot)
+    {
+        var stock = snapshot.Position.Stock;
+        return snapshot.Position.IsMutualFund
+            ? AccountTypeNormalizer.NormalizeForMutualFund(stock.AccountType, stock.CustodyType)
+            : AccountTypeNormalizer.Normalize(stock.AccountType);
     }
 
     private DateTime? ResolveHistoryStartDate(DateTime today) =>

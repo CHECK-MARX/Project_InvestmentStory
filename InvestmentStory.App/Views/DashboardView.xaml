@@ -73,6 +73,99 @@
                 </Border>
             </UniformGrid>
 
+            <TextBlock Text="NISA口座サマリー" Style="{StaticResource SectionTitleStyle}" Margin="0,6,0,8" />
+            <ItemsControl ItemsSource="{Binding NisaSummaries}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Columns="3" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource MetricCardStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="5" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Background="{DynamicResource DividendBrush}" CornerRadius="3" />
+                                <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Text="{Binding PositionCountText}"
+                                                   Style="{StaticResource SubtleTextStyle}"
+                                                   Margin="8,0,0,0" />
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontSize="16"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource PrimaryTextBrush}" />
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding Subtitle}" Style="{StaticResource SubtleTextStyle}" Margin="0,2,0,12" />
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="評価額" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBlock Text="{Binding MarketValueJpy}" FontSize="22" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="取得額" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBlock Text="{Binding PurchaseAmountJpy}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource SecondaryTextBrush}" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="評価損益" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBlock Text="{Binding GainLossJpy}" FontSize="20" FontWeight="SemiBold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasPositiveGain}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource ProfitBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding HasNegativeGain}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource LossBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="評価損益率" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBlock Text="{Binding GainLossRate}" FontSize="18" FontWeight="SemiBold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasPositiveGain}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource ProfitBrush}" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding HasNegativeGain}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource LossBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
             <UniformGrid Columns="2">
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
