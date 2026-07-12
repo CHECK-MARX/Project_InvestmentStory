@@ -21,6 +21,7 @@ public sealed class DatabaseInitializer
         DropCsvIdempotencyIndexesBeforeMigration(connection);
         MigrateTables(connection);
         RepairCsvReimportDuplicates(connection, databasePath);
+        BackfillInitialPositionTrades(connection, databasePath);
         CreateCsvIdempotencyIndexes(connection);
         SeedSampleData(connection);
         BackfillCanonicalSecurityKeys(connection);
@@ -555,6 +556,8 @@ public sealed class DatabaseInitializer
     private static void RepairCsvReimportDuplicates(SqliteConnection connection, string databasePath)
     {
         NormalizeStockIdentityColumns(connection);
+        NormalizeMutualFundAccountTypes(connection);
+        BackfillCanonicalSecurityKeys(connection);
 
         var duplicatePositionGroups = ReadDuplicatePositionGroups(connection);
         var duplicateDividendCount = CountDuplicateDividendRows(connection);
@@ -610,6 +613,48 @@ public sealed class DatabaseInitializer
                     WHEN TRIM(CustodyType) = '' THEN AccountType
                     ELSE REPLACE(REPLACE(TRIM(CustodyType), ' ', ''), '　', '')
                 END;
+            """);
+    }
+
+    private static void NormalizeMutualFundAccountTypes(SqliteConnection connection)
+    {
+        Execute(connection, """
+            UPDATE Stocks
+            SET AccountType = CASE
+                    WHEN AccountType = 'NisaAccumulation'
+                      OR CustodyType LIKE '%つみたて%'
+                      OR CustodyType LIKE '%積立%'
+                      OR AccountType LIKE '%つみたて%'
+                      OR AccountType LIKE '%積立%' THEN 'NisaAccumulation'
+                    WHEN AccountType = 'NisaLegacy'
+                      OR CustodyType LIKE '%旧NISA%'
+                      OR AccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                    WHEN AccountType = 'NisaGrowth'
+                      OR CustodyType LIKE '%成長投資%'
+                      OR AccountType LIKE '%成長投資%'
+                      OR AccountType = 'NISA' THEN 'NisaGrowth'
+                    WHEN AccountType = 'Specific'
+                      OR CustodyType LIKE '%特定%' THEN 'Specific'
+                    WHEN AccountType = 'General'
+                      OR CustodyType LIKE '%一般%' THEN 'General'
+                    ELSE AccountType
+                END
+            WHERE AssetType = 'MutualFund';
+            """);
+
+        Execute(connection, """
+            UPDATE MutualFundHoldings
+            SET AccountType = (
+                SELECT s.AccountType
+                FROM Stocks s
+                WHERE s.Id = MutualFundHoldings.StockId
+            )
+            WHERE EXISTS (
+                SELECT 1
+                FROM Stocks s
+                WHERE s.Id = MutualFundHoldings.StockId
+                  AND s.AssetType = 'MutualFund'
+            );
             """);
     }
 
@@ -728,6 +773,121 @@ public sealed class DatabaseInitializer
               AND SettlementAmountJpy = 0
               AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
             """);
+    }
+
+    private static void BackfillInitialPositionTrades(SqliteConnection connection, string databasePath)
+    {
+        var missingCount = CountMissingInitialPositionTrades(connection);
+        if (missingCount == 0)
+        {
+            return;
+        }
+
+        BackupDatabase(databasePath, "before_initial_position_backfill");
+        Execute(connection, """
+            INSERT OR IGNORE INTO BrokerTrades
+                (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                 Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                 FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                 AfterTradeAverageCost, Source, SourceFile, CreatedAt)
+            SELECT
+                s.Id,
+                SUBSTR(COALESCE(NULLIF(p.PurchaseDate, ''), NULLIF(mf.NavDate, ''), NULLIF(ch.UpdatedAt, ''), DATE('now')), 1, 10),
+                SUBSTR(COALESCE(NULLIF(p.PurchaseDate, ''), NULLIF(mf.NavDate, ''), NULLIF(ch.UpdatedAt, ''), DATE('now')), 1, 10),
+                s.Broker,
+                s.AccountType,
+                s.CustodyType,
+                'InitialPosition',
+                CASE WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.UnitsHeld, 0) ELSE IFNULL(ch.CurrentShares, 0) END,
+                CASE WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.UnitsHeld, 0) ELSE IFNULL(ch.CurrentShares, 0) END,
+                CASE
+                    WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.AverageCostNav, 0)
+                    ELSE
+                        CASE
+                            WHEN IFNULL(ch.CurrentShares, 0) = 0 THEN 0
+                            ELSE (
+                                CASE
+                                    WHEN IFNULL(p.Shares, 0) > 0 THEN IFNULL(p.Shares, 0) * IFNULL(p.UnitPrice, 0)
+                                    ELSE IFNULL(ch.CurrentShares, 0) * IFNULL(p.UnitPrice, 0)
+                                END
+                            ) / NULLIF(IFNULL(ch.CurrentShares, 0), 0)
+                        END
+                END,
+                s.Currency,
+                CASE
+                    WHEN UPPER(IFNULL(s.Currency, 'JPY')) = 'JPY' THEN 1
+                    WHEN IFNULL(p.ExchangeRate, 0) > 0 THEN p.ExchangeRate
+                    WHEN IFNULL(ch.CurrentExchangeRate, 0) > 0 THEN ch.CurrentExchangeRate
+                    ELSE 1
+                END,
+                CASE
+                    WHEN s.AssetType = 'MutualFund' THEN
+                        CASE
+                            WHEN IFNULL(mf.AcquisitionAmount, 0) > 0 THEN mf.AcquisitionAmount
+                            WHEN IFNULL(mf.UnitBase, 0) > 0 THEN IFNULL(mf.UnitsHeld, 0) / mf.UnitBase * IFNULL(mf.AverageCostNav, 0)
+                            ELSE 0
+                        END
+                    ELSE (
+                        CASE
+                            WHEN IFNULL(p.Shares, 0) > 0 THEN IFNULL(p.Shares, 0) * IFNULL(p.UnitPrice, 0)
+                            ELSE IFNULL(ch.CurrentShares, 0) * IFNULL(p.UnitPrice, 0)
+                        END + IFNULL(p.Fee, 0)
+                    ) * CASE
+                            WHEN UPPER(IFNULL(s.Currency, 'JPY')) = 'JPY' THEN 1
+                            WHEN IFNULL(p.ExchangeRate, 0) > 0 THEN p.ExchangeRate
+                            WHEN IFNULL(ch.CurrentExchangeRate, 0) > 0 THEN ch.CurrentExchangeRate
+                            ELSE 1
+                        END
+                END,
+                0,
+                0,
+                0,
+                0,
+                CASE WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.UnitsHeld, 0) ELSE IFNULL(ch.CurrentShares, 0) END,
+                CASE
+                    WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.AverageCostNav, 0)
+                    ELSE
+                        CASE
+                            WHEN IFNULL(ch.CurrentShares, 0) = 0 THEN 0
+                            ELSE (
+                                CASE
+                                    WHEN IFNULL(p.Shares, 0) > 0 THEN IFNULL(p.Shares, 0) * IFNULL(p.UnitPrice, 0)
+                                    ELSE IFNULL(ch.CurrentShares, 0) * IFNULL(p.UnitPrice, 0)
+                                END
+                            ) / NULLIF(IFNULL(ch.CurrentShares, 0), 0)
+                        END
+                END,
+                'HoldingsSnapshot',
+                '',
+                CURRENT_TIMESTAMP
+            FROM Stocks s
+            LEFT JOIN Purchases p ON p.StockId = s.Id
+            LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
+            LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
+            WHERE NOT EXISTS (SELECT 1 FROM BrokerTrades bt WHERE bt.StockId = s.Id)
+              AND (
+                    (s.AssetType = 'MutualFund' AND IFNULL(mf.UnitsHeld, 0) > 0)
+                 OR (s.AssetType <> 'MutualFund' AND IFNULL(ch.CurrentShares, 0) > 0)
+              );
+            """);
+    }
+
+    private static int CountMissingInitialPositionTrades(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM Stocks s
+            LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
+            LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
+            WHERE NOT EXISTS (SELECT 1 FROM BrokerTrades bt WHERE bt.StockId = s.Id)
+              AND (
+                    (s.AssetType = 'MutualFund' AND IFNULL(mf.UnitsHeld, 0) > 0)
+                 OR (s.AssetType <> 'MutualFund' AND IFNULL(ch.CurrentShares, 0) > 0)
+              );
+            """;
+
+        return Convert.ToInt32(command.ExecuteScalar());
     }
 
     private static IReadOnlyList<DuplicatePositionGroup> ReadDuplicatePositionGroups(SqliteConnection connection)
@@ -1039,30 +1199,63 @@ public sealed class DatabaseInitializer
 
     private static void BackfillCanonicalSecurityKeys(SqliteConnection connection)
     {
-        Execute(connection, """
-            UPDATE Stocks
-            SET CanonicalSecurityKey = CASE
-                WHEN Stocks.AssetType = 'MutualFund' THEN
-                    'FUND:JP:' ||
-                    UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(
-                        (SELECT NULLIF(FundCode, '') FROM MutualFundHoldings WHERE StockId = Stocks.Id ORDER BY Id DESC LIMIT 1),
-                        (SELECT NULLIF(AssociationCode, '') FROM MutualFundHoldings WHERE StockId = Stocks.Id ORDER BY Id DESC LIMIT 1),
-                        NULLIF(Stocks.Ticker, ''),
-                        (SELECT NULLIF(FundName, '') FROM MutualFundHoldings WHERE StockId = Stocks.Id ORDER BY Id DESC LIMIT 1),
-                        Stocks.Name), ' ', ''), '　', ''), '-', ''), '－', ''), 'ー', ''))
-                WHEN Stocks.Currency = 'JPY' OR Stocks.Country LIKE '%日本%' OR Stocks.Market LIKE '%TSE%' THEN
-                    'EQUITY:JP:' || CASE WHEN TRIM(Market) = '' THEN 'TSE' ELSE UPPER(REPLACE(REPLACE(TRIM(Market), ' ', ''), '　', '')) END || ':' ||
-                    UPPER(REPLACE(REPLACE(REPLACE(TRIM(Ticker), '.T', ''), ' ', ''), '　', ''))
-                WHEN Stocks.Currency = 'USD' OR Stocks.Country LIKE '%米%' OR UPPER(Stocks.Market) IN ('US', 'NASDAQ', 'NYSE') THEN
-                    'EQUITY:US:' || CASE WHEN TRIM(Market) = '' THEN 'US' ELSE UPPER(REPLACE(REPLACE(TRIM(Market), ' ', ''), '　', '')) END || ':' ||
-                    UPPER(REPLACE(REPLACE(REPLACE(TRIM(Ticker), '.T', ''), ' ', ''), '　', ''))
-                ELSE
-                    UPPER(AssetType) || ':' || UPPER(REPLACE(REPLACE(COALESCE(NULLIF(Country, ''), NULLIF(Currency, ''), 'UNKNOWN'), ' ', ''), '　', '')) || ':UNKNOWN:' ||
-                    UPPER(REPLACE(REPLACE(COALESCE(NULLIF(Ticker, ''), Name), ' ', ''), '　', ''))
-            END
-            WHERE Stocks.CanonicalSecurityKey = '' OR Stocks.CanonicalSecurityKey IS NULL;
-            """);
+        var rows = new List<(int Id, string CanonicalSecurityKey)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT
+                    s.Id, s.Name, s.Ticker, s.Country, s.Currency, s.Broker, s.AccountType, s.CustodyType,
+                    s.Sector, s.Industry, s.Market, s.DataSource, s.Memo, s.AssetType,
+                    mf.FundName, mf.FundCode, mf.AssociationCode
+                FROM Stocks s
+                LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id;
+                """;
+
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var stock = new InvestmentStory.Core.Models.Stock
+                {
+                    Id = reader.GetInt32(0),
+                    Name = GetString(reader, 1),
+                    Ticker = GetString(reader, 2),
+                    Country = GetString(reader, 3),
+                    Currency = GetString(reader, 4),
+                    Broker = GetString(reader, 5),
+                    AccountType = GetString(reader, 6),
+                    CustodyType = GetString(reader, 7),
+                    Sector = GetString(reader, 8),
+                    Industry = GetString(reader, 9),
+                    Market = GetString(reader, 10),
+                    DataSource = GetString(reader, 11),
+                    Memo = GetString(reader, 12),
+                    AssetType = GetString(reader, 13)
+                };
+                var fund = new InvestmentStory.Core.Models.MutualFundHolding
+                {
+                    FundName = GetString(reader, 14),
+                    FundCode = GetString(reader, 15),
+                    AssociationCode = GetString(reader, 16)
+                };
+                rows.Add((stock.Id, SecurityIdentityService.BuildCanonicalKey(stock, fund)));
+            }
+        }
+
+        foreach (var row in rows)
+        {
+            Execute(connection, """
+                UPDATE Stocks
+                SET CanonicalSecurityKey = $canonicalSecurityKey
+                WHERE Id = $id
+                  AND IFNULL(CanonicalSecurityKey, '') <> $canonicalSecurityKey;
+                """,
+                ("$id", row.Id),
+                ("$canonicalSecurityKey", row.CanonicalSecurityKey));
+        }
     }
+
+    private static string GetString(SqliteDataReader reader, int index) =>
+        reader.IsDBNull(index) ? string.Empty : reader.GetString(index);
 
     private static void MigrateDefaultExchangeRateProvider(SqliteConnection connection)
     {

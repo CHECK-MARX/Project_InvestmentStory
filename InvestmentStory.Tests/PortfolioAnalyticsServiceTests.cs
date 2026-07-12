@@ -10,6 +10,8 @@ public sealed class PortfolioAnalyticsServiceTests
     [InlineData("NISA成長投資枠", AccountTypes.NisaGrowth)]
     [InlineData("新NISA", AccountTypes.NisaGrowth)]
     [InlineData("NISAつみたて投資枠", AccountTypes.NisaAccumulation)]
+    [InlineData("投資信託（金額/NISA預り（つみたて投資枠））", AccountTypes.NisaAccumulation)]
+    [InlineData("投資信託（金額/旧つみたてNISA預り）", AccountTypes.NisaAccumulation)]
     [InlineData("旧NISA", AccountTypes.NisaLegacy)]
     [InlineData("特定口座", AccountTypes.Specific)]
     [InlineData("一般口座", AccountTypes.General)]

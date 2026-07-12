@@ -1,6 +1,7 @@
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using InvestmentStory.Data;
+using Microsoft.Data.Sqlite;
 
 namespace InvestmentStory.Tests;
 
@@ -268,6 +269,59 @@ public sealed class InvestmentStoryRepositoryTests
         }
     }
 
+    [Fact]
+    public void SavePosition_UpsertsMutualFundHolding_WhenStoredCanonicalKeyUsesLegacyFormat()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_fund_legacy_key_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+
+            var first = CreateMutualFundPosition(
+                unitsHeld: 411_318m,
+                averageCostNav: 29_499m,
+                currentNav: 40_579m,
+                acquisitionAmount: 1_213_346m,
+                marketValue: 1_669_087m,
+                unrealizedGainLoss: 455_741m);
+            var second = CreateMutualFundPosition(
+                unitsHeld: 411_318m,
+                averageCostNav: 29_499m,
+                currentNav: 41_000m,
+                acquisitionAmount: 1_213_346m,
+                marketValue: 1_686_405m,
+                unrealizedGainLoss: 473_059m);
+
+            var firstId = repository.SavePosition(first);
+            SetStockCanonicalKey(databasePath, firstId, "FUND:JP:FUND:SBI-V-SP500");
+
+            var secondId = repository.SavePosition(second);
+
+            var funds = repository.GetPositions()
+                .Where(x => x.Stock.AssetType == AssetTypes.MutualFund &&
+                            x.Stock.Broker == "SBI" &&
+                            x.Stock.AccountType == AccountTypes.NisaGrowth &&
+                            x.Stock.CustodyType == AccountTypes.NisaGrowth &&
+                            x.MutualFund.FundCode == "FUND:SBI-V-SP500")
+                .ToList();
+
+            Assert.Equal(firstId, secondId);
+            var loaded = Assert.Single(funds);
+            Assert.Equal(411_318m, loaded.MutualFund.UnitsHeld);
+            Assert.Equal(41_000m, loaded.MutualFund.CurrentNav);
+            Assert.Equal(1_686_405m, loaded.MutualFund.MarketValue);
+            Assert.Equal(473_059m, loaded.MutualFund.UnrealizedGainLoss);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
     private static StockPosition CreateMutualFundPosition(
         decimal unitsHeld,
         decimal averageCostNav,
@@ -331,5 +385,24 @@ public sealed class InvestmentStoryRepositoryTests
                 TotalPurchaseAmount = acquisitionAmount
             }
         };
+    }
+
+    private static void SetStockCanonicalKey(string databasePath, int stockId, string canonicalKey)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE Stocks
+            SET CanonicalSecurityKey = $canonicalKey
+            WHERE Id = $stockId;
+            """;
+        command.Parameters.AddWithValue("$canonicalKey", canonicalKey);
+        command.Parameters.AddWithValue("$stockId", stockId);
+        command.ExecuteNonQuery();
     }
 }

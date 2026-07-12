@@ -185,6 +185,7 @@ public sealed class InvestmentStoryRepository
             SaveMutualFundHolding(connection, transaction, position.MutualFund);
         }
 
+        SyncAutoInitialPositionTrade(connection, transaction, position);
         transaction.Commit();
         return stockId;
     }
@@ -674,12 +675,127 @@ public sealed class InvestmentStoryRepository
 
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+        DeleteAutoInitialPositionTrades(connection, transaction, ledgers.Select(x => x.StockId));
         foreach (var trade in ledgers)
         {
             InsertBrokerTrade(connection, transaction, trade);
         }
 
         transaction.Commit();
+    }
+
+    private static void DeleteAutoInitialPositionTrades(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IEnumerable<int> stockIds)
+    {
+        var ids = stockIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        var parameterNames = AddIdParameters(command, ids);
+        command.CommandText = $"""
+            DELETE FROM BrokerTrades
+            WHERE StockId IN ({string.Join(", ", parameterNames)})
+              AND TradeType = 'InitialPosition'
+              AND Source = 'HoldingsSnapshot';
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void SyncAutoInitialPositionTrade(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StockPosition position)
+    {
+        if (position.Stock.Id <= 0)
+        {
+            return;
+        }
+
+        var hasImportedTrades = HasImportedBrokerTrades(connection, transaction, position.Stock.Id);
+        DeleteAutoInitialPositionTrades(connection, transaction, new[] { position.Stock.Id });
+        if (hasImportedTrades)
+        {
+            return;
+        }
+
+        var trade = BuildAutoInitialPositionTrade(position);
+        if (trade.Quantity <= 0m)
+        {
+            return;
+        }
+
+        InsertBrokerTrade(connection, transaction, trade);
+    }
+
+    private static bool HasImportedBrokerTrades(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int stockId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM BrokerTrades
+            WHERE StockId = $stockId
+              AND NOT (TradeType = 'InitialPosition' AND Source = 'HoldingsSnapshot');
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+        return Convert.ToInt32(command.ExecuteScalar()) > 0;
+    }
+
+    private static BrokerTrade BuildAutoInitialPositionTrade(StockPosition position)
+    {
+        var snapshot = new InvestmentCalculator().CreateSnapshot(position);
+        var quantity = position.IsMutualFund
+            ? position.MutualFund.UnitsHeld
+            : position.CurrentHolding.CurrentShares;
+        var unitPrice = position.IsMutualFund
+            ? position.MutualFund.AverageCostNav
+            : quantity <= 0m ? 0m : snapshot.PurchaseTotal / quantity;
+        var exchangeRate = position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+            ? 1m
+            : position.Purchase.ExchangeRate > 0m
+                ? position.Purchase.ExchangeRate
+                : position.CurrentHolding.CurrentExchangeRate > 0m
+                    ? position.CurrentHolding.CurrentExchangeRate
+                    : 1m;
+        var eventDate = position.IsMutualFund && position.MutualFund.NavDate != DateTime.MinValue
+            ? position.MutualFund.NavDate
+            : position.Purchase.PurchaseDate == DateTime.MinValue
+                ? DateTime.Today
+                : position.Purchase.PurchaseDate;
+
+        return new BrokerTrade
+        {
+            StockId = position.Stock.Id,
+            TradeDate = eventDate,
+            SettlementDate = eventDate,
+            Broker = position.Stock.Broker,
+            AccountType = position.Stock.AccountType,
+            CustodyType = position.Stock.CustodyType,
+            TradeType = "InitialPosition",
+            Quantity = quantity,
+            SignedQuantity = quantity,
+            UnitPrice = unitPrice,
+            Currency = position.Stock.Currency,
+            ExchangeRate = exchangeRate,
+            SettlementAmountJpy = snapshot.PurchaseTotalJpy,
+            FeeJpy = 0m,
+            TaxJpy = 0m,
+            RealizedGainLoss = 0m,
+            RealizedGainLossJpy = 0m,
+            AfterTradeQuantity = quantity,
+            AfterTradeAverageCost = unitPrice,
+            Source = "HoldingsSnapshot",
+            SourceFile = string.Empty
+        };
     }
 
     public IReadOnlyList<BrokerTrade> GetBrokerTrades(int stockId)
@@ -872,10 +988,7 @@ public sealed class InvestmentStoryRepository
             if (!string.IsNullOrWhiteSpace(normalizedSecurityId))
             {
                 position.Stock.Ticker = normalizedSecurityId;
-                if (string.IsNullOrWhiteSpace(position.MutualFund.FundCode))
-                {
-                    position.MutualFund.FundCode = normalizedSecurityId;
-                }
+                position.MutualFund.FundCode = normalizedSecurityId;
             }
 
             if (string.IsNullOrWhiteSpace(position.MutualFund.FundName))
@@ -918,12 +1031,90 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$canonicalSecurityKey", stock.CanonicalSecurityKey);
         command.Parameters.AddWithValue("$ticker", stock.Ticker);
         command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
-        command.Parameters.AddWithValue("$accountType", AccountTypeNormalizer.Normalize(stock.AccountType));
+        command.Parameters.AddWithValue("$accountType", NormalizeAccountTypeForStock(stock));
         command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
         command.Parameters.AddWithValue("$currency", NormalizeCurrency(stock.Currency));
 
         var value = command.ExecuteScalar();
-        return value is null || value == DBNull.Value ? 0 : Convert.ToInt32(value);
+        if (value is not null && value != DBNull.Value)
+        {
+            return Convert.ToInt32(value);
+        }
+
+        return AssetTypes.IsMutualFund(stock.AssetType)
+            ? FindMutualFundStockIdByComputedCanonicalKey(connection, transaction, stock)
+            : 0;
+    }
+
+    private static int FindMutualFundStockIdByComputedCanonicalKey(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Stock stock)
+    {
+        if (string.IsNullOrWhiteSpace(stock.CanonicalSecurityKey))
+        {
+            return 0;
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT
+                s.Id, s.Name, s.Ticker, s.Country, s.Currency, s.Broker, s.AccountType, s.CustodyType,
+                s.Sector, s.Industry, s.Market, s.DataSource, s.Memo, s.AssetType,
+                mf.FundName, mf.FundCode, mf.AssociationCode
+            FROM Stocks s
+            LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
+            WHERE s.Broker = $broker
+              AND s.AssetType = $assetType
+              AND s.AccountType = $accountType
+              AND s.CustodyType = $custodyType
+              AND s.Currency = $currency
+            ORDER BY s.Id DESC;
+            """;
+        command.Parameters.AddWithValue("$broker", stock.Broker);
+        command.Parameters.AddWithValue("$assetType", AssetTypes.MutualFund);
+        command.Parameters.AddWithValue("$accountType", NormalizeAccountTypeForStock(stock));
+        command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
+        command.Parameters.AddWithValue("$currency", NormalizeCurrency(stock.Currency));
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var candidateStock = new Stock
+            {
+                Id = reader.GetInt32(0),
+                Name = GetString(reader, 1),
+                Ticker = GetString(reader, 2),
+                Country = GetString(reader, 3),
+                Currency = GetString(reader, 4),
+                Broker = GetString(reader, 5),
+                AccountType = GetString(reader, 6),
+                CustodyType = GetString(reader, 7),
+                Sector = GetString(reader, 8),
+                Industry = GetString(reader, 9),
+                Market = GetString(reader, 10),
+                DataSource = GetString(reader, 11),
+                Memo = GetString(reader, 12),
+                AssetType = GetString(reader, 13)
+            };
+            var candidateFund = new MutualFundHolding
+            {
+                FundName = GetString(reader, 14),
+                FundCode = GetString(reader, 15),
+                AssociationCode = GetString(reader, 16)
+            };
+
+            if (string.Equals(
+                    SecurityIdentityService.BuildCanonicalKey(candidateStock, candidateFund),
+                    stock.CanonicalSecurityKey,
+                    StringComparison.Ordinal))
+            {
+                return candidateStock.Id;
+            }
+        }
+
+        return 0;
     }
 
     private static void HydrateChildIdsForSave(SqliteConnection connection, SqliteTransaction transaction, StockPosition position)
@@ -1367,7 +1558,7 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$country", stock.Country);
         command.Parameters.AddWithValue("$currency", stock.Currency);
         command.Parameters.AddWithValue("$broker", stock.Broker);
-        command.Parameters.AddWithValue("$accountType", AccountTypeNormalizer.Normalize(stock.AccountType));
+        command.Parameters.AddWithValue("$accountType", NormalizeAccountTypeForStock(stock));
         command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
         command.Parameters.AddWithValue("$sector", stock.Sector);
         command.Parameters.AddWithValue("$industry", stock.Industry);
@@ -1562,6 +1753,11 @@ public sealed class InvestmentStoryRepository
         var normalized = string.IsNullOrWhiteSpace(currency) ? "JPY" : currency.Trim().ToUpperInvariant();
         return normalized is "YEN" or "円" ? "JPY" : normalized;
     }
+
+    private static string NormalizeAccountTypeForStock(Stock stock) =>
+        AssetTypes.IsMutualFund(stock.AssetType)
+            ? AccountTypeNormalizer.NormalizeForMutualFund(stock.AccountType, stock.CustodyType)
+            : AccountTypeNormalizer.Normalize(stock.AccountType);
 
     private static IReadOnlyList<string> AddIdParameters(SqliteCommand command, IReadOnlyList<int> ids)
     {

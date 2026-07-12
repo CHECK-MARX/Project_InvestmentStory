@@ -38,12 +38,17 @@ public static class PositionIdentityService
         string custodyType,
         string currency)
     {
+        var normalizedAssetType = NormalizeAssetType(assetType);
+        var normalizedAccountType = AssetTypes.IsMutualFund(normalizedAssetType)
+            ? AccountTypeNormalizer.NormalizeForMutualFund(accountType, custodyType)
+            : AccountTypeNormalizer.Normalize(accountType);
+
         return string.Join(
             "|",
             NormalizeBroker(broker),
-            NormalizeSecurityId(securityId, assetType),
-            NormalizeAssetType(assetType),
-            AccountTypeNormalizer.Normalize(accountType),
+            NormalizeSecurityId(securityId, normalizedAssetType),
+            normalizedAssetType,
+            normalizedAccountType,
             NormalizeCustodyType(custodyType, accountType),
             NormalizeCurrency(currency));
     }
@@ -83,7 +88,9 @@ public static class PositionIdentityService
         stock.Broker = NormalizeBroker(stock.Broker);
         stock.AssetType = NormalizeAssetType(stock.AssetType);
         stock.Ticker = NormalizeSecurityId(stock.Ticker, stock.AssetType);
-        stock.AccountType = AccountTypeNormalizer.Normalize(stock.AccountType);
+        stock.AccountType = AssetTypes.IsMutualFund(stock.AssetType)
+            ? AccountTypeNormalizer.NormalizeForMutualFund(stock.AccountType, stock.CustodyType)
+            : AccountTypeNormalizer.Normalize(stock.AccountType);
         stock.CustodyType = NormalizeCustodyType(stock.CustodyType, stock.AccountType);
         stock.Currency = NormalizeCurrency(stock.Currency);
     }

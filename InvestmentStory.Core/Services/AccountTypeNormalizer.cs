@@ -72,4 +72,15 @@ public static class AccountTypeNormalizer
 
         return AccountTypes.Unknown;
     }
+
+    public static string NormalizeForMutualFund(string accountType, string custodyType)
+    {
+        var custody = Normalize(custodyType);
+        if (custody != AccountTypes.Unknown)
+        {
+            return custody;
+        }
+
+        return Normalize(accountType);
+    }
 }

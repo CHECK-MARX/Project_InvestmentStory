@@ -145,6 +145,71 @@ public sealed class BrokerHoldingMergeServiceTests
         Assert.Equal(60m, decision.Merged.CurrentHolding.CurrentPrice);
     }
 
+    [Fact]
+    public void MergeHoldings_OverwritesMutualFund_WhenExistingAccountTypeWasMisclassifiedAsGrowth()
+    {
+        var service = new BrokerHoldingMergeService();
+        var existing = new StockPosition
+        {
+            Stock = new Stock
+            {
+                Id = 10,
+                AssetType = AssetTypes.MutualFund,
+                Ticker = "FUND:ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                Name = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                Broker = "SBI証券",
+                AccountType = AccountTypes.NisaGrowth,
+                CustodyType = "投資信託（金額/NISA預り（つみたて投資枠））",
+                Currency = "JPY"
+            },
+            MutualFund = new MutualFundHolding
+            {
+                FundName = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                FundCode = "FUND:ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+                UnitsHeld = 411_318m,
+                UnitBase = 10_000m,
+                AverageCostNav = 29_499m,
+                CurrentNav = 40_579m,
+                AcquisitionAmount = 1_213_346m,
+                MarketValue = 1_669_087m,
+                UnrealizedGainLoss = 455_741m
+            },
+            CurrentHolding = new CurrentHolding { CurrentShares = 411_318m, CurrentPrice = 40_579m },
+            Purchase = new Purchase { Shares = 411_318m, UnitPrice = 29_499m },
+            Split = new StockSplit { SplitRatio = 1m }
+        };
+        var brokerHolding = new BrokerHoldingRecord
+        {
+            AssetType = AssetTypes.MutualFund,
+            Broker = "SBI証券",
+            Account = "投資信託（金額/NISA預り（つみたて投資枠））",
+            Ticker = "FUND:ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+            Name = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+            FundName = "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+            FundCode = "FUND:ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド",
+            Shares = 411_318m,
+            UnitsHeld = 411_318m,
+            UnitBase = 10_000m,
+            AverageCostNav = 29_499m,
+            CurrentNav = 41_000m,
+            AcquisitionAmount = 1_213_346m,
+            MarketValue = 1_686_405m,
+            MarketValueJpy = 1_686_405m,
+            UnrealizedGainLossJpy = 473_059m,
+            Currency = "JPY"
+        };
+
+        var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, DateTime.Now);
+
+        var decision = Assert.Single(result.Decisions);
+        Assert.Equal(BrokerMergeAction.Overwrite, decision.Action);
+        Assert.NotNull(decision.Existing);
+        Assert.Equal(10, decision.Existing.Stock.Id);
+        Assert.NotNull(decision.Merged);
+        Assert.Equal(AccountTypes.NisaAccumulation, decision.Merged.Stock.AccountType);
+        Assert.Equal(1_686_405m, decision.Merged.MutualFund.MarketValue);
+    }
+
     private static StockPosition CreateExistingPosition(int id, decimal shares, decimal currentPrice, DateTime updatedAt)
     {
         return new StockPosition

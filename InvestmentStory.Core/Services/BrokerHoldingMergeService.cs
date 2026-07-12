@@ -32,7 +32,7 @@ public sealed class BrokerHoldingMergeService
 
         if (exactMatches.Count == 0)
         {
-            var sourceAccountType = AccountTypeNormalizer.Normalize(source.Account);
+            var sourceAccountType = NormalizeSourceAccountType(source);
             exactMatches = existingPositions
                 .Where(x => IsSameBroker(x.Stock.Broker, source.Broker) &&
                             IsSameTicker(x.Stock.Ticker, source.Ticker) &&
@@ -116,7 +116,7 @@ public sealed class BrokerHoldingMergeService
     {
         SetIfChanged(target.Stock.Ticker, NormalizeTickerForDisplay(source.Ticker), value => target.Stock.Ticker = value, "ティッカー", changedFields);
         SetIfChanged(target.Stock.Broker, source.Broker.Trim(), value => target.Stock.Broker = value, "証券会社", changedFields);
-        SetIfChanged(target.Stock.AccountType, AccountTypeNormalizer.Normalize(source.Account), value => target.Stock.AccountType = value, "口座区分", changedFields);
+        SetIfChanged(target.Stock.AccountType, NormalizeSourceAccountType(source), value => target.Stock.AccountType = value, "口座区分", changedFields);
         SetIfChanged(target.Stock.CustodyType, source.Account.Trim(), value => target.Stock.CustodyType = value, "預り区分", changedFields);
         if (!string.IsNullOrWhiteSpace(source.Name))
         {
@@ -226,7 +226,7 @@ public sealed class BrokerHoldingMergeService
         target.Stock.AssetType = AssetTypes.MutualFund;
         target.Stock.Currency = "JPY";
         target.Stock.Country = "日本";
-        target.Stock.AccountType = AccountTypeNormalizer.Normalize(source.Account);
+        target.Stock.AccountType = NormalizeSourceAccountType(source);
         target.Stock.CustodyType = source.Account.Trim();
         target.Stock.Sector = string.IsNullOrWhiteSpace(source.Product) ? "投資信託" : source.Product;
 
@@ -301,7 +301,7 @@ public sealed class BrokerHoldingMergeService
                 Ticker = NormalizeTickerForDisplay(source.Ticker),
                 Name = string.IsNullOrWhiteSpace(source.Name) ? NormalizeTickerForDisplay(source.Ticker) : source.Name.Trim(),
                 Broker = source.Broker.Trim(),
-                AccountType = AccountTypeNormalizer.Normalize(source.Account),
+                AccountType = NormalizeSourceAccountType(source),
                 CustodyType = source.Account.Trim(),
                 Currency = currency,
                 Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本" : "米国",
@@ -362,7 +362,7 @@ public sealed class BrokerHoldingMergeService
                 Ticker = NormalizeTickerForDisplay(source.Ticker),
                 Name = string.IsNullOrWhiteSpace(name) ? NormalizeTickerForDisplay(source.Ticker) : name,
                 Broker = source.Broker.Trim(),
-                AccountType = AccountTypeNormalizer.Normalize(source.Account),
+                AccountType = NormalizeSourceAccountType(source),
                 CustodyType = source.Account.Trim(),
                 Currency = "JPY",
                 Country = "日本",
@@ -554,6 +554,11 @@ public sealed class BrokerHoldingMergeService
         return source == AccountTypes.Unknown ||
                string.Equals(existing, source, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static string NormalizeSourceAccountType(BrokerHoldingRecord source) =>
+        source.IsMutualFund
+            ? AccountTypeNormalizer.NormalizeForMutualFund(source.Account, source.Account)
+            : AccountTypeNormalizer.Normalize(source.Account);
 
     private static bool IsSameCustodyType(string existingCustodyType, string sourceCustodyType)
     {

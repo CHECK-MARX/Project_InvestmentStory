@@ -385,6 +385,11 @@ public sealed class MainViewModel : ObservableObject
 
     private void Navigate(object page, string title)
     {
+        if (ReferenceEquals(page, StockDetail))
+        {
+            title = "銘柄詳細";
+        }
+
         CurrentPage = page;
         CurrentTitle = title;
         var settings = _repository.GetSettings();
@@ -574,7 +579,7 @@ public sealed class MainViewModel : ObservableObject
         var stockIds = snapshots.Select(x => x.Position.Stock.Id).ToList();
         StockDetail.Update(
             snapshots,
-            snapshots.Count == 1 ? _storyGenerator.Generate(snapshot) : BuildAggregateStory(snapshots),
+            snapshots.Count == 1 ? _storyGenerator.Generate(snapshot) : BuildAggregateStoryForDisplay(snapshots),
             _repository.GetBrokerTrades(stockIds),
             _repository.GetDataQualityInfos(stockIds));
     }
@@ -902,6 +907,24 @@ public sealed class MainViewModel : ObservableObject
         var first = _snapshots.FirstOrDefault();
         _selectedDetailStockId = first?.Position.Stock.Id;
         return first is null ? Array.Empty<StockSnapshot>() : new[] { first };
+    }
+
+    private static string BuildAggregateStoryForDisplay(IReadOnlyList<StockSnapshot> snapshots)
+    {
+        var first = snapshots[0];
+        var quantity = snapshots.Sum(x => x.Position.IsMutualFund ? x.Position.MutualFund.UnitsHeld : x.Position.CurrentHolding.CurrentShares);
+        var marketValue = snapshots.Sum(x => x.CurrentMarketValueJpy);
+        var costBasis = snapshots.Sum(x => x.PurchaseTotalJpy);
+        var gainLoss = marketValue - costBasis;
+        var brokers = snapshots
+            .Select(x => x.Position.Stock.Broker)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        return $"{first.Position.Stock.Ticker} / {first.Position.Stock.Name} は全口座集約で {snapshots.Count:N0} ポジション、{brokers:N0} 証券会社に分かれて保有しています。" +
+               $"保有数量合計は {quantity:N2}、取得額合計は {Formatters.Jpy(costBasis)}、評価額合計は {Formatters.Jpy(marketValue)}、含み損益は {Formatters.SignedJpy(gainLoss)} です。" +
+               "取引履歴、配当、データ品質は集約対象ポジションをまとめて表示しています。";
     }
 
     private static string BuildAggregateStory(IReadOnlyList<StockSnapshot> snapshots)

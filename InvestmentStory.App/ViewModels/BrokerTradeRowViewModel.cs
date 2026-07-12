@@ -11,7 +11,7 @@ public sealed class BrokerTradeRowViewModel
         SettlementDate = trade.SettlementDate.ToString("yyyy/MM/dd");
         Broker = trade.Broker;
         AccountType = AccountTypes.DisplayName(trade.AccountType);
-        TradeType = trade.TradeType;
+        TradeType = FormatTradeType(trade.TradeType);
         Quantity = Formatters.Number(trade.Quantity);
         UnitPrice = Formatters.Money(trade.UnitPrice, trade.Currency);
         Currency = trade.Currency;
@@ -22,7 +22,7 @@ public sealed class BrokerTradeRowViewModel
         RealizedGainLossJpy = Formatters.SignedJpy(trade.RealizedGainLossJpy);
         AfterTradeQuantity = Formatters.Number(trade.AfterTradeQuantity);
         AfterTradeAverageCost = Formatters.Money(trade.AfterTradeAverageCost, trade.Currency);
-        Source = string.IsNullOrWhiteSpace(trade.Source) ? "未取得" : trade.Source;
+        Source = string.IsNullOrWhiteSpace(trade.Source) ? "未取得" : FormatSource(trade.Source);
     }
 
     public string TradeDate { get; }
@@ -41,4 +41,42 @@ public sealed class BrokerTradeRowViewModel
     public string AfterTradeQuantity { get; }
     public string AfterTradeAverageCost { get; }
     public string Source { get; }
+
+    private static string FormatTradeType(string tradeType)
+    {
+        if (tradeType.Equals("InitialPosition", StringComparison.OrdinalIgnoreCase) ||
+            tradeType.Equals("OpeningBalance", StringComparison.OrdinalIgnoreCase))
+        {
+            return "初期保有";
+        }
+
+        if (tradeType.Equals("StockSplit", StringComparison.OrdinalIgnoreCase))
+        {
+            return "株式分割";
+        }
+
+        if (tradeType.Equals("ReverseSplit", StringComparison.OrdinalIgnoreCase) ||
+            tradeType.Equals("ReverseStockSplit", StringComparison.OrdinalIgnoreCase) ||
+            tradeType.Equals("StockConsolidation", StringComparison.OrdinalIgnoreCase))
+        {
+            return "株式併合";
+        }
+
+        if (tradeType.Equals("TransferIn", StringComparison.OrdinalIgnoreCase))
+        {
+            return "入庫";
+        }
+
+        if (tradeType.Equals("TransferOut", StringComparison.OrdinalIgnoreCase))
+        {
+            return "出庫";
+        }
+
+        return tradeType;
+    }
+
+    private static string FormatSource(string source) =>
+        source.Equals("HoldingsSnapshot", StringComparison.OrdinalIgnoreCase)
+            ? "保有残高CSV/手入力"
+            : source;
 }
