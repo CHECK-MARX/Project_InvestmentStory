@@ -93,9 +93,12 @@ public sealed class MainViewModel : ObservableObject
             _repository.SaveTaxProfile);
         PassiveIncome = new PassiveIncomeViewModel(SaveGoal);
         Simulation = new SimulationViewModel(
+            _calculator,
             _mutualFundAssetSimulationService,
             () => _repository.GetSettings(),
-            appSettings => _repository.SaveSettings(appSettings));
+            appSettings => _repository.SaveSettings(appSettings),
+            _marketDataService,
+            _stockLookupService);
         CsvImport = new CsvImportViewModel(
             () => _repository.GetPositions(),
             position => _repository.SavePosition(position),
@@ -286,6 +289,7 @@ public sealed class MainViewModel : ObservableObject
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         Simulation.UpdateMutualFundPortfolio(positions);
+        Simulation.UpdateDividendPortfolio(positions, _repository.GetTaxProfiles());
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
         var detailSnapshots = ResolveDetailSnapshots();
@@ -499,7 +503,12 @@ public sealed class MainViewModel : ObservableObject
             MutualFundSimulationExpectedAnnualReturnRate = source.MutualFundSimulationExpectedAnnualReturnRate,
             MutualFundSimulationTargetAmountJpy = source.MutualFundSimulationTargetAmountJpy,
             MutualFundSimulationProjectionYears = source.MutualFundSimulationProjectionYears,
-            MutualFundSimulationTargetYears = source.MutualFundSimulationTargetYears
+            MutualFundSimulationTargetYears = source.MutualFundSimulationTargetYears,
+            DividendSimulationPlanName = source.DividendSimulationPlanName,
+            DividendSimulationDisplayMode = source.DividendSimulationDisplayMode,
+            DividendSimulationTargetAnnualDividendJpy = source.DividendSimulationTargetAnnualDividendJpy,
+            DividendSimulationProjectionYears = source.DividendSimulationProjectionYears,
+            DividendSimulationPlanJson = source.DividendSimulationPlanJson
         };
 
     private void SaveStockListDisplayMode(string displayMode)

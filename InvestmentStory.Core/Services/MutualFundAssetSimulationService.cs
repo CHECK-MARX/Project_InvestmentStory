@@ -4,7 +4,7 @@ namespace InvestmentStory.Core.Services;
 
 public sealed class MutualFundAssetSimulationService
 {
-    private const decimal UnitBase = 10000m;
+    private const decimal DefaultUnitBase = 10000m;
     private static readonly string[] AccountScopeOrder =
     [
         AccountTypes.NisaLegacy,
@@ -23,18 +23,19 @@ public sealed class MutualFundAssetSimulationService
             new()
             {
                 Key = MutualFundSimulationScopeKeys.AllAccounts,
-                DisplayName = "全口座",
+                DisplayName = "すべての投資信託",
+                FundCount = CountFunds(currentPositions),
                 PositionCount = currentPositions.Count
             }
         };
 
         var accountGroups = currentPositions
             .GroupBy(GetNormalizedAccountType)
-            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var accountType in AccountScopeOrder)
         {
-            if (!accountGroups.TryGetValue(accountType, out var count))
+            if (!accountGroups.TryGetValue(accountType, out var groupPositions))
             {
                 continue;
             }
@@ -43,7 +44,8 @@ public sealed class MutualFundAssetSimulationService
             {
                 Key = MutualFundSimulationScopeKeys.Account(accountType),
                 DisplayName = GetAccountDisplayName(accountType),
-                PositionCount = count
+                FundCount = CountFunds(groupPositions),
+                PositionCount = groupPositions.Count
             });
         }
 
@@ -54,11 +56,13 @@ public sealed class MutualFundAssetSimulationService
 
         foreach (var group in fundGroups)
         {
+            var groupPositions = group.ToList();
             options.Add(new MutualFundSimulationScopeOption
             {
                 Key = MutualFundSimulationScopeKeys.Fund(group.Key),
-                DisplayName = $"ファンド別: {GetFundDisplayName(group.First())}",
-                PositionCount = group.Count()
+                DisplayName = $"ファンド別：{GetFundDisplayName(group.First())}",
+                FundCount = 1,
+                PositionCount = groupPositions.Count
             });
         }
 
@@ -74,10 +78,15 @@ public sealed class MutualFundAssetSimulationService
         ArgumentNullException.ThrowIfNull(input);
 
         var selectedPositions = SelectPositions(positions, scopeKey).ToList();
-        var summary = BuildSummary(selectedPositions);
-        var projectionYears = Math.Clamp(input.ProjectionYears, 1, 80);
-        var targetYears = Math.Clamp(input.TargetYears, 1, 80);
+        var requestedContribution = Math.Max(0m, input.MonthlyContributionJpy);
+        var contributionAccountType = ResolveContributionAccountType(selectedPositions, scopeKey);
+        var allowsContribution = contributionAccountType is not null;
+        var effectiveMonthlyContribution = allowsContribution ? requestedContribution : 0m;
+        var summary = BuildSummary(selectedPositions, allowsContribution, effectiveMonthlyContribution);
+        var accountBreakdowns = BuildAccountBreakdowns(selectedPositions, contributionAccountType, effectiveMonthlyContribution);
+        var projectionYears = Math.Clamp(input.ProjectionYears, 1, 100);
         var months = projectionYears * 12;
+        var targetYears = Math.Clamp(input.TargetYears <= 0 ? projectionYears : input.TargetYears, 1, 100);
         var targetMonths = targetYears * 12;
         var start = new DateTime(
             input.StartYear <= 0 ? DateTime.Today.Year : input.StartYear,
@@ -85,47 +94,49 @@ public sealed class MutualFundAssetSimulationService
             1);
         var annualRate = Math.Max(input.ExpectedAnnualReturnRate, -99.99m);
         var monthlyRate = ToMonthlyRate(annualRate);
-        var monthlyContribution = Math.Max(0m, input.MonthlyContributionJpy);
         var targetAmount = Math.Max(0m, input.TargetAmountJpy);
 
         var projections = BuildProjections(
             summary,
-            monthlyContribution,
+            effectiveMonthlyContribution,
             monthlyRate,
             targetAmount,
             start,
             months);
 
-        var targetProjection = projections.FirstOrDefault(x => x.MarketValueJpy >= targetAmount && targetAmount > 0m);
-        DateTime? targetAchievementMonth;
-        int? monthsToTarget;
-        if (targetAmount > 0m && summary.CurrentMarketValueJpy >= targetAmount)
-        {
-            targetAchievementMonth = start;
-            monthsToTarget = 0;
-        }
-        else
-        {
-            targetAchievementMonth = targetProjection?.YearMonth;
-            monthsToTarget = targetProjection?.MonthsFromNow;
-        }
+        var targetAchievement = CalculateTargetAchievement(
+            summary.CurrentMarketValueJpy,
+            effectiveMonthlyContribution,
+            monthlyRate,
+            targetAmount,
+            start,
+            maxMonths: 100 * 12);
+        var requiredMonthlyContribution = allowsContribution
+            ? CalculateRequiredMonthlyContribution(summary.CurrentMarketValueJpy, targetAmount, monthlyRate, targetMonths)
+            : 0m;
+        var monthlyContributionMargin = allowsContribution
+            ? effectiveMonthlyContribution - requiredMonthlyContribution
+            : 0m;
 
         return new MutualFundAssetSimulationResult
         {
             Summary = summary,
+            AccountBreakdowns = accountBreakdowns,
             Projections = projections,
             ContributionComparisons = BuildContributionComparisons(
                 summary.CurrentMarketValueJpy,
-                monthlyContribution,
+                effectiveMonthlyContribution,
                 monthlyRate,
-                months),
-            TargetAchievementMonth = targetAchievementMonth,
-            MonthsToTarget = monthsToTarget,
-            RequiredMonthlyContributionJpy = CalculateRequiredMonthlyContribution(
-                summary.CurrentMarketValueJpy,
-                targetAmount,
-                monthlyRate,
-                targetMonths)
+                months,
+                allowsContribution),
+            TargetAchievementMonth = targetAchievement.Month,
+            MonthsToTarget = targetAchievement.Months,
+            RequiredMonthlyContributionJpy = requiredMonthlyContribution,
+            AdditionalMonthlyContributionNeededJpy = allowsContribution
+                ? Math.Max(0m, requiredMonthlyContribution - effectiveMonthlyContribution)
+                : 0m,
+            MonthlyContributionMarginJpy = monthlyContributionMargin,
+            IsRequiredMonthlyContributionApplicable = allowsContribution
         };
     }
 
@@ -157,17 +168,15 @@ public sealed class MutualFundAssetSimulationService
         return currentPositions;
     }
 
-    private static MutualFundPortfolioSummary BuildSummary(IReadOnlyList<StockPosition> positions)
+    private static MutualFundPortfolioSummary BuildSummary(
+        IReadOnlyList<StockPosition> positions,
+        bool allowsContribution,
+        decimal effectiveMonthlyContribution)
     {
         var values = positions.Select(CreateValuation).ToList();
         var marketValue = values.Sum(x => x.MarketValueJpy);
         var cost = values.Sum(x => x.CostJpy);
         var gain = marketValue - cost;
-        var fundCount = positions
-            .Select(GetFundScopeKey)
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Count();
 
         return new MutualFundPortfolioSummary
         {
@@ -175,10 +184,44 @@ public sealed class MutualFundAssetSimulationService
             CurrentCostJpy = cost,
             UnrealizedGainJpy = gain,
             UnrealizedGainRate = cost == 0m ? 0m : gain / cost * 100m,
-            ActualAnnualizedReturnRate = CalculateActualAnnualizedReturnRate(positions),
-            FundCount = fundCount,
-            PositionCount = positions.Count
+            ActualAnnualizedReturnRate = CalculateActualAnnualizedReturnRateFromPurchaseDates(positions),
+            FundCount = CountFunds(positions),
+            PositionCount = positions.Count,
+            AllowsMonthlyContribution = allowsContribution,
+            EffectiveMonthlyContributionJpy = effectiveMonthlyContribution
         };
+    }
+
+    private static IReadOnlyList<MutualFundSimulationAccountBreakdown> BuildAccountBreakdowns(
+        IReadOnlyList<StockPosition> positions,
+        string? contributionAccountType,
+        decimal effectiveMonthlyContribution)
+    {
+        return positions
+            .GroupBy(GetNormalizedAccountType)
+            .OrderBy(group => GetAccountSortIndex(group.Key))
+            .ThenBy(group => GetAccountDisplayName(group.Key), StringComparer.CurrentCulture)
+            .Select(group =>
+            {
+                var groupPositions = group.ToList();
+                var values = groupPositions.Select(CreateValuation).ToList();
+                var marketValue = values.Sum(x => x.MarketValueJpy);
+                var cost = values.Sum(x => x.CostJpy);
+                var allowsContribution = string.Equals(group.Key, contributionAccountType, StringComparison.OrdinalIgnoreCase);
+                return new MutualFundSimulationAccountBreakdown
+                {
+                    AccountType = group.Key,
+                    AccountDisplayName = GetAccountDisplayName(group.Key),
+                    CurrentMarketValueJpy = marketValue,
+                    CurrentCostJpy = cost,
+                    UnrealizedGainJpy = marketValue - cost,
+                    FundCount = CountFunds(groupPositions),
+                    PositionCount = groupPositions.Count,
+                    AllowsContribution = allowsContribution,
+                    MonthlyContributionJpy = allowsContribution ? effectiveMonthlyContribution : 0m
+                };
+            })
+            .ToList();
     }
 
     private static IReadOnlyList<MutualFundMonthlyProjection> BuildProjections(
@@ -218,12 +261,53 @@ public sealed class MutualFundAssetSimulationService
         return rows;
     }
 
+    private static (DateTime? Month, int? Months) CalculateTargetAchievement(
+        decimal currentMarketValue,
+        decimal monthlyContribution,
+        decimal monthlyRate,
+        decimal targetAmount,
+        DateTime start,
+        int maxMonths)
+    {
+        if (targetAmount <= 0m)
+        {
+            return (null, null);
+        }
+
+        if (currentMarketValue >= targetAmount)
+        {
+            return (start, 0);
+        }
+
+        var value = currentMarketValue;
+        var contribution = Math.Max(0m, monthlyContribution);
+        for (var month = 1; month <= maxMonths; month++)
+        {
+            value = value * (1m + monthlyRate) + contribution;
+            if (value >= targetAmount)
+            {
+                return (start.AddMonths(month), month);
+            }
+        }
+
+        return (null, null);
+    }
+
     private static IReadOnlyList<MutualFundContributionComparison> BuildContributionComparisons(
         decimal currentMarketValue,
         decimal monthlyContribution,
         decimal monthlyRate,
-        int months)
+        int months,
+        bool allowsContribution)
     {
+        if (!allowsContribution)
+        {
+            return
+            [
+                CreateComparison("追加積立なし", 0m)
+            ];
+        }
+
         var lower = Math.Max(0m, monthlyContribution - 50_000m);
         var upper = monthlyContribution + 50_000m;
         return
@@ -315,10 +399,9 @@ public sealed class MutualFundAssetSimulationService
     {
         return positions
             .Where(IsCurrentMutualFundPosition)
-            .GroupBy(BuildDeduplicationKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(BuildStrictDeduplicationKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
                 .OrderByDescending(GetDataCompletenessScore)
-                .ThenByDescending(position => position.MutualFund.UnitsHeld)
                 .ThenByDescending(position => position.MutualFund.NavDate)
                 .ThenByDescending(position => position.Stock.Id)
                 .First())
@@ -339,13 +422,17 @@ public sealed class MutualFundAssetSimulationService
     private static FundValuation CreateValuation(StockPosition position)
     {
         var fund = position.MutualFund;
-        var unitBase = fund.UnitBase <= 0m ? UnitBase : fund.UnitBase;
-        var marketValue = fund.CurrentNav > 0m
-            ? RoundYen(fund.UnitsHeld / unitBase * fund.CurrentNav)
-            : RoundYen(fund.MarketValue);
-        var cost = fund.AverageCostNav > 0m
-            ? RoundYen(fund.UnitsHeld / unitBase * fund.AverageCostNav)
-            : RoundYen(fund.AcquisitionAmount);
+        var unitBase = fund.UnitBase <= 0m ? DefaultUnitBase : fund.UnitBase;
+        var marketValue = fund.MarketValue > 0m
+            ? RoundYen(fund.MarketValue)
+            : fund.CurrentNav > 0m
+                ? RoundYen(fund.UnitsHeld / unitBase * fund.CurrentNav)
+                : 0m;
+        var cost = fund.AcquisitionAmount > 0m
+            ? RoundYen(fund.AcquisitionAmount)
+            : fund.AverageCostNav > 0m
+                ? RoundYen(fund.UnitsHeld / unitBase * fund.AverageCostNav)
+                : 0m;
 
         return new FundValuation(marketValue, cost);
     }
@@ -354,6 +441,16 @@ public sealed class MutualFundAssetSimulationService
     {
         var fund = position.MutualFund;
         var score = 0;
+        if (fund.MarketValue > 0m)
+        {
+            score += 8;
+        }
+
+        if (fund.AcquisitionAmount > 0m)
+        {
+            score += 8;
+        }
+
         if (fund.CurrentNav > 0m)
         {
             score += 4;
@@ -364,16 +461,6 @@ public sealed class MutualFundAssetSimulationService
             score += 4;
         }
 
-        if (fund.MarketValue > 0m)
-        {
-            score += 2;
-        }
-
-        if (fund.AcquisitionAmount > 0m)
-        {
-            score += 2;
-        }
-
         if (fund.NavDate != DateTime.MinValue)
         {
             score += 1;
@@ -382,12 +469,21 @@ public sealed class MutualFundAssetSimulationService
         return score;
     }
 
-    private static string BuildDeduplicationKey(StockPosition position) =>
-        string.Join(
+    private static string BuildStrictDeduplicationKey(StockPosition position)
+    {
+        var valuation = CreateValuation(position);
+        return string.Join(
             "|",
             PositionIdentityService.NormalizeBroker(position.Stock.Broker),
             GetFundScopeKey(position),
-            GetNormalizedAccountType(position));
+            GetNormalizedAccountType(position),
+            NormalizeDecimal(position.MutualFund.UnitsHeld),
+            NormalizeDecimal(position.MutualFund.AverageCostNav),
+            NormalizeDecimal(position.MutualFund.CurrentNav),
+            NormalizeDecimal(valuation.CostJpy),
+            NormalizeDecimal(valuation.MarketValueJpy),
+            position.MutualFund.DistributionMethod?.Trim() ?? string.Empty);
+    }
 
     private static string GetFundScopeKey(StockPosition position)
     {
@@ -398,10 +494,84 @@ public sealed class MutualFundAssetSimulationService
     private static string GetFundDisplayName(StockPosition position) =>
         FirstNonBlank(position.MutualFund.FundName, position.Stock.Name, position.Stock.Ticker, "投資信託");
 
-    private static string GetNormalizedAccountType(StockPosition position) =>
-        AccountTypeNormalizer.NormalizeForMutualFund(
-            FirstNonBlank(position.MutualFund.AccountType, position.Stock.AccountType),
-            position.Stock.CustodyType);
+    private static string GetNormalizedAccountType(StockPosition position)
+    {
+        var accountCandidates = new[]
+        {
+            position.MutualFund.AccountType,
+            position.Stock.AccountType,
+            position.Stock.CustodyType
+        };
+
+        if (accountCandidates.Any(value =>
+                string.Equals(AccountTypeNormalizer.Normalize(value), AccountTypes.NisaLegacy, StringComparison.OrdinalIgnoreCase)))
+        {
+            return AccountTypes.NisaLegacy;
+        }
+
+        return FirstKnownAccountType(accountCandidates);
+    }
+
+    private static string FirstKnownAccountType(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            var normalized = AccountTypeNormalizer.Normalize(value);
+            if (normalized != AccountTypes.Unknown)
+            {
+                return normalized;
+            }
+        }
+
+        return AccountTypes.Unknown;
+    }
+
+    private static string? ResolveContributionAccountType(IReadOnlyList<StockPosition> positions, string? scopeKey)
+    {
+        if (positions.Count == 0)
+        {
+            return null;
+        }
+
+        if (scopeKey?.StartsWith(MutualFundSimulationScopeKeys.AccountPrefix, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var accountType = scopeKey[MutualFundSimulationScopeKeys.AccountPrefix.Length..];
+            return AllowsAdditionalContribution(accountType) ? accountType : null;
+        }
+
+        return positions
+            .Select(GetNormalizedAccountType)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(AllowsAdditionalContribution)
+            .OrderBy(GetContributionAccountPriority)
+            .FirstOrDefault();
+    }
+
+    private static bool AllowsAdditionalContribution(string accountType) =>
+        !string.Equals(accountType, AccountTypes.NisaLegacy, StringComparison.OrdinalIgnoreCase);
+
+    private static int GetContributionAccountPriority(string accountType) =>
+        accountType switch
+        {
+            AccountTypes.NisaAccumulation => 0,
+            AccountTypes.NisaGrowth => 1,
+            AccountTypes.Specific => 2,
+            AccountTypes.General => 3,
+            _ => 9
+        };
+
+    private static int GetAccountSortIndex(string accountType)
+    {
+        for (var i = 0; i < AccountScopeOrder.Length; i++)
+        {
+            if (string.Equals(AccountScopeOrder[i], accountType, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return int.MaxValue;
+    }
 
     private static string GetAccountDisplayName(string accountType) =>
         accountType switch
@@ -414,14 +584,59 @@ public sealed class MutualFundAssetSimulationService
             _ => "未分類"
         };
 
-    private static decimal? CalculateActualAnnualizedReturnRate(IReadOnlyList<StockPosition> positions)
+    private static int CountFunds(IReadOnlyList<StockPosition> positions) =>
+        positions
+            .Select(GetFundScopeKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+    private static decimal? CalculateActualAnnualizedReturnRateFromPurchaseDates(IReadOnlyList<StockPosition> positions)
     {
-        // 現在保有CSVだけでは正確な入出金タイミングが足りないため、ここでは架空の年利を作らない。
-        // 将来、投信の全入出金履歴を渡せるようになった時点でIRR計算を追加する。
-        return null;
+        var today = DateTime.Today;
+        var weightedReturns = new List<(decimal Rate, decimal Weight)>();
+        foreach (var position in positions)
+        {
+            var valuation = CreateValuation(position);
+            if (valuation.CostJpy <= 0m || valuation.MarketValueJpy <= 0m)
+            {
+                continue;
+            }
+
+            var purchaseDate = position.Purchase.PurchaseDate.Date;
+            if (purchaseDate == DateTime.MinValue || purchaseDate >= today)
+            {
+                continue;
+            }
+
+            var years = (today - purchaseDate).TotalDays / 365.25d;
+            if (years < 0.25d)
+            {
+                continue;
+            }
+
+            var multiple = (double)(valuation.MarketValueJpy / valuation.CostJpy);
+            if (multiple <= 0d)
+            {
+                continue;
+            }
+
+            var annualized = (decimal)((Math.Pow(multiple, 1d / years) - 1d) * 100d);
+            weightedReturns.Add((annualized, valuation.CostJpy));
+        }
+
+        var totalWeight = weightedReturns.Sum(x => x.Weight);
+        if (totalWeight <= 0m)
+        {
+            return null;
+        }
+
+        return weightedReturns.Sum(x => x.Rate * x.Weight) / totalWeight;
     }
 
     private static decimal RoundYen(decimal value) => Math.Round(value, 0, MidpointRounding.AwayFromZero);
+
+    private static string NormalizeDecimal(decimal value) => Math.Round(value, 4, MidpointRounding.AwayFromZero).ToString("0.####");
 
     private static string FirstNonBlank(params string[] values)
     {

@@ -488,7 +488,7 @@ public sealed class DatabaseInitializer
         Execute(connection, """
             UPDATE Stocks
             SET AccountType = CASE
-                WHEN AccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                WHEN AccountType LIKE '%旧%NISA%' OR AccountType LIKE '%旧ニーサ%' THEN 'NisaLegacy'
                 WHEN AccountType LIKE '%つみたて%' OR AccountType LIKE '%積立%' THEN 'NisaAccumulation'
                 WHEN AccountType LIKE '%NISA%' OR AccountType LIKE '%成長投資%' THEN 'NisaGrowth'
                 WHEN AccountType LIKE '%特定%' THEN 'Specific'
@@ -501,7 +501,7 @@ public sealed class DatabaseInitializer
         Execute(connection, """
             UPDATE DividendPayments
             SET AccountType = CASE
-                    WHEN AccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                    WHEN AccountType LIKE '%旧%NISA%' OR AccountType LIKE '%旧ニーサ%' THEN 'NisaLegacy'
                     WHEN AccountType LIKE '%つみたて%' OR AccountType LIKE '%積立%' THEN 'NisaAccumulation'
                     WHEN AccountType LIKE '%NISA%' OR AccountType LIKE '%成長投資%' THEN 'NisaGrowth'
                     WHEN AccountType LIKE '%特定%' THEN 'Specific'
@@ -510,7 +510,7 @@ public sealed class DatabaseInitializer
                     ELSE 'Unknown'
                 END,
                 TaxAccountType = CASE
-                    WHEN TaxAccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                    WHEN TaxAccountType LIKE '%旧%NISA%' OR TaxAccountType LIKE '%旧ニーサ%' THEN 'NisaLegacy'
                     WHEN TaxAccountType LIKE '%つみたて%' OR TaxAccountType LIKE '%積立%' THEN 'NisaAccumulation'
                     WHEN TaxAccountType LIKE '%NISA%' OR TaxAccountType LIKE '%成長投資%' THEN 'NisaGrowth'
                     WHEN TaxAccountType LIKE '%特定%' THEN 'Specific'
@@ -621,14 +621,16 @@ public sealed class DatabaseInitializer
         Execute(connection, """
             UPDATE Stocks
             SET AccountType = CASE
-                    WHEN AccountType = 'NisaAccumulation'
-                      OR CustodyType LIKE '%つみたて%'
+                    WHEN CustodyType LIKE '%旧%NISA%'
+                      OR CustodyType LIKE '%旧ニーサ%'
+                      OR AccountType LIKE '%旧%NISA%'
+                      OR AccountType LIKE '%旧ニーサ%'
+                      OR AccountType = 'NisaLegacy' THEN 'NisaLegacy'
+                    WHEN CustodyType LIKE '%つみたて%'
                       OR CustodyType LIKE '%積立%'
                       OR AccountType LIKE '%つみたて%'
-                      OR AccountType LIKE '%積立%' THEN 'NisaAccumulation'
-                    WHEN AccountType = 'NisaLegacy'
-                      OR CustodyType LIKE '%旧NISA%'
-                      OR AccountType LIKE '%旧NISA%' THEN 'NisaLegacy'
+                      OR AccountType LIKE '%積立%'
+                      OR AccountType = 'NisaAccumulation' THEN 'NisaAccumulation'
                     WHEN AccountType = 'NisaGrowth'
                       OR CustodyType LIKE '%成長投資%'
                       OR AccountType LIKE '%成長投資%'

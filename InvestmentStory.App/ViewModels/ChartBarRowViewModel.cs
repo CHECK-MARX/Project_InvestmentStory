@@ -11,6 +11,7 @@ public sealed class ChartBarRowViewModel
     {
         Label = aggregate.Label;
         AmountJpy = Formatters.Jpy(aggregate.AmountJpy);
+        ToolTip = $"X: {Label}\nY: {AmountJpy}";
         BarWidth = CalculateBarWidth(aggregate.AmountJpy, maxAmountJpy);
     }
 
@@ -18,11 +19,13 @@ public sealed class ChartBarRowViewModel
     {
         Label = label;
         AmountJpy = signed ? Formatters.SignedJpy(amountJpy) : Formatters.Jpy(amountJpy);
+        ToolTip = $"X: {Label}\nY: {AmountJpy}";
         BarWidth = CalculateBarWidth(Math.Abs(amountJpy), maxAmountJpy);
     }
 
     public string Label { get; }
     public string AmountJpy { get; }
+    public string ToolTip { get; }
     public double BarWidth { get; }
 
     private static double CalculateBarWidth(decimal amountJpy, decimal maxAmountJpy)

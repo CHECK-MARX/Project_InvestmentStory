@@ -478,7 +478,12 @@ public sealed class InvestmentStoryRepository
             MutualFundSimulationExpectedAnnualReturnRate = GetDecimalSetting(values, nameof(AppSettings.MutualFundSimulationExpectedAnnualReturnRate), 5m),
             MutualFundSimulationTargetAmountJpy = GetDecimalSetting(values, nameof(AppSettings.MutualFundSimulationTargetAmountJpy), 20_000_000m),
             MutualFundSimulationProjectionYears = GetIntSetting(values, nameof(AppSettings.MutualFundSimulationProjectionYears), 20),
-            MutualFundSimulationTargetYears = GetIntSetting(values, nameof(AppSettings.MutualFundSimulationTargetYears), 20)
+            MutualFundSimulationTargetYears = GetIntSetting(values, nameof(AppSettings.MutualFundSimulationTargetYears), 20),
+            DividendSimulationPlanName = GetSetting(values, nameof(AppSettings.DividendSimulationPlanName), "Default"),
+            DividendSimulationDisplayMode = GetSetting(values, nameof(AppSettings.DividendSimulationDisplayMode), DividendGrowthDisplayModes.AggregateBySecurity),
+            DividendSimulationTargetAnnualDividendJpy = GetDecimalSetting(values, nameof(AppSettings.DividendSimulationTargetAnnualDividendJpy), 1_200_000m),
+            DividendSimulationProjectionYears = GetIntSetting(values, nameof(AppSettings.DividendSimulationProjectionYears), 10),
+            DividendSimulationPlanJson = GetSetting(values, nameof(AppSettings.DividendSimulationPlanJson), string.Empty)
         };
     }
 
@@ -511,6 +516,11 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationTargetAmountJpy), settings.MutualFundSimulationTargetAmountJpy.ToString(CultureInfo.InvariantCulture));
         UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationProjectionYears), settings.MutualFundSimulationProjectionYears.ToString(CultureInfo.InvariantCulture));
         UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationTargetYears), settings.MutualFundSimulationTargetYears.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.DividendSimulationPlanName), settings.DividendSimulationPlanName);
+        UpsertSetting(connection, transaction, nameof(AppSettings.DividendSimulationDisplayMode), settings.DividendSimulationDisplayMode);
+        UpsertSetting(connection, transaction, nameof(AppSettings.DividendSimulationTargetAnnualDividendJpy), settings.DividendSimulationTargetAnnualDividendJpy.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.DividendSimulationProjectionYears), settings.DividendSimulationProjectionYears.ToString(CultureInfo.InvariantCulture));
+        UpsertSetting(connection, transaction, nameof(AppSettings.DividendSimulationPlanJson), settings.DividendSimulationPlanJson);
         transaction.Commit();
     }
 

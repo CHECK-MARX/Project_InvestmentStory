@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
 
@@ -46,6 +47,10 @@ public sealed class PriceChartControl : FrameworkElement
         new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
     private INotifyCollectionChanged? _observedCollection;
+    private IReadOnlyList<PriceChartPointViewModel> _renderedPoints = Array.Empty<PriceChartPointViewModel>();
+    private Rect _renderedPriceRect;
+    private double _renderedStep;
+    private bool _hasRenderedChart;
 
     public IEnumerable? Points
     {
@@ -92,6 +97,7 @@ public sealed class PriceChartControl : FrameworkElement
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
+        _hasRenderedChart = false;
         var bounds = new Rect(0, 0, ActualWidth, ActualHeight);
         if (bounds.Width <= 10 || bounds.Height <= 10)
         {
@@ -125,6 +131,16 @@ public sealed class PriceChartControl : FrameworkElement
 
         var priceMin = points.Min(x => x.Low);
         var priceMax = points.Max(x => x.High);
+        var secondaryValues = points
+            .Select(x => x.SecondaryClose)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .ToList();
+        if (secondaryValues.Count > 0)
+        {
+            priceMin = Math.Min(priceMin, secondaryValues.Min());
+            priceMax = Math.Max(priceMax, secondaryValues.Max());
+        }
         if (CurrentPrice > 0m)
         {
             priceMin = Math.Min(priceMin, CurrentPrice);
@@ -144,6 +160,10 @@ public sealed class PriceChartControl : FrameworkElement
         var maxVolume = Math.Max(1d, (double)points.Max(x => x.Volume));
         var step = priceRect.Width / Math.Max(1, points.Count - 1);
         var candleWidth = Math.Max(2, Math.Min(10, step * 0.62));
+        _renderedPoints = points;
+        _renderedPriceRect = priceRect;
+        _renderedStep = step;
+        _hasRenderedChart = true;
 
         DrawGrid(drawingContext, priceRect, volumeRect, min, max, points, text, secondary, border);
         DrawReferenceLine(drawingContext, priceRect, min, max, AverageCost, "取得単価", Brush("AccentBlueBrush", Color.FromRgb(56, 189, 248)), dashed: false);
@@ -151,6 +171,12 @@ public sealed class PriceChartControl : FrameworkElement
         if (LineOnly)
         {
             DrawCloseLine(drawingContext, points, priceRect, min, max, step, Brush("AccentBlueBrush", Color.FromRgb(56, 189, 248)), 2.4);
+            if (secondaryValues.Count > 0)
+            {
+                DrawOptionalLine(drawingContext, points, priceRect, min, max, step, x => x.SecondaryClose, Brush("MutedTextBrush", Color.FromRgb(100, 116, 139)), 2.0);
+                DrawText(drawingContext, "積立継続", new Point(priceRect.Left + 8, priceRect.Top + 10), Brush("AccentBlueBrush", Color.FromRgb(56, 189, 248)), 12, FontWeights.SemiBold);
+                DrawText(drawingContext, "積立停止", new Point(priceRect.Left + 86, priceRect.Top + 10), Brush("MutedTextBrush", Color.FromRgb(100, 116, 139)), 12, FontWeights.SemiBold);
+            }
         }
         else
         {
@@ -160,6 +186,36 @@ public sealed class PriceChartControl : FrameworkElement
         DrawMovingAverage(drawingContext, points, priceRect, min, max, step, x => x.MovingAverage5, Brush("ProfitBrush", Color.FromRgb(34, 197, 94)), 2.0);
         DrawMovingAverage(drawingContext, points, priceRect, min, max, step, x => x.MovingAverage25, Brush("DividendBrush", Color.FromRgb(167, 139, 250)), 2.0);
         DrawHeader(drawingContext, points, bounds, text, secondary);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_hasRenderedChart || _renderedPoints.Count == 0 || _renderedStep <= 0d)
+        {
+            ToolTip = null;
+            return;
+        }
+
+        var point = e.GetPosition(this);
+        if (point.X < _renderedPriceRect.Left || point.X > _renderedPriceRect.Right)
+        {
+            ToolTip = null;
+            return;
+        }
+
+        var index = Math.Clamp(
+            (int)Math.Round((point.X - _renderedPriceRect.Left) / _renderedStep),
+            0,
+            _renderedPoints.Count - 1);
+        var chartPoint = _renderedPoints[index];
+        ToolTip = BuildToolTipText(chartPoint);
+    }
+
+    protected override void OnMouseLeave(MouseEventArgs e)
+    {
+        base.OnMouseLeave(e);
+        ToolTip = null;
     }
 
     private static void OnPointsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -333,6 +389,48 @@ public sealed class PriceChartControl : FrameworkElement
         dc.DrawGeometry(null, pen, geometry);
     }
 
+    private void DrawOptionalLine(
+        DrawingContext dc,
+        IReadOnlyList<PriceChartPointViewModel> points,
+        Rect rect,
+        double min,
+        double max,
+        double step,
+        Func<PriceChartPointViewModel, decimal?> selector,
+        Brush brush,
+        double thickness)
+    {
+        var pen = new Pen(brush, thickness);
+        var geometry = new StreamGeometry();
+        var hasFigure = false;
+        using (var context = geometry.Open())
+        {
+            for (var i = 0; i < points.Count; i++)
+            {
+                var value = selector(points[i]);
+                if (!value.HasValue)
+                {
+                    hasFigure = false;
+                    continue;
+                }
+
+                var point = new Point(rect.Left + step * i, MapY((double)value.Value, rect, min, max));
+                if (!hasFigure)
+                {
+                    context.BeginFigure(point, isFilled: false, isClosed: false);
+                    hasFigure = true;
+                }
+                else
+                {
+                    context.LineTo(point, isStroked: true, isSmoothJoin: true);
+                }
+            }
+        }
+
+        geometry.Freeze();
+        dc.DrawGeometry(null, pen, geometry);
+    }
+
     private void DrawMovingAverage(
         DrawingContext dc,
         IReadOnlyList<PriceChartPointViewModel> points,
@@ -394,12 +492,18 @@ public sealed class PriceChartControl : FrameworkElement
     private void DrawText(DrawingContext dc, string value, Point point, Brush brush, double size) =>
         dc.DrawText(CreateText(value, brush, size), point);
 
+    private void DrawText(DrawingContext dc, string value, Point point, Brush brush, double size, FontWeight weight) =>
+        dc.DrawText(CreateText(value, brush, size, weight), point);
+
     private FormattedText CreateText(string value, Brush brush, double size) =>
+        CreateText(value, brush, size, FontWeights.Normal);
+
+    private FormattedText CreateText(string value, Brush brush, double size, FontWeight weight) =>
         new(
             value,
             CultureInfo.GetCultureInfo("ja-JP"),
             FlowDirection.LeftToRight,
-            new Typeface("Yu Gothic UI"),
+            new Typeface(new FontFamily("Yu Gothic UI"), FontStyles.Normal, weight, FontStretches.Normal),
             size,
             brush,
             VisualTreeHelper.GetDpi(this).PixelsPerDip);
@@ -412,5 +516,27 @@ public sealed class PriceChartControl : FrameworkElement
         }
 
         return $"${value:N2}";
+    }
+
+    private string BuildToolTipText(PriceChartPointViewModel point)
+    {
+        if (!string.IsNullOrWhiteSpace(point.ToolTipText))
+        {
+            return point.ToolTipText;
+        }
+
+        if (LineOnly)
+        {
+            return $"X: {point.Date:yyyy/MM/dd}\nY: {FormatPrice(point.Close)}";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            $"X: {point.Date:yyyy/MM/dd}",
+            $"始値: {FormatPrice(point.Open)}",
+            $"高値: {FormatPrice(point.High)}",
+            $"安値: {FormatPrice(point.Low)}",
+            $"終値: {FormatPrice(point.Close)}",
+            $"出来高: {point.Volume:N0}");
     }
 }

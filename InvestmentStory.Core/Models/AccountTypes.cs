@@ -23,6 +23,6 @@ public static class AccountTypes
             NisaLegacy => "旧NISA",
             Specific => "特定口座",
             General => "一般口座",
-            _ => "口座区分未確認"
+            _ => "その他"
         };
 }

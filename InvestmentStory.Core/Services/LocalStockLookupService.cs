@@ -119,6 +119,21 @@ public sealed class LocalStockLookupService : IStockLookupService
             "日本たばこ",
             "Japan Tobacco");
 
+        Add(entries, new StockLookupResult(
+            "PG",
+            "Procter & Gamble Co.",
+            "米国",
+            "USD",
+            "NYSE",
+            "内蔵銘柄マスター",
+            CurrentPrice: 160m,
+            AnnualDividendPerShare: 4.24m,
+            DividendFrequency: "年4回"),
+            "Procter & Gamble",
+            "P&G",
+            "プロクター",
+            "プロクター アンド ギャンブル");
+
         Add(entries, new StockLookupResult("NVDA", "NVIDIA", "米国", "USD", "NASDAQ", "内蔵銘柄マスター", 196m, 1m),
             "NVIDIA",
             "エヌビディア");

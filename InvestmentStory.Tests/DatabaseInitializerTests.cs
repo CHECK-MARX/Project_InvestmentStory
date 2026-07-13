@@ -270,6 +270,56 @@ public sealed class DatabaseInitializerTests
     }
 
     [Fact]
+    public void Initialize_ReclassifiesOldAccumulationNisaMutualFundAsLegacyNisa()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"investment_story_legacy_nisa_repair_{Guid.NewGuid():N}.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+
+            using (var connection = Open(path))
+            {
+                InsertMutualFund(
+                    connection,
+                    canonicalKey: "FUND:JP:FUND:SBIVSP500:LEGACY",
+                    currentNav: 40_579,
+                    marketValue: 1_001_546,
+                    unrealizedGainLoss: 534_871,
+                    accountType: AccountTypes.NisaAccumulation,
+                    custodyType: "投資信託（金額/旧つみたてNISA預り）");
+            }
+
+            new DatabaseInitializer().Initialize(path);
+
+            using (var connection = Open(path))
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT s.AccountType, mf.AccountType
+                    FROM Stocks s
+                    JOIN MutualFundHoldings mf ON mf.StockId = s.Id
+                    WHERE s.CustodyType = '投資信託（金額/旧つみたてNISA預り）'
+                    LIMIT 1;
+                    """;
+
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal(AccountTypes.NisaLegacy, reader.GetString(0));
+                Assert.Equal(AccountTypes.NisaLegacy, reader.GetString(1));
+            }
+        }
+        finally
+        {
+            foreach (var file in Directory.GetFiles(
+                Path.GetDirectoryName(path)!,
+                $"{Path.GetFileNameWithoutExtension(path)}*{Path.GetExtension(path)}"))
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
     public void Initialize_NormalizesExistingZeroPriceInboundSplitCandidate()
     {
         var path = Path.Combine(Path.GetTempPath(), $"investment_story_split_repair_{Guid.NewGuid():N}.db");

@@ -25,4 +25,9 @@ public sealed class AppSettings
     public decimal MutualFundSimulationTargetAmountJpy { get; set; } = 20_000_000m;
     public int MutualFundSimulationProjectionYears { get; set; } = 20;
     public int MutualFundSimulationTargetYears { get; set; } = 20;
+    public string DividendSimulationPlanName { get; set; } = "Default";
+    public string DividendSimulationDisplayMode { get; set; } = DividendGrowthDisplayModes.AggregateBySecurity;
+    public decimal DividendSimulationTargetAnnualDividendJpy { get; set; } = 1_200_000m;
+    public int DividendSimulationProjectionYears { get; set; } = 10;
+    public string DividendSimulationPlanJson { get; set; } = string.Empty;
 }

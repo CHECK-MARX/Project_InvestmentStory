@@ -13,6 +13,7 @@ public sealed class FxSensitivityRowViewModel
         UsdJpyRate = $"{point.UsdJpyRate:N2}";
         TotalMarketValue = Formatters.Jpy(point.TotalMarketValueJpy);
         ChangeFromCurrent = Formatters.SignedJpy(point.ChangeFromCurrentJpy);
+        ToolTip = $"X: USD/JPY {UsdJpyRate} ({RateDelta})\nY: {ChangeFromCurrent}\n総資産: {TotalMarketValue}";
         BarWidth = maxChange <= 0m
             ? 0d
             : Math.Max(8d, (double)(Math.Abs(point.ChangeFromCurrentJpy) / maxChange) * MaxBarWidth);
@@ -23,6 +24,7 @@ public sealed class FxSensitivityRowViewModel
     public string UsdJpyRate { get; }
     public string TotalMarketValue { get; }
     public string ChangeFromCurrent { get; }
+    public string ToolTip { get; }
     public double BarWidth { get; }
     public bool IsPositive { get; }
 }

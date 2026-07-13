@@ -80,7 +80,7 @@
                     </DockPanel>
 
                     <TextBlock Text="ホーム" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
-                    <Button Command="{Binding ShowDashboardCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="ダッシュボード">
+                    <Button Command="{Binding ShowDashboardCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="ダッシュボード">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="H" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="ダッシュボード" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
@@ -88,13 +88,13 @@
                     </Button>
 
                     <TextBlock Text="ポートフォリオ" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
-                    <Button Command="{Binding ShowStockListCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="銘柄一覧">
+                    <Button Command="{Binding ShowStockListCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="銘柄一覧">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="P" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="銘柄一覧" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
                         </StackPanel>
                     </Button>
-                    <Button Command="{Binding ShowStockDetailCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="銘柄分析">
+                    <Button Command="{Binding ShowStockDetailCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="銘柄分析">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="A" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="銘柄分析" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
@@ -102,13 +102,13 @@
                     </Button>
 
                     <TextBlock Text="インカム" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
-                    <Button Command="{Binding ShowDividendsCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="配当実績・予定">
+                    <Button Command="{Binding ShowDividendsCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="配当実績・予定">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="D" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="配当実績・予定" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
                         </StackPanel>
                     </Button>
-                    <Button Command="{Binding ShowPassiveIncomeCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="不労所得">
+                    <Button Command="{Binding ShowPassiveIncomeCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="不労所得">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="I" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="不労所得" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
@@ -116,7 +116,7 @@
                     </Button>
 
                     <TextBlock Text="分析" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
-                    <Button Command="{Binding ShowSimulationCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="未来シミュレーション">
+                    <Button Command="{Binding ShowSimulationCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="未来シミュレーション">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="S" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="未来シミュレーション" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
@@ -124,13 +124,13 @@
                     </Button>
 
                     <TextBlock Text="データ" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
-                    <Button Command="{Binding ShowCsvImportCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="CSV取込">
+                    <Button Command="{Binding ShowCsvImportCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="CSV取込">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="C" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="CSV取込" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
                         </StackPanel>
                     </Button>
-                    <Button Command="{Binding ShowBrokerIntegrationCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="取込・統合設定">
+                    <Button Command="{Binding ShowBrokerIntegrationCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="取込・統合設定">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="M" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="取込・統合設定" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
@@ -138,7 +138,7 @@
                     </Button>
 
                     <TextBlock Text="設定" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
-                    <Button Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButtonStyle}" ToolTip="設定">
+                    <Button Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="設定">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="G" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="設定" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />

@@ -40,8 +40,7 @@ public static class AccountTypeNormalizer
             return AccountTypes.General;
         }
 
-        if (normalized.Contains("旧NISA", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Contains("旧ニーサ", StringComparison.OrdinalIgnoreCase))
+        if (IsLegacyNisaLabel(normalized))
         {
             return AccountTypes.NisaLegacy;
         }
@@ -72,6 +71,13 @@ public static class AccountTypeNormalizer
 
         return AccountTypes.Unknown;
     }
+
+    private static bool IsLegacyNisaLabel(string normalized) =>
+        normalized.Contains("旧NISA", StringComparison.OrdinalIgnoreCase) ||
+        normalized.Contains("旧ニーサ", StringComparison.OrdinalIgnoreCase) ||
+        (normalized.Contains("旧", StringComparison.Ordinal) &&
+            (normalized.Contains("NISA", StringComparison.OrdinalIgnoreCase) ||
+             normalized.Contains("ニーサ", StringComparison.OrdinalIgnoreCase)));
 
     public static string NormalizeForMutualFund(string accountType, string custodyType)
     {

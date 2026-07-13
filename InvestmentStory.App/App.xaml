@@ -14,6 +14,7 @@
                 <ResourceDictionary Source="Styles/InputStyles.xaml" />
                 <ResourceDictionary Source="Styles/BadgeStyles.xaml" />
                 <ResourceDictionary Source="Styles/ChartStyles.xaml" />
+                <ResourceDictionary Source="Styles/ToolTipStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>
