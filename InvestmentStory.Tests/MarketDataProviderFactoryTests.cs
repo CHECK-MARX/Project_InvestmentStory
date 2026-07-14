@@ -63,6 +63,35 @@ public sealed class MarketDataProviderFactoryTests
         Assert.Equal("J-Quants", result.Quote?.Source);
     }
 
+    [Fact]
+    public void GetQuote_UsesYahooForUsTickerWhenUsProviderIsYahoo()
+    {
+        var fallback = new RecordingMarketDataService(MarketDataResult.Success(new MarketDataQuote
+        {
+            Symbol = "PG",
+            CurrentPrice = 150m,
+            Source = "Yahoo Finance"
+        }));
+        var us = new RecordingUsMarketDataService(MarketDataResult.Failure("Alpha Vantage should not be called."));
+        var factory = new MarketDataProviderFactory(
+            new RecordingMarketDataService(MarketDataResult.Failure("Mock should not be called.")),
+            fallback,
+            us,
+            new RecordingJapanMarketDataService(MarketDataResult.Failure("Japan should not be called.")));
+
+        var result = factory.GetQuote("PG", new AppSettings
+        {
+            MarketDataMode = "Web/API",
+            UsMarketDataProvider = "Yahoo Finance"
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, fallback.CallCount);
+        Assert.Equal(0, us.CallCount);
+        Assert.Equal("Yahoo Finance", result.Quote?.Source);
+        Assert.Equal(150m, result.Quote?.CurrentPrice);
+    }
+
     private sealed class RecordingMarketDataService : IMarketDataService
     {
         private readonly MarketDataResult _result;
@@ -90,7 +119,13 @@ public sealed class MarketDataProviderFactoryTests
             _result = result;
         }
 
-        public MarketDataResult GetUsQuote(string symbol, AppSettings settings) => _result;
+        public int CallCount { get; private set; }
+
+        public MarketDataResult GetUsQuote(string symbol, AppSettings settings)
+        {
+            CallCount++;
+            return _result;
+        }
     }
 
     private sealed class RecordingJapanMarketDataService : IJapanMarketDataService

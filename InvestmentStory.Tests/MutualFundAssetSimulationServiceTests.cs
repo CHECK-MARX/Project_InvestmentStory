@@ -559,6 +559,68 @@ public sealed class MutualFundAssetSimulationServiceTests
     }
 
     [Fact]
+    public void Simulate_CalculatesActualAnnualizedReturnBySimpleAggregateFallback()
+    {
+        var purchaseDate = DateTime.Today.AddYears(-3);
+        var positions = new[]
+        {
+            CreateFundPosition(
+                1,
+                AccountTypes.Specific,
+                unitsHeld: 10000m,
+                averageCostNav: 10000m,
+                currentNav: 15896m,
+                acquisitionAmount: 1_000_000m,
+                marketValue: 1_589_600m,
+                purchaseDate: purchaseDate)
+        };
+
+        var result = _service.Simulate(positions, MutualFundSimulationScopeKeys.AllAccounts, CreateInput());
+
+        Assert.NotNull(result.Summary.ActualAnnualizedReturnEstimate);
+        Assert.Equal("簡易年率換算", result.Summary.ActualAnnualizedReturnEstimate.Method);
+        Assert.Equal("参考値", result.Summary.ActualAnnualizedReturnEstimate.Precision);
+        Assert.Equal(purchaseDate.Date, result.Summary.ActualAnnualizedReturnEstimate.PeriodStart);
+        Assert.Equal(DateTime.Today, result.Summary.ActualAnnualizedReturnEstimate.PeriodEnd);
+        Assert.InRange(result.Summary.ActualAnnualizedReturnRate!.Value, 16m, 18m);
+        Assert.NotEqual(result.Summary.UnrealizedGainRate, result.Summary.ActualAnnualizedReturnRate.Value);
+    }
+
+    [Fact]
+    public void SimulateScenarios_EnablesActualReferenceWhenSimpleAnnualizedReturnIsAvailable()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(
+                1,
+                AccountTypes.Specific,
+                unitsHeld: 10000m,
+                averageCostNav: 1000m,
+                currentNav: 1210m,
+                purchaseDate: DateTime.Today.AddYears(-2))
+        };
+        var summary = _service.Simulate(positions, MutualFundSimulationScopeKeys.AllAccounts, CreateInput()).Summary;
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 5_000m, projectionYears: 1);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, new[]
+        {
+            new MutualFundScenarioInput
+            {
+                Key = "Actual",
+                Name = "実績参考",
+                AnnualReturnRate = summary.ActualAnnualizedReturnRate,
+                IsEnabled = summary.ActualAnnualizedReturnRate is not null,
+                Basis = summary.ActualAnnualizedReturnEstimate?.Method ?? "算出不可"
+            }
+        });
+
+        var actual = AssertScenario(result, "Actual");
+        Assert.True(actual.IsAvailable);
+        Assert.Equal("簡易年率換算", actual.Basis);
+        Assert.NotEmpty(actual.Projections);
+    }
+
+    [Fact]
     public void Simulate_UsesProvidedPositionsOnlyForDatabaseModeSeparation()
     {
         var normalPositions = new[]
@@ -575,6 +637,219 @@ public sealed class MutualFundAssetSimulationServiceTests
 
         Assert.Equal(1000m, normalResult.Summary.CurrentMarketValueJpy);
         Assert.Equal(2000m, sampleResult.Summary.CurrentMarketValueJpy);
+    }
+
+    [Fact]
+    public void SimulateScenarios_CalculatesThreeDefaultAnnualRatesWithMonthlyCompounding()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 10_000m, projectionYears: 1);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, CreateDefaultScenarios());
+
+        var conservative = AssertScenario(result, "Conservative");
+        var standard = AssertScenario(result, "Standard");
+        var aggressive = AssertScenario(result, "Aggressive");
+        Assert.Equal(ProjectMonthly(1000m, 100m, 3m, 12), conservative.FinalMarketValueJpy);
+        Assert.Equal(ProjectMonthly(1000m, 100m, 5m, 12), standard.FinalMarketValueJpy);
+        Assert.Equal(ProjectMonthly(1000m, 100m, 7m, 12), aggressive.FinalMarketValueJpy);
+        Assert.True(conservative.FinalMarketValueJpy < standard.FinalMarketValueJpy);
+        Assert.True(standard.FinalMarketValueJpy < aggressive.FinalMarketValueJpy);
+    }
+
+    [Fact]
+    public void SimulateScenarios_AllowsZeroContributionZeroRateAndNegativeRate()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var scenarios = new[]
+        {
+            new MutualFundScenarioInput { Key = "Zero", Name = "Zero", AnnualReturnRate = 0m, IsEnabled = true },
+            new MutualFundScenarioInput { Key = "Negative", Name = "Negative", AnnualReturnRate = -5m, IsEnabled = true }
+        };
+        var input = CreateInput(monthlyContribution: 0m, targetAmount: 2_000m, projectionYears: 1);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, scenarios);
+
+        Assert.Equal(1000m, AssertScenario(result, "Zero").FinalMarketValueJpy);
+        Assert.True(AssertScenario(result, "Negative").FinalMarketValueJpy < 1000m);
+    }
+
+    [Fact]
+    public void SimulateScenarios_ReturnsTargetMonthAndPeriod()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 1_300m, projectionYears: 1, startYear: 2026, startMonth: 7);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, new[]
+        {
+            new MutualFundScenarioInput { Key = "Zero", Name = "Zero", AnnualReturnRate = 0m, IsEnabled = true }
+        });
+
+        var scenario = AssertScenario(result, "Zero");
+        Assert.Equal(new DateTime(2026, 10, 1), scenario.TargetAchievementMonth);
+        Assert.Equal(3, scenario.MonthsToTarget);
+        Assert.True(scenario.ReachesTargetWithinProjection);
+    }
+
+    [Fact]
+    public void SimulateScenarios_ShowsNotReachedWithinProjectionButKeepsLongTermReference()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 5_000m, projectionYears: 1, startYear: 2026, startMonth: 7);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, new[]
+        {
+            new MutualFundScenarioInput { Key = "Zero", Name = "Zero", AnnualReturnRate = 0m, IsEnabled = true }
+        });
+
+        var scenario = AssertScenario(result, "Zero");
+        Assert.False(scenario.ReachesTargetWithinProjection);
+        Assert.Equal(new DateTime(2029, 11, 1), scenario.TargetAchievementMonth);
+        Assert.Equal(40, scenario.MonthsToTarget);
+    }
+
+    [Fact]
+    public void SimulateScenarios_CurrentValueAlreadyReachesTarget()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(monthlyContribution: 0m, targetAmount: 900m, projectionYears: 1, startYear: 2026, startMonth: 7);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, new[]
+        {
+            new MutualFundScenarioInput { Key = "Zero", Name = "Zero", AnnualReturnRate = 0m, IsEnabled = true }
+        });
+
+        var scenario = AssertScenario(result, "Zero");
+        Assert.Equal(new DateTime(2026, 7, 1), scenario.TargetAchievementMonth);
+        Assert.Equal(0, scenario.MonthsToTarget);
+        Assert.Equal(0m, scenario.CumulativeContributionAtTargetJpy);
+    }
+
+    [Fact]
+    public void SimulateScenarios_DisablesActualReferenceWhenAnnualizedReturnIsUnavailable()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1200m)
+        };
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 2_000m, projectionYears: 1);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, new[]
+        {
+            new MutualFundScenarioInput { Key = "Conservative", Name = "Conservative", AnnualReturnRate = 3m, IsEnabled = true },
+            new MutualFundScenarioInput
+            {
+                Key = "Actual",
+                Name = "Actual",
+                AnnualReturnRate = null,
+                IsEnabled = false,
+                Basis = "Unavailable",
+                UnavailableReason = "Missing history"
+            }
+        });
+
+        Assert.Null(result.Summary.ActualAnnualizedReturnRate);
+        Assert.True(AssertScenario(result, "Conservative").IsAvailable);
+        var actual = AssertScenario(result, "Actual");
+        Assert.False(actual.IsAvailable);
+        Assert.Empty(actual.Projections);
+        Assert.DoesNotContain(result.MonthlyComparisons, row => row.ScenarioValues.ContainsKey("Actual"));
+    }
+
+    [Fact]
+    public void SimulateScenarios_AppliesContributionToAccumulationNisaButNotLegacyNisa()
+    {
+        var positions = CreateSbiSp500Positions();
+        var input = CreateInput(monthlyContribution: 40_000m, targetAmount: 20_000_000m, projectionYears: 1);
+        var scenario = new[]
+        {
+            new MutualFundScenarioInput { Key = "Standard", Name = "Standard", AnnualReturnRate = 5m, IsEnabled = true }
+        };
+
+        var all = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, scenario);
+        var legacy = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.Account(AccountTypes.NisaLegacy), input, scenario);
+        var accumulation = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.Account(AccountTypes.NisaAccumulation), input, scenario);
+
+        Assert.Equal(2_670_633m, all.Summary.CurrentMarketValueJpy);
+        Assert.Contains(all.AccountBreakdowns, x => x.AccountType == AccountTypes.NisaLegacy && x.MonthlyContributionJpy == 0m);
+        Assert.Contains(all.AccountBreakdowns, x => x.AccountType == AccountTypes.NisaAccumulation && x.MonthlyContributionJpy == 40_000m);
+        Assert.Equal(0m, legacy.Summary.EffectiveMonthlyContributionJpy);
+        Assert.Equal(40_000m, accumulation.Summary.EffectiveMonthlyContributionJpy);
+    }
+
+    [Fact]
+    public void SimulateScenarios_UsesSameValuesForComparisonRowsGraphAndMonthlyTable()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 3_000m, projectionYears: 2);
+
+        var result = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, CreateDefaultScenarios());
+
+        foreach (var scenario in result.Scenarios.Where(x => x.IsAvailable))
+        {
+            Assert.Equal(scenario.FinalMarketValueJpy, scenario.Projections[^1].MarketValueJpy);
+            Assert.Equal(scenario.FinalMarketValueJpy, result.MonthlyComparisons[^1].ScenarioValues[scenario.Key].MarketValueJpy);
+            Assert.Equal(scenario.Projections[5].MarketValueJpy, result.MonthlyComparisons[5].ScenarioValues[scenario.Key].MarketValueJpy);
+        }
+    }
+
+    [Fact]
+    public void SimulateScenarios_IsDeterministicForSameInput()
+    {
+        var positions = CreateSbiSp500Positions();
+        var input = CreateInput(monthlyContribution: 40_000m, targetAmount: 20_000_000m, projectionYears: 20);
+        var scenarios = CreateDefaultScenarios();
+
+        var first = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, scenarios);
+        var second = _service.SimulateScenarios(positions, MutualFundSimulationScopeKeys.AllAccounts, input, scenarios);
+
+        Assert.Equal(first.Summary.CurrentMarketValueJpy, second.Summary.CurrentMarketValueJpy);
+        Assert.Equal(first.Scenarios.Select(x => x.FinalMarketValueJpy), second.Scenarios.Select(x => x.FinalMarketValueJpy));
+        Assert.Equal(first.MonthlyComparisons.Select(x => x.ScenarioValues["Standard"].MarketValueJpy),
+            second.MonthlyComparisons.Select(x => x.ScenarioValues["Standard"].MarketValueJpy));
+    }
+
+    private static MutualFundScenarioResult AssertScenario(MutualFundScenarioComparisonResult result, string key)
+    {
+        var scenario = Assert.Single(result.Scenarios, x => string.Equals(x.Key, key, StringComparison.OrdinalIgnoreCase));
+        return scenario;
+    }
+
+    private static MutualFundScenarioInput[] CreateDefaultScenarios() =>
+    [
+        new() { Key = "Conservative", Name = "Conservative", AnnualReturnRate = 3m, IsEnabled = true },
+        new() { Key = "Standard", Name = "Standard", AnnualReturnRate = 5m, IsEnabled = true },
+        new() { Key = "Aggressive", Name = "Aggressive", AnnualReturnRate = 7m, IsEnabled = true }
+    ];
+
+    private static decimal ProjectMonthly(decimal currentValue, decimal monthlyContribution, decimal annualRatePercent, int months)
+    {
+        var monthlyRate = (decimal)(Math.Pow((double)(1m + annualRatePercent / 100m), 1d / 12d) - 1d);
+        var value = currentValue;
+        for (var month = 0; month < months; month++)
+        {
+            value = value * (1m + monthlyRate) + monthlyContribution;
+        }
+
+        return Math.Round(value, 0, MidpointRounding.AwayFromZero);
     }
 
     private static StockPosition[] CreateSbiSp500Positions() =>

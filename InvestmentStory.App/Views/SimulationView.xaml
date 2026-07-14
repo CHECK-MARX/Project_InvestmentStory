@@ -366,10 +366,31 @@
                                                         <TextBlock Text="{Binding MarketDataFetchStatus}"
                                                                    VerticalAlignment="Center"
                                                                    MinWidth="150"
-                                                                   ToolTip="{Binding InputError}" />
+                                                                   ToolTip="{Binding InputError}">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding MarketDataFetchState}" Value="Success">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource ProfitBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding MarketDataFetchState}" Value="Partial">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding MarketDataFetchState}" Value="Failed">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource LossBrush}" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding MarketDataFetchState}" Value="Fetching">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBlueBrush}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
                                                         <Button Content="取得"
                                                                 Command="{Binding DataContext.FetchNewDividendStockCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                                 CommandParameter="{Binding}"
+                                                                Click="FetchNewDividendStockButton_Click"
                                                                 IsEnabled="{Binding CanFetchMarketData}"
                                                                 Style="{StaticResource SecondaryButtonStyle}"
                                                                 Width="70"
@@ -472,6 +493,10 @@
                                         <StackPanel>
                                             <TextBlock Text="実績年利" Style="{StaticResource LabelTextStyle}" />
                                             <TextBlock Text="{Binding ActualAnnualizedReturn}" Style="{StaticResource MetricValueTextStyle}" />
+                                            <TextBlock Text="{Binding ActualAnnualizedReturnMethod, StringFormat=算出方法: {0}}" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ActualAnnualizedReturnPeriod, StringFormat=対象期間: {0}}" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ActualAnnualizedReturnPrecision, StringFormat=精度: {0}}" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ActualAnnualizedReturnNote}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Border>
                                     <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,10,0">
@@ -510,7 +535,7 @@
                         <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
                             <StackPanel>
                                 <TextBlock Text="試算条件" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
-                                <UniformGrid Columns="5" Margin="0,0,0,12">
+                                <UniformGrid Columns="3" Margin="0,0,0,12">
                                     <StackPanel Margin="0,0,12,0">
                                         <TextBlock Text="毎月積立額" Style="{StaticResource LabelTextStyle}" />
                                         <TextBox Text="{Binding MonthlyContributionInput, UpdateSourceTrigger=PropertyChanged}"
@@ -518,16 +543,8 @@
                                                  Style="{StaticResource InputTextBoxStyle}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Text="将来想定年利(%)" Style="{StaticResource LabelTextStyle}" />
-                                        <TextBox Text="{Binding ExpectedAnnualReturnRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,12,0">
                                         <TextBlock Text="目標金額" Style="{StaticResource LabelTextStyle}" />
                                         <TextBox Text="{Binding TargetAmountJpy, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Text="目標達成年数" Style="{StaticResource LabelTextStyle}" />
-                                        <TextBox Text="{Binding TargetYears, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,12,0">
                                         <TextBlock Text="試算期間（年）" Style="{StaticResource LabelTextStyle}" />
@@ -563,76 +580,91 @@
                             </StackPanel>
                         </Border>
 
-                        <UniformGrid Columns="4" Margin="0,0,0,16">
-                            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,10,0">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding ProjectionAssetLabel}" Style="{StaticResource LabelTextStyle}" />
-                                    <TextBlock Text="{Binding FinalAssetAmount}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource AccentBlueBrush}" />
-                                </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,10,0">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding TargetAchievementLabel}" Style="{StaticResource LabelTextStyle}" />
-                                    <TextBlock Text="{Binding TargetAchievementMonth}" Style="{StaticResource MetricValueTextStyle}" />
-                                    <TextBlock Text="{Binding RemainingPeriod}" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,10,0">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding RequiredMonthlyContributionLabel}" Style="{StaticResource LabelTextStyle}" />
-                                    <TextBlock Text="{Binding RequiredMonthlyContribution}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource DividendBrush}" />
-                                    <TextBlock Text="{Binding AdditionalMonthlyContributionLabel}" Style="{StaticResource LabelTextStyle}" Margin="0,10,0,0" />
-                                    <TextBlock Text="{Binding AdditionalMonthlyContributionNeeded}" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" />
-                                    <TextBlock Text="{Binding RequiredMonthlyContributionDetail}" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
-                                </StackPanel>
-                            </Border>
-                            <Border Style="{StaticResource MetricCardStyle}">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding StopContributionFinalAssetLabel}" Style="{StaticResource LabelTextStyle}" />
-                                    <TextBlock Text="{Binding StopContributionFinalAsset}" Style="{StaticResource MetricValueTextStyle}" />
-                                </StackPanel>
-                            </Border>
-                        </UniformGrid>
-
                         <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
                             <StackPanel>
-                                <TextBlock Text="資産推移グラフ（積立継続 / 積立停止）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
-                                <controls:PriceChartControl Height="360"
-                                                            Points="{Binding TrendPoints}"
-                                                            CurrentPrice="0"
-                                                            AverageCost="0"
-                                                            Currency="JPY"
-                                                            LineOnly="True"
-                                                            StatusMessage="{Binding ChartStatus}" />
+                                <TextBlock Text="年利シナリオ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
+                                <DataGrid ItemsSource="{Binding ScenarioSettings}" AutoGenerateColumns="False" Height="165">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="有効" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                                        <DataGridTextColumn Header="シナリオ" Binding="{Binding Name}" Width="110" IsReadOnly="True" />
+                                        <DataGridTemplateColumn Header="年利(%)" Width="110">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBox Text="{Binding AnnualReturnRateInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             IsReadOnly="{Binding IsRateInputReadOnly}"
+                                                             Style="{StaticResource DataGridEditTextBoxStyle}"
+                                                             HorizontalContentAlignment="Right" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="根拠" Binding="{Binding BasisDisplay}" Width="190" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="補足" Binding="{Binding UnavailableReason}" Width="*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="警告" Binding="{Binding Warning}" Width="230" IsReadOnly="True" />
+                                        <DataGridTemplateColumn Header="操作" Width="110">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button Content="初期値に戻す"
+                                                            Command="{Binding ResetCommand}"
+                                                            Style="{StaticResource SecondaryButtonStyle}"
+                                                            Height="28" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
                             <StackPanel>
-                                <TextBlock Text="積立額比較" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
-                                <DataGrid ItemsSource="{Binding ContributionComparisons}" AutoGenerateColumns="False" Height="150">
+                                <TextBlock Text="4パターン比較結果" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
+                                <DataGrid ItemsSource="{Binding ScenarioComparisonRows}" AutoGenerateColumns="False" Height="190">
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="比較条件" Binding="{Binding Label}" Width="*" />
-                                        <DataGridTextColumn Header="毎月積立額" Binding="{Binding MonthlyContribution}" Width="180" />
-                                        <DataGridTextColumn Header="指定年数後の資産額" Binding="{Binding FinalMarketValue}" Width="220" />
+                                        <DataGridTextColumn Header="シナリオ" Binding="{Binding Scenario}" Width="100" />
+                                        <DataGridTextColumn Header="年利" Binding="{Binding AnnualReturnRate}" Width="80" />
+                                        <DataGridTextColumn Header="5年後資産額" Binding="{Binding FiveYearMarketValue}" Width="140" />
+                                        <DataGridTextColumn Header="10年後資産額" Binding="{Binding TenYearMarketValue}" Width="140" />
+                                        <DataGridTextColumn Header="指定年数後資産額" Binding="{Binding FinalMarketValue}" Width="160" />
+                                        <DataGridTextColumn Header="目標到達予定" Binding="{Binding TargetAchievement}" Width="130" />
+                                        <DataGridTextColumn Header="到達まで" Binding="{Binding PeriodToTarget}" Width="130" />
+                                        <DataGridTextColumn Header="累計積立額" Binding="{Binding CumulativeContribution}" Width="140" />
+                                        <DataGridTextColumn Header="運用益" Binding="{Binding InvestmentGain}" Width="130" />
+                                        <DataGridTextColumn Header="算出根拠" Binding="{Binding Basis}" Width="220" />
                                     </DataGrid.Columns>
                                 </DataGrid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="資産推移グラフ（4シナリオ比較）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
+                                <controls:ScenarioComparisonChartControl Height="380"
+                                                                         Series="{Binding ScenarioChartSeries}"
+                                                                         TargetAmount="{Binding TargetAmountJpy}"
+                                                                         StatusMessage="{Binding ChartStatus}" />
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource MetricCardStyle}">
                             <StackPanel>
                                 <TextBlock Text="年月別シミュレーション表" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
-                                <DataGrid ItemsSource="{Binding ProjectionRows}" AutoGenerateColumns="False" Height="360">
+                                <DataGrid ItemsSource="{Binding ScenarioMonthlyRows}" AutoGenerateColumns="False" Height="360">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="年月" Binding="{Binding YearMonth}" Width="90" />
                                         <DataGridTextColumn Header="経過" Binding="{Binding MonthsFromNow}" Width="90" />
-                                        <DataGridTextColumn Header="積立継続時資産額" Binding="{Binding MarketValue}" Width="170" />
-                                        <DataGridTextColumn Header="積立停止時" Binding="{Binding NoContributionMarketValue}" Width="150" />
-                                        <DataGridTextColumn Header="取得額" Binding="{Binding Cost}" Width="150" />
                                         <DataGridTextColumn Header="累計積立額" Binding="{Binding CumulativeContribution}" Width="150" />
-                                        <DataGridTextColumn Header="評価益" Binding="{Binding UnrealizedGain}" Width="150" />
-                                        <DataGridTextColumn Header="目標達成率" Binding="{Binding TargetAchievementRate}" Width="120" />
+                                        <DataGridTextColumn Header="保守的資産額" Binding="{Binding ConservativeMarketValue}" Width="140" />
+                                        <DataGridTextColumn Header="標準資産額" Binding="{Binding StandardMarketValue}" Width="140" />
+                                        <DataGridTextColumn Header="積極的資産額" Binding="{Binding AggressiveMarketValue}" Width="140" />
+                                        <DataGridTextColumn Header="実績参考資産額" Binding="{Binding ActualMarketValue}" Width="150" />
+                                        <DataGridTextColumn Header="保守的評価益" Binding="{Binding ConservativeGain}" Width="140" />
+                                        <DataGridTextColumn Header="標準評価益" Binding="{Binding StandardGain}" Width="140" />
+                                        <DataGridTextColumn Header="積極的評価益" Binding="{Binding AggressiveGain}" Width="140" />
+                                        <DataGridTextColumn Header="実績参考評価益" Binding="{Binding ActualGain}" Width="150" />
+                                        <DataGridTextColumn Header="保守的達成率" Binding="{Binding ConservativeAchievement}" Width="120" />
+                                        <DataGridTextColumn Header="標準達成率" Binding="{Binding StandardAchievement}" Width="120" />
+                                        <DataGridTextColumn Header="積極的達成率" Binding="{Binding AggressiveAchievement}" Width="120" />
+                                        <DataGridTextColumn Header="実績参考達成率" Binding="{Binding ActualAchievement}" Width="130" />
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </StackPanel>

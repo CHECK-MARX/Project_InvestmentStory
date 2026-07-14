@@ -45,6 +45,22 @@ public static class AccountTypeNormalizer
             return AccountTypes.NisaLegacy;
         }
 
+        if (normalized.Contains("NISA(つ)", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("NISA（つ）", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("NISA(縺､)", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("NISA（縺､）", StringComparison.OrdinalIgnoreCase))
+        {
+            return AccountTypes.NisaAccumulation;
+        }
+
+        if (normalized.Contains("NISA(成)", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("NISA（成）", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("NISA(域)", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("NISA（域）", StringComparison.OrdinalIgnoreCase))
+        {
+            return AccountTypes.NisaGrowth;
+        }
+
         if (normalized.Contains("つみたて", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains("積立", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains("NISAつみたて", StringComparison.OrdinalIgnoreCase))

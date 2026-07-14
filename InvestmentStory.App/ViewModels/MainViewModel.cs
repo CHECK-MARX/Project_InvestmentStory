@@ -98,7 +98,8 @@ public sealed class MainViewModel : ObservableObject
             () => _repository.GetSettings(),
             appSettings => _repository.SaveSettings(appSettings),
             _marketDataService,
-            _stockLookupService);
+            _stockLookupService,
+            _fundMarketDataService);
         CsvImport = new CsvImportViewModel(
             () => _repository.GetPositions(),
             position => _repository.SavePosition(position),
@@ -288,7 +289,7 @@ public sealed class MainViewModel : ObservableObject
         Dividends.Update(positions, dividends);
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
-        Simulation.UpdateMutualFundPortfolio(positions);
+        Simulation.UpdateMutualFundPortfolio(positions, _repository.GetAllBrokerTrades());
         Simulation.UpdateDividendPortfolio(positions, _repository.GetTaxProfiles());
         BrokerIntegration.Update(positions, _repository.GetSettings());
 

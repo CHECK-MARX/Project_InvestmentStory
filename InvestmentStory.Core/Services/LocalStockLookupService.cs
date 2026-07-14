@@ -82,6 +82,18 @@ public sealed class LocalStockLookupService : IStockLookupService
             "おーいお茶");
 
         Add(entries, new StockLookupResult(
+            "4912",
+            "ライオン",
+            "日本",
+            "JPY",
+            "東証プライム",
+            "内蔵銘柄マスター"),
+            "4912.T",
+            "ライオン",
+            "Lion",
+            "Lion Corporation");
+
+        Add(entries, new StockLookupResult(
             "3132",
             "マクニカホールディングス",
             "日本",

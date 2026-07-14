@@ -10,6 +10,7 @@ public sealed class StockLookupServiceTests
     [InlineData("KO", "KO", "The Coca-Cola Company", "米国", "USD")]
     [InlineData("PEP", "PEP", "PepsiCo, Inc.", "米国", "USD")]
     [InlineData("伊藤園", "2593", "伊藤園", "日本", "JPY")]
+    [InlineData("ライオン", "4912", "ライオン", "日本", "JPY")]
     [InlineData("マクニカホールディングス", "3132", "マクニカホールディングス", "日本", "JPY")]
     public void LocalStockLookupService_FindsKnownStocks(
         string query,

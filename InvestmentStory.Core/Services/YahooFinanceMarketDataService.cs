@@ -7,6 +7,17 @@ namespace InvestmentStory.Core.Services;
 public sealed class YahooFinanceMarketDataService : IMarketDataService
 {
     private const string ProviderName = "Yahoo Finance";
+    private readonly Func<int, HttpClient> _httpClientFactory;
+
+    public YahooFinanceMarketDataService()
+        : this(CreateDefaultHttpClient)
+    {
+    }
+
+    public YahooFinanceMarketDataService(Func<int, HttpClient> httpClientFactory)
+    {
+        _httpClientFactory = httpClientFactory;
+    }
 
     public MarketDataResult GetQuote(string symbol, AppSettings settings)
     {
@@ -16,7 +27,7 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
         }
 
         var timeoutSeconds = Math.Clamp(settings.ApiTimeoutSeconds, 3, 60);
-        using var httpClient = CreateHttpClient(timeoutSeconds);
+        using var httpClient = _httpClientFactory(timeoutSeconds);
         var logs = new List<ApiFetchLogEntry>();
 
         try
@@ -35,6 +46,12 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
             if (quote is null)
             {
                 return MarketDataResult.Failure("公開チャートAPIから銘柄情報を取得できませんでした。コード/ティッカーを確認してください。", logs.ToArray());
+            }
+
+            var validation = MarketDataSymbolResolver.ValidateQuote(quote);
+            if (validation.IsFailed)
+            {
+                return MarketDataResult.Failure(validation.Message, logs.ToArray());
             }
 
             ApplyDividendEvents(httpClient, resolvedSymbol, quote, logs);
@@ -58,7 +75,7 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
         }
     }
 
-    private static HttpClient CreateHttpClient(int timeoutSeconds)
+    private static HttpClient CreateDefaultHttpClient(int timeoutSeconds)
     {
         var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(timeoutSeconds) };
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 InvestmentStory/1.0");
@@ -72,7 +89,8 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
         using var response = httpClient.GetAsync(url).GetAwaiter().GetResult();
         var content = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         var isSuccess = response.IsSuccessStatusCode;
-        logs.Add(CreateLog("YahooSearch", query, response.StatusCode, isSuccess, isSuccess ? string.Empty : content, string.Empty));
+        var summary = isSuccess ? SummarizeSearch(content, query) : string.Empty;
+        logs.Add(CreateLog("YahooSearch", query, response.StatusCode, isSuccess, isSuccess ? string.Empty : content, summary));
         if (!isSuccess)
         {
             return null;
@@ -84,14 +102,53 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
             return null;
         }
 
+        var exactMatch = FindQuoteSymbol(quotes, query, exactOnly: true);
+        if (!string.IsNullOrWhiteSpace(exactMatch))
+        {
+            return exactMatch;
+        }
+
+        var equity = FindQuoteSymbol(quotes, query, exactOnly: false, preferredQuoteType: "EQUITY");
+        if (!string.IsNullOrWhiteSpace(equity))
+        {
+            return equity;
+        }
+
+        return FindQuoteSymbol(quotes, query, exactOnly: false);
+    }
+
+    private static string? FindQuoteSymbol(
+        JsonElement quotes,
+        string query,
+        bool exactOnly,
+        string? preferredQuoteType = null)
+    {
         foreach (var quote in quotes.EnumerateArray())
         {
-            if (quote.TryGetProperty("quoteType", out var quoteType) &&
-                string.Equals(quoteType.GetString(), "EQUITY", StringComparison.OrdinalIgnoreCase) &&
-                quote.TryGetProperty("symbol", out var symbolProperty))
+            if (!quote.TryGetProperty("symbol", out var symbolProperty))
             {
-                return symbolProperty.GetString();
+                continue;
             }
+
+            var symbol = symbolProperty.GetString();
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                continue;
+            }
+
+            if (exactOnly && !symbol.Equals(query, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(preferredQuoteType) &&
+                (!quote.TryGetProperty("quoteType", out var quoteType) ||
+                 !string.Equals(quoteType.GetString(), preferredQuoteType, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            return symbol;
         }
 
         return null;
@@ -104,7 +161,8 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
         using var response = httpClient.GetAsync(url).GetAwaiter().GetResult();
         var content = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         var isSuccess = response.IsSuccessStatusCode;
-        logs.Add(CreateLog("YahooChart", chartSymbol, response.StatusCode, isSuccess, isSuccess ? string.Empty : content, string.Empty));
+        var summary = isSuccess ? SummarizeChart(content) : string.Empty;
+        logs.Add(CreateLog("YahooChart", chartSymbol, response.StatusCode, isSuccess, isSuccess ? string.Empty : content, summary));
         if (!isSuccess)
         {
             return null;
@@ -216,28 +274,14 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
 
     private static string ResolveSymbol(string query)
     {
-        var normalized = query.Trim().ToUpperInvariant();
-        if (LooksLikeJapaneseTicker(normalized) && !normalized.EndsWith(".T", StringComparison.Ordinal))
-        {
-            return $"{normalized[..4]}.T";
-        }
-
-        return normalized;
+        return MarketDataSymbolResolver.ToProviderSymbol(query);
     }
 
     private static string NormalizeTickerForApp(string symbol) =>
-        symbol.EndsWith(".T", StringComparison.OrdinalIgnoreCase) ? symbol[..^2] : symbol;
+        MarketDataSymbolResolver.ToDisplaySymbol(symbol);
 
-    private static bool LooksLikeJapaneseTicker(string ticker)
-    {
-        var normalized = ticker.Trim().ToUpperInvariant();
-        if (normalized.EndsWith(".T", StringComparison.Ordinal))
-        {
-            normalized = normalized[..^2];
-        }
-
-        return normalized.Length is 4 or 5 && normalized.All(char.IsDigit);
-    }
+    private static bool LooksLikeJapaneseTicker(string ticker) =>
+        MarketDataSymbolResolver.LooksLikeJapaneseTicker(ticker);
 
     private static string InferCurrency(string symbol) =>
         symbol.EndsWith(".T", StringComparison.OrdinalIgnoreCase) ? "JPY" : "USD";
@@ -297,4 +341,60 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
 
     private static string FirstNonEmpty(params string[] values) =>
         values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
+
+    private static string SummarizeSearch(string content, string query)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (!document.RootElement.TryGetProperty("quotes", out var quotes) ||
+                quotes.ValueKind != JsonValueKind.Array)
+            {
+                return "Search quotes count=0";
+            }
+
+            var count = quotes.GetArrayLength();
+            var selected = FindQuoteSymbol(quotes, query, exactOnly: true) ??
+                FindQuoteSymbol(quotes, query, exactOnly: false, preferredQuoteType: "EQUITY") ??
+                FindQuoteSymbol(quotes, query, exactOnly: false) ??
+                string.Empty;
+            return $"Search quotes count={count}; selected={selected}";
+        }
+        catch
+        {
+            return "Search response summary unavailable.";
+        }
+    }
+
+    private static string SummarizeChart(string content)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (!document.RootElement.TryGetProperty("chart", out var chart) ||
+                !chart.TryGetProperty("result", out var results) ||
+                results.ValueKind != JsonValueKind.Array ||
+                results.GetArrayLength() == 0)
+            {
+                return "Chart result count=0";
+            }
+
+            var result = results[0];
+            if (!result.TryGetProperty("meta", out var meta))
+            {
+                return "Chart result count=1; meta=false";
+            }
+
+            var symbol = GetString(meta, "symbol");
+            var longName = GetString(meta, "longName");
+            var shortName = GetString(meta, "shortName");
+            var currency = GetString(meta, "currency");
+            var price = GetDecimal(meta, "regularMarketPrice");
+            return $"Chart result count={results.GetArrayLength()}; meta=true; symbol={symbol}; name={FirstNonEmpty(longName, shortName)}; price={price}; currency={currency}";
+        }
+        catch
+        {
+            return "Chart response summary unavailable.";
+        }
+    }
 }

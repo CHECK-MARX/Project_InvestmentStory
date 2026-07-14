@@ -1,10 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,11 +17,13 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="System.IO" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\InvestmentStory.Core\InvestmentStory.Core.csproj" />
     <ProjectReference Include="..\InvestmentStory.Data\InvestmentStory.Data.csproj" />
+    <ProjectReference Include="..\InvestmentStory.App\InvestmentStory.App.csproj" />
   </ItemGroup>
 
 </Project>

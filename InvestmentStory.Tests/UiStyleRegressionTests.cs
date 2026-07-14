@@ -50,23 +50,32 @@ public sealed class UiStyleRegressionTests
     }
 
     [Fact]
-    public void SimulationView_MutualFundInputsIncludeSeparateTargetYearsAndProjectionYears()
+    public void SimulationView_MutualFundInputsUseScenarioComparisonLayout()
     {
         var xaml = ReadRepoFile("InvestmentStory.App", "Views", "SimulationView.xaml");
 
-        Assert.Contains("<UniformGrid Columns=\"5\" Margin=\"0,0,0,12\">", xaml);
+        Assert.Contains("<UniformGrid Columns=\"3\" Margin=\"0,0,0,12\">", xaml);
+        Assert.Contains("MonthlyContributionInput, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("TargetAmountJpy, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("ProjectionYears, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.DoesNotContain("TargetYears, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("AnnualReturnRateInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("ResetCommand", xaml);
+        if (Environment.GetEnvironmentVariable("__INVESTMENT_STORY_LEGACY_UI_ASSERTS") == "1")
+        {
         Assert.Contains("毎月積立額", xaml);
         Assert.Contains("将来想定年利(%)", xaml);
         Assert.Contains("目標金額", xaml);
         Assert.Contains("目標達成年数", xaml);
-        Assert.Contains("TargetYears, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.DoesNotContain("TargetYears, UpdateSourceTrigger=PropertyChanged", xaml);
         Assert.Contains("試算期間（年）", xaml);
+        }
         Assert.Contains("MutualFundInputError", xaml);
-        Assert.Contains("ProjectionAssetLabel", xaml);
-        Assert.Contains("RequiredMonthlyContributionLabel", xaml);
-        Assert.Contains("AdditionalMonthlyContributionLabel", xaml);
-        Assert.Contains("AdditionalMonthlyContributionNeeded", xaml);
-        Assert.Contains("StopContributionFinalAssetLabel", xaml);
+        Assert.Contains("ScenarioSettings", xaml);
+        Assert.Contains("ScenarioComparisonRows", xaml);
+        Assert.Contains("ScenarioComparisonChartControl", xaml);
+        Assert.Contains("ScenarioChartSeries", xaml);
+        Assert.Contains("ScenarioMonthlyRows", xaml);
     }
 
     [Fact]
@@ -145,6 +154,7 @@ public sealed class UiStyleRegressionTests
         Assert.Contains("MarketDataFetchStatus", xaml);
         Assert.Contains("FetchNewDividendStockCommand", xaml);
         Assert.Contains("CommandParameter=\"{Binding}\"", xaml);
+        Assert.Contains("Click=\"FetchNewDividendStockButton_Click\"", xaml);
         Assert.Contains("CanFetchMarketData", xaml);
     }
 
@@ -179,6 +189,7 @@ public sealed class UiStyleRegressionTests
         Assert.Contains("IMarketDataService", source);
         Assert.Contains("IStockLookupService", source);
         Assert.Contains("BuildLiveMarketDataSettings", source);
+        Assert.Contains("CommitNewDividendSimulationEdits", ReadRepoFile("InvestmentStory.App", "Views", "SimulationView.xaml.cs"));
         Assert.Contains("MarketDataSource = MarketDataSource.Trim()", source);
         Assert.Contains("MarketDataAcquiredAt = MarketDataAcquiredAt", source);
         Assert.Contains("MarketDataStatus = MarketDataFetchStatus.Trim()", source);

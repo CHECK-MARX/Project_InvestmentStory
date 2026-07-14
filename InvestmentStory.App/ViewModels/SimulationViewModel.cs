@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
@@ -14,9 +15,12 @@ public sealed class SimulationViewModel : ObservableObject
     private readonly DividendGrowthSimulationService _dividendSimulationService = new();
     private readonly IMarketDataService _marketDataService;
     private readonly IStockLookupService _stockLookupService;
+    private readonly IFundMarketDataService? _fundMarketDataService;
     private readonly Func<AppSettings> _loadSettings;
     private readonly Action<AppSettings> _saveSettings;
+    private static readonly TimeSpan NewDividendStockFetchTimeout = TimeSpan.FromSeconds(20);
     private IReadOnlyList<StockPosition> _positions = Array.Empty<StockPosition>();
+    private IReadOnlyList<BrokerTrade> _brokerTrades = Array.Empty<BrokerTrade>();
     private IReadOnlyList<TaxProfile> _taxProfiles = Array.Empty<TaxProfile>();
     private SimulationScopeOptionViewModel? _selectedScope;
     private bool _suppressDividendAutoUpdates;
@@ -60,6 +64,7 @@ public sealed class SimulationViewModel : ObservableObject
     private string _selectedScopeSummary = "対象：すべての投資信託";
     private string _contributionNotice = "将来想定年利、税金、信託報酬、為替はユーザー入力前提の概算です。";
     private bool _isMonthlyContributionEnabled = true;
+    private string _actualAnnualizedReturnBasis = "算出不可";
     private string _finalAssetAmount = "0円";
     private string _targetAchievementMonth = "未達";
     private string _remainingPeriod = "未達";
@@ -72,7 +77,10 @@ public sealed class SimulationViewModel : ObservableObject
     private string _mutualFundInputError = string.Empty;
     private bool _isRebuildingScopes;
     private bool _suppressMutualFundAutoUpdates;
-    private bool _expectedAnnualReturnRateWasEdited;
+    private string _actualAnnualizedReturnMethod = "算出不可";
+    private string _actualAnnualizedReturnPeriod = "-";
+    private string _actualAnnualizedReturnPrecision = "-";
+    private string _actualAnnualizedReturnNote = string.Empty;
 
     public SimulationViewModel(
         InvestmentCalculator calculator,
@@ -80,7 +88,8 @@ public sealed class SimulationViewModel : ObservableObject
         Func<AppSettings> loadSettings,
         Action<AppSettings> saveSettings,
         IMarketDataService? marketDataService = null,
-        IStockLookupService? stockLookupService = null)
+        IStockLookupService? stockLookupService = null,
+        IFundMarketDataService? fundMarketDataService = null)
     {
         _calculator = calculator;
         _simulationService = simulationService;
@@ -88,6 +97,7 @@ public sealed class SimulationViewModel : ObservableObject
         _stockLookupService = stockLookupService ?? new CompositeStockLookupService(
             new LocalStockLookupService(),
             new YahooFinanceStockLookupService());
+        _fundMarketDataService = fundMarketDataService;
         _loadSettings = loadSettings;
         _saveSettings = saveSettings;
         var settings = _loadSettings();
@@ -112,6 +122,7 @@ public sealed class SimulationViewModel : ObservableObject
         RemoveSelectedNewDividendStockCommand = new RelayCommand(RemoveSelectedNewDividendStock, () => SelectedNewDividendSimulationRow is not null);
         FetchNewDividendStockCommand = new RelayCommand(parameter => FetchNewDividendStock(parameter as DividendSimulationRowViewModel));
         RunTsumitateNisaCommand = RunCommand;
+        InitializeScenarioSettings();
     }
 
     public ObservableCollection<SimulationProjectionRowViewModel> Projections { get; } = new();
@@ -161,6 +172,10 @@ public sealed class SimulationViewModel : ObservableObject
     public ObservableCollection<MutualFundSimulationProjectionRowViewModel> ProjectionRows { get; } = new();
     public ObservableCollection<MutualFundContributionComparisonRowViewModel> ContributionComparisons { get; } = new();
     public ObservableCollection<PriceChartPointViewModel> TrendPoints { get; } = new();
+    public ObservableCollection<MutualFundScenarioSettingViewModel> ScenarioSettings { get; } = new();
+    public ObservableCollection<MutualFundScenarioComparisonRowViewModel> ScenarioComparisonRows { get; } = new();
+    public ObservableCollection<MutualFundScenarioMonthlyRowViewModel> ScenarioMonthlyRows { get; } = new();
+    public ObservableCollection<MutualFundScenarioChartSeriesViewModel> ScenarioChartSeries { get; } = new();
     public ICommand RunCommand { get; }
     public ICommand RunPassiveIncomeCommand { get; }
     public ICommand SavePassiveIncomePlanCommand { get; }
@@ -355,7 +370,6 @@ public sealed class SimulationViewModel : ObservableObject
                 return;
             }
 
-            _expectedAnnualReturnRateWasEdited = false;
             RunMutualFundSimulation();
         }
     }
@@ -406,7 +420,6 @@ public sealed class SimulationViewModel : ObservableObject
         {
             if (SetProperty(ref _expectedAnnualReturnRate, value) && !_suppressMutualFundAutoUpdates)
             {
-                _expectedAnnualReturnRateWasEdited = true;
                 RunMutualFundSimulation();
             }
         }
@@ -478,6 +491,36 @@ public sealed class SimulationViewModel : ObservableObject
     {
         get => _actualAnnualizedReturn;
         private set => SetProperty(ref _actualAnnualizedReturn, value);
+    }
+
+    public string ActualAnnualizedReturnBasis
+    {
+        get => _actualAnnualizedReturnBasis;
+        private set => SetProperty(ref _actualAnnualizedReturnBasis, value);
+    }
+
+    public string ActualAnnualizedReturnMethod
+    {
+        get => _actualAnnualizedReturnMethod;
+        private set => SetProperty(ref _actualAnnualizedReturnMethod, value);
+    }
+
+    public string ActualAnnualizedReturnPeriod
+    {
+        get => _actualAnnualizedReturnPeriod;
+        private set => SetProperty(ref _actualAnnualizedReturnPeriod, value);
+    }
+
+    public string ActualAnnualizedReturnPrecision
+    {
+        get => _actualAnnualizedReturnPrecision;
+        private set => SetProperty(ref _actualAnnualizedReturnPrecision, value);
+    }
+
+    public string ActualAnnualizedReturnNote
+    {
+        get => _actualAnnualizedReturnNote;
+        private set => SetProperty(ref _actualAnnualizedReturnNote, value);
     }
 
     public string FundCount
@@ -588,9 +631,10 @@ public sealed class SimulationViewModel : ObservableObject
         UpdateMutualFundPortfolio(snapshots.Select(x => x.Position).ToList());
     }
 
-    public void UpdateMutualFundPortfolio(IReadOnlyList<StockPosition> positions)
+    public void UpdateMutualFundPortfolio(IReadOnlyList<StockPosition> positions, IReadOnlyList<BrokerTrade>? brokerTrades = null)
     {
         _positions = positions;
+        _brokerTrades = brokerTrades ?? Array.Empty<BrokerTrade>();
         RebuildScopeOptions();
         RunMutualFundSimulation(saveSettings: false);
         RebuildDividendPlanRows();
@@ -779,62 +823,97 @@ public sealed class SimulationViewModel : ObservableObject
             return;
         }
 
-        var query = row.Ticker.Trim();
+        var query = MarketDataSymbolResolver.NormalizeInput(row.Ticker);
         if (string.IsNullOrWhiteSpace(query))
         {
             row.SetMarketDataFailure("コード／ティッカーを入力してください。");
             return;
         }
 
+        if (!IsPlausibleMarketDataQuery(query))
+        {
+            row.SetMarketDataFailure("取得失敗: コード、ティッカー、会社名のいずれかを入力してください。");
+            return;
+        }
+
+        var request = new DividendStockMarketDataFetchRequest(
+            query,
+            row.Ticker,
+            row.Name,
+            row.Country,
+            row.Currency,
+            row.ExchangeRate,
+            row.AnnualDividendSource,
+            BuildLiveMarketDataSettings(_loadSettings()));
+
         row.BeginMarketDataFetch();
         try
         {
-            var result = await Task.Run(() => FetchDividendStockMarketData(query, row));
+            var fetchTask = Task.Run(() => FetchDividendStockMarketData(request));
+            var completedTask = await Task.WhenAny(fetchTask, Task.Delay(NewDividendStockFetchTimeout));
+            if (completedTask != fetchTask)
+            {
+                row.SetMarketDataFailure("取得失敗: データ取得がタイムアウトしました。入力内容を確認して再実行してください。");
+                return;
+            }
+
+            var result = await fetchTask;
             row.ApplyMarketData(result);
         }
         catch (Exception ex)
         {
             row.SetMarketDataFailure($"取得失敗: {ex.Message}");
         }
+        finally
+        {
+            if (row.IsMarketDataFetching)
+            {
+                row.SetMarketDataFailure("取得失敗: データ取得を完了できませんでした。");
+            }
 
-        RunPassiveIncomeSimulation(saveSettings: false);
+            RunPassiveIncomeSimulation(saveSettings: false);
+        }
     }
 
-    private DividendStockMarketDataFetchResult FetchDividendStockMarketData(
-        string query,
-        DividendSimulationRowViewModel currentRow)
+    private DividendStockMarketDataFetchResult FetchDividendStockMarketData(DividendStockMarketDataFetchRequest request)
     {
-        var lookup = _stockLookupService.Find(query);
-        var symbol = lookup?.Ticker ?? query.Trim();
-        var settings = BuildLiveMarketDataSettings(_loadSettings());
-        var marketResult = _marketDataService.GetQuote(symbol, settings);
+        var lookup = _stockLookupService.Find(request.Query);
+        var symbol = MarketDataSymbolResolver.ToProviderSymbol(FirstNonBlank(lookup?.Ticker, request.Query));
+        var marketResult = _marketDataService.GetQuote(symbol, request.Settings);
         var quote = marketResult.Quote;
         var now = DateTime.Now;
 
-        var ticker = FirstNonBlank(quote?.Symbol, lookup?.Ticker, symbol);
-        if (ticker.EndsWith(".T", StringComparison.OrdinalIgnoreCase))
-        {
-            ticker = ticker[..^2];
-        }
+        var ticker = MarketDataSymbolResolver.ToDisplaySymbol(FirstNonBlank(quote?.Symbol, lookup?.Ticker, symbol));
 
-        var currency = NormalizeCurrency(FirstNonBlank(quote?.Currency, lookup?.Currency, currentRow.Currency));
-        var country = NormalizeCountry(FirstNonBlank(quote?.Country, lookup?.Country, currentRow.Country), currency, ticker);
+        var currency = MarketDataSymbolResolver.NormalizeCurrency(FirstNonBlank(quote?.Currency, lookup?.Currency, request.Currency));
+        var country = MarketDataSymbolResolver.NormalizeCountry(FirstNonBlank(quote?.Country, lookup?.Country, request.Country), currency, ticker);
         var price = quote?.CurrentPrice ?? lookup?.CurrentPrice;
         var annualDividend = quote?.AnnualDividendPerShare ?? lookup?.AnnualDividendPerShare;
         var exchangeRate = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
             ? 1m
-            : quote?.UsdJpyRate ?? currentRow.ExchangeRate;
+            : quote?.UsdJpyRate ?? request.ExchangeRate;
         var source = FirstNonBlank(quote?.Source, lookup?.Source, marketResult.IsSuccess ? "MarketData" : string.Empty);
         var dividendSource = FirstNonBlank(quote?.DividendInfoSource, lookup?.Source, quote?.Source, "Manual");
-        var name = FirstNonBlank(quote?.Name, lookup?.Name, currentRow.Name);
+        var name = FirstNonBlank(quote?.Name, lookup?.Name, request.Name);
 
         if (marketResult.IsSuccess && quote is not null)
         {
-            var status = price is > 0m && annualDividend is not null
-                ? $"取得成功 {now:yyyy/MM/dd HH:mm}"
-                : $"一部取得 {now:yyyy/MM/dd HH:mm}（未取得項目は手入力可）";
+            var validatedQuote = new MarketDataQuote
+            {
+                Symbol = ticker,
+                Name = name,
+                Country = country,
+                Currency = currency,
+                Market = quote.Market,
+                CurrentPrice = price,
+                AnnualDividendPerShare = annualDividend,
+                Source = source
+            };
+            var validation = MarketDataSymbolResolver.ValidateQuote(validatedQuote);
+            var status = BuildMarketDataStatus(validation, source, now);
             return new DividendStockMarketDataFetchResult(
-                true,
+                validation.IsSuccess,
+                validation.StatusKind,
                 ticker,
                 name,
                 country,
@@ -850,8 +929,20 @@ public sealed class SimulationViewModel : ObservableObject
 
         if (lookup is not null)
         {
+            var validation = MarketDataSymbolResolver.ValidateQuote(new MarketDataQuote
+            {
+                Symbol = ticker,
+                Name = lookup.Name,
+                Country = country,
+                Currency = currency,
+                Market = lookup.Market,
+                CurrentPrice = price,
+                AnnualDividendPerShare = annualDividend,
+                Source = lookup.Source
+            });
             return new DividendStockMarketDataFetchResult(
-                true,
+                validation.IsSuccess,
+                validation.StatusKind,
                 ticker,
                 lookup.Name,
                 country,
@@ -862,28 +953,59 @@ public sealed class SimulationViewModel : ObservableObject
                 dividendSource,
                 lookup.Source,
                 now,
-                price is > 0m || annualDividend is not null
-                    ? $"一部取得 {now:yyyy/MM/dd HH:mm}（ローカル候補）"
-                    : $"一部取得 {now:yyyy/MM/dd HH:mm}（株価・配当は手入力可）");
+                BuildMarketDataStatus(validation, lookup.Source, now));
         }
 
         return new DividendStockMarketDataFetchResult(
             false,
-            currentRow.Ticker,
-            currentRow.Name,
-            currentRow.Country,
-            currentRow.Currency,
+            MarketDataFetchStatusKinds.Failed,
+            request.CurrentTicker,
+            request.Name,
+            request.Country,
+            request.Currency,
             null,
             null,
             null,
-            currentRow.AnnualDividendSource,
+            request.AnnualDividendSource,
             string.Empty,
             now,
-            string.IsNullOrWhiteSpace(marketResult.ErrorMessage)
-                ? "取得失敗: 銘柄情報を取得できませんでした。手入力してください。"
-                : $"取得失敗: {marketResult.ErrorMessage}");
+            BuildMarketDataFailureStatus(marketResult.ErrorMessage));
     }
 
+    private static string BuildMarketDataStatus(MarketDataQuoteValidation validation, string source, DateTime now)
+    {
+        var sourceText = string.IsNullOrWhiteSpace(source) ? string.Empty : $" / {source}";
+        if (validation.IsSuccess)
+        {
+            return $"取得成功 {now:yyyy/MM/dd HH:mm}{sourceText} / {validation.Message}";
+        }
+
+        if (validation.IsPartial)
+        {
+            return $"一部取得 {now:yyyy/MM/dd HH:mm}{sourceText} / {validation.Message}";
+        }
+
+        return $"取得失敗 {now:yyyy/MM/dd HH:mm} / {validation.Message}";
+    }
+
+    private static string BuildMarketDataFailureStatus(string errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(errorMessage))
+        {
+            return "取得失敗: 銘柄情報を取得できませんでした。手入力してください。";
+        }
+
+        if (errorMessage.Contains("Alpha Vantage API Key", StringComparison.OrdinalIgnoreCase) &&
+            errorMessage.Contains("フォールバック取得も失敗", StringComparison.OrdinalIgnoreCase))
+        {
+            return "取得失敗: 銘柄情報を取得できませんでした。コード／ティッカーを確認するか、手入力してください。";
+        }
+
+        return $"取得失敗: {errorMessage}";
+    }
+
+    private static bool IsPlausibleMarketDataQuery(string query) =>
+        query.Length <= 40 && query.Any(char.IsLetterOrDigit);
     private static AppSettings BuildLiveMarketDataSettings(AppSettings settings)
     {
         if (settings.MarketDataMode.Equals("Mock", StringComparison.OrdinalIgnoreCase))
@@ -908,41 +1030,6 @@ public sealed class SimulationViewModel : ObservableObject
 
     private static string FirstNonBlank(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
-
-    private static string NormalizeCurrency(string value)
-    {
-        if (value.Equals("JPY", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("円", StringComparison.OrdinalIgnoreCase))
-        {
-            return "JPY";
-        }
-
-        return value.Equals("USD", StringComparison.OrdinalIgnoreCase) ||
-               value.Contains("ドル", StringComparison.OrdinalIgnoreCase)
-            ? "USD"
-            : string.IsNullOrWhiteSpace(value) ? "USD" : value.Trim().ToUpperInvariant();
-    }
-
-    private static string NormalizeCountry(string value, string currency, string ticker)
-    {
-        if (currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ||
-            ticker.EndsWith(".T", StringComparison.OrdinalIgnoreCase) ||
-            (ticker.Length is 4 or 5 && ticker.All(char.IsDigit)) ||
-            value.Contains("Japan", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("日本", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Japan";
-        }
-
-        if (currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("United States", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("米国", StringComparison.OrdinalIgnoreCase))
-        {
-            return "United States";
-        }
-
-        return string.IsNullOrWhiteSpace(value) ? "Other" : value.Trim();
-    }
 
     private void SavePassiveIncomePlan()
     {
@@ -1073,26 +1160,36 @@ public sealed class SimulationViewModel : ObservableObject
 
     private void RunMutualFundSimulation()
     {
-        RunMutualFundSimulation(saveSettings: true);
+        _ = RunMutualFundSimulationAsync(saveSettings: true);
     }
 
     private void RunMutualFundSimulation(bool saveSettings)
+    {
+        _ = RunMutualFundSimulationAsync(saveSettings);
+    }
+
+    private async Task RunMutualFundSimulationAsync(bool saveSettings)
     {
         if (!ValidateMutualFundInputs())
         {
             return;
         }
 
-        var result = SimulateWithCurrentInput();
-        if (!_expectedAnnualReturnRateWasEdited &&
-            result.Summary.ActualAnnualizedReturnRate is { } actualRate &&
-            Math.Abs(ExpectedAnnualReturnRate - Math.Round(actualRate, 2, MidpointRounding.AwayFromZero)) >= 0.01m)
+        var result = SimulateScenarioComparison();
+        var actualEstimate = result.Summary.ActualAnnualizedReturnEstimate ??
+            await EstimateFundAnnualizedReturnFromNavHistoryAsync();
+        _suppressMutualFundAutoUpdates = true;
+        try
         {
-            SetExpectedAnnualReturnRateSilently(Math.Round(actualRate, 2, MidpointRounding.AwayFromZero));
-            result = SimulateWithCurrentInput();
+            UpdateActualScenarioSetting(actualEstimate);
+        }
+        finally
+        {
+            _suppressMutualFundAutoUpdates = false;
         }
 
-        ApplyResult(result);
+        result = SimulateScenarioComparison();
+        ApplyScenarioResult(result, actualEstimate);
         if (saveSettings)
         {
             SaveSimulationSettings();
@@ -1104,13 +1201,6 @@ public sealed class SimulationViewModel : ObservableObject
         if (MonthlyContributionJpy < 0m)
         {
             MutualFundInputError = "毎月積立額は0円以上で入力してください。";
-            StatusMessage = MutualFundInputError;
-            return false;
-        }
-
-        if (ExpectedAnnualReturnRate <= -100m)
-        {
-            MutualFundInputError = "将来想定年利は-100%より大きい値で入力してください。";
             StatusMessage = MutualFundInputError;
             return false;
         }
@@ -1129,16 +1219,134 @@ public sealed class SimulationViewModel : ObservableObject
             return false;
         }
 
-        if (TargetYears is < 1 or > 100)
+        foreach (var scenario in ScenarioSettings.Where(x => x.IsEnabled && x.IsEditableRate))
         {
-            MutualFundInputError = "目標達成年数は1年以上100年以下で入力してください。";
-            StatusMessage = MutualFundInputError;
-            return false;
+            if (scenario.AnnualReturnRate <= -100m)
+            {
+                MutualFundInputError = $"{scenario.Name}の年利は-100%より大きい値で入力してください。";
+                StatusMessage = MutualFundInputError;
+                return false;
+            }
         }
 
         MutualFundInputError = string.Empty;
         return true;
     }
+
+    private MutualFundScenarioComparisonResult SimulateScenarioComparison() =>
+        _simulationService.SimulateScenarios(
+            _positions,
+            SelectedScope?.Key ?? MutualFundSimulationScopeKeys.AllAccounts,
+            new MutualFundSimulationInput
+            {
+                MonthlyContributionJpy = MonthlyContributionJpy,
+                TargetAmountJpy = TargetAmountJpy,
+                ProjectionYears = ProjectionYears,
+                TargetYears = ProjectionYears,
+                StartYear = DateTime.Today.Year,
+                StartMonth = DateTime.Today.Month
+            },
+            BuildScenarioInputs(),
+            _brokerTrades);
+
+    private async Task<MutualFundActualAnnualizedReturnEstimate?> EstimateFundAnnualizedReturnFromNavHistoryAsync()
+    {
+        if (_fundMarketDataService is null)
+        {
+            return null;
+        }
+
+        var selectedPositions = _simulationService
+            .SelectPositions(_positions, SelectedScope?.Key ?? MutualFundSimulationScopeKeys.AllAccounts)
+            .ToList();
+        if (selectedPositions.Count == 0 ||
+            selectedPositions.Select(position => PositionIdentityService.ResolveSecurityId(position))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count() != 1)
+        {
+            return null;
+        }
+
+        var today = DateTime.Today;
+        var from = today.AddYears(-30);
+        foreach (var query in BuildFundHistoryQueries(selectedPositions[0]))
+        {
+            IReadOnlyList<FundNavHistoryPoint> points;
+            try
+            {
+                points = await _fundMarketDataService.GetNavHistoryAsync(query, from, today);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var ordered = points
+                .Where(point => point.Nav > 0m)
+                .OrderBy(point => point.Date)
+                .ToList();
+            if (ordered.Count < 2)
+            {
+                continue;
+            }
+
+            var first = ordered[0];
+            var latest = ordered[^1];
+            var years = (latest.Date - first.Date).TotalDays / 365.2425d;
+            if (years <= 0d)
+            {
+                continue;
+            }
+
+            var annualized = (decimal)((Math.Pow((double)(latest.Nav / first.Nav), 1d / years) - 1d) * 100d);
+            return new MutualFundActualAnnualizedReturnEstimate
+            {
+                AnnualizedReturnRate = annualized,
+                DisplayName = "ファンド実績参考年利",
+                Method = $"基準価額{FormatPeriodYears(years)}リターン",
+                PeriodStart = first.Date,
+                PeriodEnd = latest.Date,
+                Precision = "ファンド実績",
+                Note = "保有者本人の入出金実績ではなく、ファンドの基準価額履歴から算出しています。"
+            };
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> BuildFundHistoryQueries(StockPosition position)
+    {
+        var candidates = new[]
+        {
+            position.MutualFund.FundCode,
+            position.MutualFund.AssociationCode,
+            position.Stock.Ticker,
+            position.MutualFund.FundName,
+            position.Stock.Name
+        };
+
+        return candidates
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string FormatPeriodYears(double years) =>
+        years >= 1d ? $"{Math.Round(years, 1):0.#}年" : $"{Math.Round(years * 12d, 0):0}か月";
+
+    private IReadOnlyList<MutualFundScenarioInput> BuildScenarioInputs() =>
+        ScenarioSettings
+            .Select(setting => new MutualFundScenarioInput
+            {
+                Key = setting.Key,
+                Name = setting.Name,
+                AnnualReturnRate = setting.IsAvailable ? setting.AnnualReturnRate : null,
+                IsEnabled = setting.IsEnabled && setting.IsAvailable,
+                Basis = setting.Basis,
+                UnavailableReason = setting.UnavailableReason
+            })
+            .ToList();
 
     private MutualFundAssetSimulationResult SimulateWithCurrentInput() =>
         _simulationService.Simulate(
@@ -1153,7 +1361,8 @@ public sealed class SimulationViewModel : ObservableObject
                 TargetYears = TargetYears,
                 StartYear = DateTime.Today.Year,
                 StartMonth = DateTime.Today.Month
-            });
+            },
+            _brokerTrades);
 
     private void RebuildScopeOptions()
     {
@@ -1169,10 +1378,153 @@ public sealed class SimulationViewModel : ObservableObject
             ScopeOptions.Add(new SimulationScopeOptionViewModel(option));
         }
 
-        SelectedScope = ScopeOptions.FirstOrDefault(x => string.Equals(x.Key, preferredKey, StringComparison.OrdinalIgnoreCase))
+        SelectedScope = ScopeOptions.FirstOrDefault(x => IsScopeOptionMatch(x, preferredKey))
             ?? ScopeOptions.FirstOrDefault(x => string.Equals(x.Key, MutualFundSimulationScopeKeys.AllAccounts, StringComparison.OrdinalIgnoreCase))
             ?? ScopeOptions.FirstOrDefault();
         _isRebuildingScopes = false;
+    }
+
+    private static bool IsScopeOptionMatch(SimulationScopeOptionViewModel option, string? key) =>
+        !string.IsNullOrWhiteSpace(key) &&
+        (string.Equals(option.Key, key, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(option.LegacyKey, key, StringComparison.OrdinalIgnoreCase));
+
+    private void InitializeScenarioSettings()
+    {
+        ScenarioSettings.Clear();
+        ScenarioSettings.Add(new MutualFundScenarioSettingViewModel("Conservative", "保守的", 3.00m, true, "固定シナリオ", OnMutualFundScenarioChanged));
+        ScenarioSettings.Add(new MutualFundScenarioSettingViewModel("Standard", "標準", 5.00m, true, "固定シナリオ", OnMutualFundScenarioChanged));
+        ScenarioSettings.Add(new MutualFundScenarioSettingViewModel("Aggressive", "積極的", 7.00m, true, "固定シナリオ", OnMutualFundScenarioChanged));
+        ScenarioSettings.Add(new MutualFundScenarioSettingViewModel(
+            "Actual",
+            "実績参考",
+            null,
+            true,
+            "算出不可",
+            OnMutualFundScenarioChanged,
+            "購入日・入出金・積立履歴が不足しているため、実績年利を算出できません。"));
+    }
+
+    private void OnMutualFundScenarioChanged()
+    {
+        if (!_suppressMutualFundAutoUpdates)
+        {
+            RunMutualFundSimulation(saveSettings: false);
+        }
+    }
+
+    private void UpdateActualScenarioSetting(MutualFundActualAnnualizedReturnEstimate? estimate)
+    {
+        var actual = ScenarioSettings.FirstOrDefault(x => x.Key == "Actual");
+        if (actual is null)
+        {
+            return;
+        }
+
+        if (estimate is { } actualEstimate)
+        {
+            actual.SetAutoCalculatedRate(
+                Math.Round(actualEstimate.AnnualizedReturnRate, 2, MidpointRounding.AwayFromZero),
+                "保有期間年率換算",
+                warning: Math.Abs(actualEstimate.AnnualizedReturnRate) >= 20m
+                    ? "実績参考年利は過去の運用結果に基づく参考値です。将来の運用成果を保証するものではありません。"
+                    : string.Empty);
+            actual.SetBasis(actualEstimate.Method);
+            return;
+        }
+
+        actual.SetUnavailable(
+            "購入日・入出金・積立履歴が不足しているため、実績年利を算出できません。",
+            "算出不可");
+    }
+
+    private void ApplyScenarioResult(
+        MutualFundScenarioComparisonResult result,
+        MutualFundActualAnnualizedReturnEstimate? actualEstimate = null)
+    {
+        var summary = result.Summary;
+        IsMonthlyContributionEnabled = summary.AllowsMonthlyContribution;
+        CurrentMarketValue = Formatters.Jpy(summary.CurrentMarketValueJpy);
+        CurrentCost = Formatters.Jpy(summary.CurrentCostJpy);
+        UnrealizedGain = Formatters.SignedJpy(summary.UnrealizedGainJpy);
+        UnrealizedGainRate = Formatters.SignedPercent(summary.UnrealizedGainRate);
+        ActualAnnualizedReturn = summary.ActualAnnualizedReturnRate is { } annualizedReturn
+            ? Formatters.SignedPercent(annualizedReturn)
+            : "算出不可";
+        ActualAnnualizedReturnBasis = summary.ActualAnnualizedReturnRate is null ? "算出不可" : "保有期間年率換算";
+        FundCount = $"{summary.FundCount:N0}件";
+        PositionCount = $"{summary.PositionCount:N0}件";
+
+        actualEstimate ??= summary.ActualAnnualizedReturnEstimate;
+        if (actualEstimate is not null)
+        {
+            ActualAnnualizedReturn = Formatters.SignedPercent(actualEstimate.AnnualizedReturnRate);
+            ActualAnnualizedReturnBasis = actualEstimate.Method;
+            ActualAnnualizedReturnMethod = actualEstimate.Method;
+            ActualAnnualizedReturnPeriod = string.IsNullOrWhiteSpace(actualEstimate.PeriodDisplay) ? "-" : actualEstimate.PeriodDisplay;
+            ActualAnnualizedReturnPrecision = string.IsNullOrWhiteSpace(actualEstimate.Precision) ? "-" : actualEstimate.Precision;
+            ActualAnnualizedReturnNote = actualEstimate.Note;
+        }
+        else
+        {
+            ActualAnnualizedReturnMethod = "算出不可";
+            ActualAnnualizedReturnPeriod = "-";
+            ActualAnnualizedReturnPrecision = "-";
+            ActualAnnualizedReturnNote = "購入日・入出金・積立履歴・基準価額履歴が不足しているため、実績年利を算出できません。";
+        }
+
+        AccountBreakdowns.Clear();
+        foreach (var breakdown in result.AccountBreakdowns)
+        {
+            AccountBreakdowns.Add(new MutualFundAccountBreakdownRowViewModel(breakdown));
+        }
+
+        SelectedScopeSummary = BuildSelectedScopeSummary(result);
+        ContributionNotice = BuildContributionNotice(result);
+        RaiseProjectionLabelChanges();
+
+        ScenarioComparisonRows.Clear();
+        foreach (var scenario in result.Scenarios)
+        {
+            ScenarioComparisonRows.Add(new MutualFundScenarioComparisonRowViewModel(scenario, ProjectionYears));
+        }
+
+        ScenarioMonthlyRows.Clear();
+        foreach (var row in result.MonthlyComparisons)
+        {
+            ScenarioMonthlyRows.Add(new MutualFundScenarioMonthlyRowViewModel(row));
+        }
+
+        ScenarioChartSeries.Clear();
+        foreach (var scenario in result.Scenarios.Where(x => x.IsAvailable))
+        {
+            ScenarioChartSeries.Add(new MutualFundScenarioChartSeriesViewModel(scenario, TargetAmountJpy));
+        }
+
+        var standard = result.Scenarios.FirstOrDefault(x => x.Key == "Standard" && x.IsAvailable) ??
+            result.Scenarios.FirstOrDefault(x => x.IsAvailable);
+        FinalAssetAmount = standard is null ? "0円" : Formatters.Jpy(standard.FinalMarketValueJpy);
+        StopContributionFinalAsset = standard is null ? "0円" : Formatters.Jpy(standard.NoContributionFinalMarketValueJpy);
+        RequiredMonthlyContribution = "比較表を参照";
+        AdditionalMonthlyContributionNeeded = "比較表を参照";
+        RequiredMonthlyContributionDetail = "目標達成年月は各シナリオの年利から自動算出します。";
+        TargetAchievementMonth = standard?.TargetAchievementMonth is null
+            ? "試算期間内では未達"
+            : standard.TargetAchievementMonth.Value.ToString("yyyy/MM");
+        RemainingPeriod = standard is null ? "未達" : FormatRemainingPeriod(standard.MonthsToTarget);
+
+        ChartStatus = result.MonthlyComparisons.Count == 0
+            ? "現在保有中の投資信託がありません。CSV取込または登録後に表示されます。"
+            : $"{result.MonthlyComparisons[0].YearMonth:yyyy/MM} - {result.MonthlyComparisons[^1].YearMonth:yyyy/MM} / 4シナリオ月次複利比較";
+        StatusMessage = summary.ActualAnnualizedReturnRate is null
+            ? "実績参考年利は購入日・入出金・積立履歴が不足しているため算出不可です。税金、信託報酬、為替は考慮していません。"
+            : "実績参考年利は過去の運用結果に基づく参考値です。将来の運用成果を保証するものではありません。税金、信託報酬、為替は考慮していません。";
+
+        ProjectionRows.Clear();
+        ContributionComparisons.Clear();
+        TrendPoints.Clear();
+
+        OnPropertyChanged(nameof(MonthlyContributionInput));
     }
 
     private void ApplyResult(MutualFundAssetSimulationResult result)
@@ -1313,6 +1665,16 @@ public sealed class SimulationViewModel : ObservableObject
         return $"対象：{target}\n{accounts}を合算\n{total}";
     }
 
+    private string BuildSelectedScopeSummary(MutualFundScenarioComparisonResult result)
+    {
+        var target = SelectedScope?.DisplayName ?? "すべての投資信託";
+        var accounts = result.AccountBreakdowns.Count == 0
+            ? "対象ポジションはありません"
+            : string.Join("、", result.AccountBreakdowns.Select(x => $"{x.AccountDisplayName} {x.PositionCount:N0}ポジション"));
+        var total = $"対象ファンド数：{result.Summary.FundCount:N0}件 / 対象ポジション数：{result.Summary.PositionCount:N0}件";
+        return $"対象：{target}\n{accounts}を合算\n{total}";
+    }
+
     private string BuildContributionNotice(MutualFundAssetSimulationResult result)
     {
         if (!result.Summary.AllowsMonthlyContribution)
@@ -1328,6 +1690,23 @@ public sealed class SimulationViewModel : ObservableObject
         }
 
         return "毎月積立額を対象口座へ反映し、月次複利・月末積立で試算します。";
+    }
+
+    private string BuildContributionNotice(MutualFundScenarioComparisonResult result)
+    {
+        if (!result.Summary.AllowsMonthlyContribution)
+        {
+            return "旧NISAには追加積立できません。保有継続シミュレーションとして、現在資産を各シナリオ年利で運用継続した場合を試算します。";
+        }
+
+        if (result.AccountBreakdowns.Any(x => x.AccountType == AccountTypes.NisaLegacy) &&
+            result.AccountBreakdowns.Any(x => x.AllowsContribution))
+        {
+            var contributionAccount = result.AccountBreakdowns.First(x => x.AllowsContribution);
+            return $"旧NISA残高は追加積立なしで運用し、毎月積立額は{contributionAccount.AccountDisplayName}側だけへ反映します。";
+        }
+
+        return "毎月積立額を対象口座へ反映し、月次複利・月末積立で4シナリオを比較します。";
     }
 
     private void SaveSimulationSettings()
@@ -1380,12 +1759,14 @@ public sealed class SimulationScopeOptionViewModel
     public SimulationScopeOptionViewModel(MutualFundSimulationScopeOption option)
     {
         Key = option.Key;
+        LegacyKey = option.LegacyKey;
         DisplayName = option.DisplayName;
         FundCount = option.FundCount;
         PositionCount = option.PositionCount;
     }
 
     public string Key { get; }
+    public string LegacyKey { get; }
     public string DisplayName { get; }
     public int FundCount { get; }
     public int PositionCount { get; }
@@ -1455,8 +1836,343 @@ public sealed class MutualFundContributionComparisonRowViewModel
     public string FinalMarketValue { get; }
 }
 
+public sealed class MutualFundScenarioSettingViewModel : ObservableObject
+{
+    private readonly decimal? _defaultRate;
+    private readonly Action _changed;
+    private bool _isEnabled;
+    private decimal _annualReturnRate;
+    private bool _isAvailable;
+    private string _basis;
+    private string _unavailableReason;
+    private string _warning = string.Empty;
+    private bool _isManualOverride;
+    private bool _isInternalRateUpdate;
+
+    public MutualFundScenarioSettingViewModel(
+        string key,
+        string name,
+        decimal? defaultRate,
+        bool isEnabled,
+        string basis,
+        Action changed,
+        string unavailableReason = "")
+    {
+        Key = key;
+        Name = name;
+        _defaultRate = defaultRate;
+        _annualReturnRate = defaultRate ?? 0m;
+        _isEnabled = isEnabled;
+        _isAvailable = defaultRate is not null;
+        _basis = basis;
+        _unavailableReason = unavailableReason;
+        _changed = changed;
+        ResetCommand = new RelayCommand(ResetToDefault);
+    }
+
+    public string Key { get; }
+    public string Name { get; }
+    public RelayCommand ResetCommand { get; }
+    public bool IsEditableRate => IsAvailable;
+
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set
+        {
+            if (SetProperty(ref _isEnabled, value))
+            {
+                _changed();
+            }
+        }
+    }
+
+    public decimal AnnualReturnRate
+    {
+        get => _annualReturnRate;
+        set
+        {
+            if (SetProperty(ref _annualReturnRate, value))
+            {
+                if (!_isInternalRateUpdate)
+                {
+                    _isManualOverride = Key == "Actual";
+                }
+
+                OnPropertyChanged(nameof(RateDisplay));
+                OnPropertyChanged(nameof(AnnualReturnRateInput));
+                OnPropertyChanged(nameof(BasisDisplay));
+                _changed();
+            }
+        }
+    }
+
+    public bool IsAvailable
+    {
+        get => _isAvailable;
+        private set
+        {
+            if (SetProperty(ref _isAvailable, value))
+            {
+                OnPropertyChanged(nameof(IsEditableRate));
+                OnPropertyChanged(nameof(RateDisplay));
+                OnPropertyChanged(nameof(AnnualReturnRateInput));
+                OnPropertyChanged(nameof(IsRateInputReadOnly));
+            }
+        }
+    }
+
+    public string Basis
+    {
+        get => _basis;
+        private set
+        {
+            if (SetProperty(ref _basis, value))
+            {
+                OnPropertyChanged(nameof(BasisDisplay));
+            }
+        }
+    }
+
+    public string UnavailableReason
+    {
+        get => _unavailableReason;
+        private set => SetProperty(ref _unavailableReason, value);
+    }
+
+    public string Warning
+    {
+        get => _warning;
+        private set => SetProperty(ref _warning, value);
+    }
+
+    public string RateDisplay => IsAvailable ? $"{AnnualReturnRate:N2}%" : "算出不可";
+
+    public string AnnualReturnRateInput
+    {
+        get => IsAvailable ? AnnualReturnRate.ToString("N2") : "算出不可";
+        set
+        {
+            if (!IsAvailable)
+            {
+                return;
+            }
+
+            var normalized = value.Replace("%", string.Empty).Trim();
+            if (decimal.TryParse(normalized, out var parsed))
+            {
+                AnnualReturnRate = parsed;
+            }
+        }
+    }
+
+    public bool IsRateInputReadOnly => !IsAvailable;
+
+    public string BasisDisplay => Key == "Actual" && _isManualOverride
+        ? $"{Basis} / 手動変更値"
+        : Basis;
+
+    public void SetAutoCalculatedRate(decimal rate, string basis, string warning)
+    {
+        if (_isManualOverride && IsAvailable)
+        {
+            Basis = basis;
+            Warning = warning;
+            return;
+        }
+
+        IsAvailable = true;
+        SetAnnualReturnRateFromModel(rate);
+        IsEnabled = true;
+        Basis = basis;
+        UnavailableReason = string.Empty;
+        Warning = warning;
+    }
+
+    public void SetUnavailable(string reason, string basis)
+    {
+        if (_isManualOverride && IsAvailable)
+        {
+            return;
+        }
+
+        IsAvailable = false;
+        IsEnabled = false;
+        Basis = basis;
+        UnavailableReason = reason;
+        Warning = string.Empty;
+    }
+
+    public void SetBasis(string basis)
+    {
+        Basis = basis;
+    }
+
+    private void ResetToDefault()
+    {
+        _isManualOverride = false;
+        if (_defaultRate is not null)
+        {
+            SetAnnualReturnRateFromModel(_defaultRate.Value);
+            IsEnabled = true;
+        }
+        else
+        {
+            _changed();
+        }
+    }
+
+    private void SetAnnualReturnRateFromModel(decimal rate)
+    {
+        _isInternalRateUpdate = true;
+        try
+        {
+            AnnualReturnRate = rate;
+        }
+        finally
+        {
+            _isInternalRateUpdate = false;
+        }
+    }
+}
+
+public sealed class MutualFundScenarioComparisonRowViewModel
+{
+    public MutualFundScenarioComparisonRowViewModel(MutualFundScenarioResult scenario, int projectionYears)
+    {
+        Scenario = scenario.Name;
+        AnnualReturnRate = scenario.AnnualReturnRate is null ? "算出不可" : $"{scenario.AnnualReturnRate.Value:N2}%";
+        FiveYearMarketValue = scenario.FiveYearMarketValueJpy <= 0m ? "-" : Formatters.Jpy(scenario.FiveYearMarketValueJpy);
+        TenYearMarketValue = scenario.TenYearMarketValueJpy <= 0m ? "-" : Formatters.Jpy(scenario.TenYearMarketValueJpy);
+        FinalMarketValue = scenario.IsAvailable ? Formatters.Jpy(scenario.FinalMarketValueJpy) : "算出不可";
+        TargetAchievement = scenario.TargetAchievementMonth is null
+            ? "試算期間内では未達"
+            : scenario.TargetAchievementMonth.Value.ToString("yyyy/MM");
+        PeriodToTarget = FormatMonths(scenario.MonthsToTarget);
+        CumulativeContribution = scenario.TargetAchievementMonth is null ? "-" : Formatters.Jpy(scenario.CumulativeContributionAtTargetJpy);
+        InvestmentGain = scenario.TargetAchievementMonth is null ? "-" : Formatters.SignedJpy(scenario.InvestmentGainAtTargetJpy);
+        Basis = string.IsNullOrWhiteSpace(scenario.UnavailableReason)
+            ? scenario.Basis
+            : $"{scenario.Basis}: {scenario.UnavailableReason}";
+    }
+
+    public string Scenario { get; }
+    public string AnnualReturnRate { get; }
+    public string FiveYearMarketValue { get; }
+    public string TenYearMarketValue { get; }
+    public string FinalMarketValue { get; }
+    public string TargetAchievement { get; }
+    public string PeriodToTarget { get; }
+    public string CumulativeContribution { get; }
+    public string InvestmentGain { get; }
+    public string Basis { get; }
+
+    private static string FormatMonths(int? months)
+    {
+        if (months is null)
+        {
+            return "未達";
+        }
+
+        if (months == 0)
+        {
+            return "現在時点で達成済み";
+        }
+
+        return $"{months.Value / 12:N0}年{months.Value % 12:N0}か月";
+    }
+}
+
+public sealed class MutualFundScenarioMonthlyRowViewModel
+{
+    public MutualFundScenarioMonthlyRowViewModel(MutualFundScenarioMonthlyComparison row)
+    {
+        YearMonth = row.YearMonth.ToString("yyyy/MM");
+        MonthsFromNow = $"{row.MonthsFromNow:N0}か月";
+        CumulativeContribution = Formatters.Jpy(row.CumulativeContributionJpy);
+        ConservativeMarketValue = FormatValue(row, "Conservative", x => x.MarketValueJpy);
+        StandardMarketValue = FormatValue(row, "Standard", x => x.MarketValueJpy);
+        AggressiveMarketValue = FormatValue(row, "Aggressive", x => x.MarketValueJpy);
+        ActualMarketValue = FormatValue(row, "Actual", x => x.MarketValueJpy);
+        ConservativeGain = FormatValue(row, "Conservative", x => x.UnrealizedGainJpy, signed: true);
+        StandardGain = FormatValue(row, "Standard", x => x.UnrealizedGainJpy, signed: true);
+        AggressiveGain = FormatValue(row, "Aggressive", x => x.UnrealizedGainJpy, signed: true);
+        ActualGain = FormatValue(row, "Actual", x => x.UnrealizedGainJpy, signed: true);
+        ConservativeAchievement = FormatPercent(row, "Conservative");
+        StandardAchievement = FormatPercent(row, "Standard");
+        AggressiveAchievement = FormatPercent(row, "Aggressive");
+        ActualAchievement = FormatPercent(row, "Actual");
+    }
+
+    public string YearMonth { get; }
+    public string MonthsFromNow { get; }
+    public string CumulativeContribution { get; }
+    public string ConservativeMarketValue { get; }
+    public string StandardMarketValue { get; }
+    public string AggressiveMarketValue { get; }
+    public string ActualMarketValue { get; }
+    public string ConservativeGain { get; }
+    public string StandardGain { get; }
+    public string AggressiveGain { get; }
+    public string ActualGain { get; }
+    public string ConservativeAchievement { get; }
+    public string StandardAchievement { get; }
+    public string AggressiveAchievement { get; }
+    public string ActualAchievement { get; }
+
+    private static string FormatValue(
+        MutualFundScenarioMonthlyComparison row,
+        string key,
+        Func<MutualFundScenarioMonthlyProjection, decimal> selector,
+        bool signed = false) =>
+        row.ScenarioValues.TryGetValue(key, out var value)
+            ? signed ? Formatters.SignedJpy(selector(value)) : Formatters.Jpy(selector(value))
+            : "-";
+
+    private static string FormatPercent(MutualFundScenarioMonthlyComparison row, string key) =>
+        row.ScenarioValues.TryGetValue(key, out var value)
+            ? Formatters.Percent(value.TargetAchievementRate)
+            : "-";
+}
+
+public sealed class MutualFundScenarioChartSeriesViewModel : ObservableObject
+{
+    private bool _isVisible = true;
+
+    public MutualFundScenarioChartSeriesViewModel(MutualFundScenarioResult scenario, decimal targetAmount)
+    {
+        Key = scenario.Key;
+        Name = scenario.Name;
+        AnnualReturnRate = scenario.AnnualReturnRate is null ? string.Empty : $"{scenario.AnnualReturnRate.Value:N2}%";
+        TargetAmountJpy = targetAmount;
+        TargetAchievementMonth = scenario.TargetAchievementMonth;
+        Points = scenario.Projections
+            .Select(row => new MutualFundScenarioChartPointViewModel(
+                row.YearMonth,
+                row.MarketValueJpy,
+                row.TargetAchievementRate))
+            .ToList();
+    }
+
+    public string Key { get; }
+    public string Name { get; }
+    public string AnnualReturnRate { get; }
+    public decimal TargetAmountJpy { get; }
+    public DateTime? TargetAchievementMonth { get; }
+    public IReadOnlyList<MutualFundScenarioChartPointViewModel> Points { get; }
+
+    public bool IsVisible
+    {
+        get => _isVisible;
+        set => SetProperty(ref _isVisible, value);
+    }
+}
+
+public sealed record MutualFundScenarioChartPointViewModel(DateTime YearMonth, decimal MarketValueJpy, decimal TargetAchievementRate);
+
 public sealed record DividendStockMarketDataFetchResult(
     bool IsSuccess,
+    string StatusKind,
     string Ticker,
     string Name,
     string Country,
@@ -1468,6 +2184,16 @@ public sealed record DividendStockMarketDataFetchResult(
     string Source,
     DateTime? AcquiredAt,
     string Status);
+
+public sealed record DividendStockMarketDataFetchRequest(
+    string Query,
+    string CurrentTicker,
+    string Name,
+    string Country,
+    string Currency,
+    decimal ExchangeRate,
+    string AnnualDividendSource,
+    AppSettings Settings);
 
 public sealed class DividendSimulationRowViewModel : ObservableObject
 {
@@ -1486,6 +2212,7 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     private string _marketDataSource;
     private DateTime? _marketDataAcquiredAt;
     private string _marketDataFetchStatus;
+    private string _marketDataFetchState;
     private bool _isMarketDataFetching;
     private decimal _plannedAdditionalShares;
     private string _plannedBroker;
@@ -1518,6 +2245,7 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
         _marketDataFetchStatus = string.IsNullOrWhiteSpace(item.MarketDataStatus)
             ? (item.IsNewStock ? "手入力" : string.Empty)
             : item.MarketDataStatus;
+        _marketDataFetchState = ResolveInitialFetchState(_marketDataFetchStatus);
         _plannedAdditionalShares = item.PlannedAdditionalShares;
         _plannedBroker = DividendSimulationSelectionOptions.NormalizeBroker(FirstNonBlank(item.PlannedBroker, _broker));
         _plannedAccountType = NormalizeAccountType(FirstNonBlank(item.PlannedAccountType, _accountType));
@@ -1627,6 +2355,12 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
         private set => SetProperty(ref _marketDataFetchStatus, value);
     }
 
+    public string MarketDataFetchState
+    {
+        get => _marketDataFetchState;
+        private set => SetProperty(ref _marketDataFetchState, value);
+    }
+
     public bool IsMarketDataFetching
     {
         get => _isMarketDataFetching;
@@ -1717,55 +2451,61 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     {
         IsMarketDataFetching = true;
         MarketDataFetchStatus = "取得中";
+        MarketDataFetchState = MarketDataFetchStatusKinds.Fetching;
         InputError = string.Empty;
     }
 
     public void ApplyMarketData(DividendStockMarketDataFetchResult result)
     {
         IsMarketDataFetching = false;
+        MarketDataFetchState = result.StatusKind;
 
-        if (!string.IsNullOrWhiteSpace(result.Ticker))
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.Ticker))
         {
             Ticker = result.Ticker;
         }
 
-        if (!string.IsNullOrWhiteSpace(result.Name))
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.Name))
         {
             Name = result.Name;
         }
 
-        if (!string.IsNullOrWhiteSpace(result.Country))
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.Country))
         {
             Country = result.Country;
         }
 
-        if (!string.IsNullOrWhiteSpace(result.Currency))
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.Currency))
         {
             Currency = result.Currency;
         }
 
-        if (result.CurrentPrice is > 0m)
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && result.CurrentPrice is > 0m)
         {
             CurrentPrice = result.CurrentPrice.Value;
         }
 
-        if (result.ExchangeRate is > 0m)
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && result.ExchangeRate is > 0m)
         {
             ExchangeRate = result.ExchangeRate.Value;
         }
 
-        if (result.AnnualDividendPerShare is >= 0m)
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && result.AnnualDividendPerShare is >= 0m)
         {
             AnnualDividendPerShare = result.AnnualDividendPerShare.Value;
         }
 
-        if (!string.IsNullOrWhiteSpace(result.DividendSource))
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.DividendSource))
         {
             AnnualDividendSource = result.DividendSource;
         }
 
-        MarketDataSource = result.Source;
-        MarketDataAcquiredAt = result.AcquiredAt;
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed)
+        {
+            MarketDataSource = result.Source;
+            MarketDataAcquiredAt = result.AcquiredAt;
+        }
+
         MarketDataFetchStatus = result.Status;
         InputError = result.IsSuccess ? string.Empty : result.Status;
     }
@@ -1773,8 +2513,26 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     public void SetMarketDataFailure(string message)
     {
         IsMarketDataFetching = false;
+        MarketDataFetchState = MarketDataFetchStatusKinds.Failed;
         MarketDataFetchStatus = string.IsNullOrWhiteSpace(message) ? "取得失敗" : message;
         InputError = MarketDataFetchStatus;
+    }
+
+    private static string ResolveInitialFetchState(string status)
+    {
+        if (status.StartsWith("取得成功", StringComparison.Ordinal))
+        {
+            return MarketDataFetchStatusKinds.Success;
+        }
+
+        if (status.StartsWith("一部取得", StringComparison.Ordinal))
+        {
+            return MarketDataFetchStatusKinds.Partial;
+        }
+
+        return status.StartsWith("取得失敗", StringComparison.Ordinal)
+            ? MarketDataFetchStatusKinds.Failed
+            : MarketDataFetchStatusKinds.Idle;
     }
 
     private decimal EffectiveExchangeRate =>
@@ -1793,12 +2551,12 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
             : normalized;
     }
 
-    private void SetNonNegative(ref decimal field, decimal value, string label)
+    private void SetNonNegative(ref decimal field, decimal value, string label, [CallerMemberName] string? propertyName = null)
     {
         if (value < 0m)
         {
             InputError = $"{label}は0以上で入力してください。";
-            SetAndNotify(ref field, 0m);
+            SetAndNotify(ref field, 0m, propertyName);
             return;
         }
 
@@ -1807,12 +2565,12 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
             InputError = string.Empty;
         }
 
-        SetAndNotify(ref field, value);
+        SetAndNotify(ref field, value, propertyName);
     }
 
-    private void SetAndNotify<T>(ref T field, T value)
+    private void SetAndNotify<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
-        if (!SetProperty(ref field, value))
+        if (!SetProperty(ref field, value, propertyName))
         {
             return;
         }

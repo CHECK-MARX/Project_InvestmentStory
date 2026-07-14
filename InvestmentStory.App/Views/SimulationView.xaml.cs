@@ -40,6 +40,11 @@ public partial class SimulationView : UserControl
         Dispatcher.BeginInvoke(FetchSelectedNewDividendStock, DispatcherPriority.Background);
     }
 
+    private void FetchNewDividendStockButton_Click(object sender, RoutedEventArgs e)
+    {
+        CommitNewDividendSimulationEdits();
+    }
+
     private void FocusSelectedNewDividendStockRow()
     {
         if (DataContext is not SimulationViewModel viewModel ||
@@ -71,12 +76,17 @@ public partial class SimulationView : UserControl
             return;
         }
 
-        NewDividendSimulationGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-        NewDividendSimulationGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        CommitNewDividendSimulationEdits();
         if (viewModel.FetchNewDividendStockCommand.CanExecute(row))
         {
             viewModel.FetchNewDividendStockCommand.Execute(row);
         }
+    }
+
+    private void CommitNewDividendSimulationEdits()
+    {
+        NewDividendSimulationGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        NewDividendSimulationGrid.CommitEdit(DataGridEditingUnit.Row, true);
     }
 
     private bool IsTickerColumnActive() =>

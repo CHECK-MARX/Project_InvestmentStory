@@ -42,10 +42,12 @@ public sealed class MarketDataProviderFactory : IMarketDataService
                     : mockResult);
         }
 
-        var apiResult = LooksLikeJapaneseTicker(symbol)
-            ? GetJapaneseQuote(symbol, settings)
-            : GetUsQuote(symbol, settings);
-        return apiResult.IsSuccess ? apiResult : MergeWithFallback(symbol, settings, apiResult);
+        var usesFallbackProvider = UsesFallbackProvider(symbol, settings);
+        var providerSymbol = MarketDataSymbolResolver.ToProviderSymbol(symbol);
+        var apiResult = LooksLikeJapaneseTicker(providerSymbol)
+            ? GetJapaneseQuote(providerSymbol, settings)
+            : GetUsQuote(providerSymbol, settings);
+        return apiResult.IsSuccess || usesFallbackProvider ? apiResult : MergeWithFallback(providerSymbol, settings, apiResult);
     }
 
     private MarketDataResult GetJapaneseQuote(string symbol, AppSettings settings)
@@ -58,8 +60,20 @@ public sealed class MarketDataProviderFactory : IMarketDataService
         return _japanMarketDataService.GetJapanQuote(symbol, settings);
     }
 
-    private MarketDataResult GetUsQuote(string symbol, AppSettings settings) =>
-        _usMarketDataService.GetUsQuote(symbol, settings);
+    private MarketDataResult GetUsQuote(string symbol, AppSettings settings)
+    {
+        if (settings.UsMarketDataProvider.Equals("Yahoo Finance", StringComparison.OrdinalIgnoreCase))
+        {
+            return _fallbackMarketDataService.GetQuote(symbol, settings);
+        }
+
+        return _usMarketDataService.GetUsQuote(symbol, settings);
+    }
+
+    private static bool UsesFallbackProvider(string symbol, AppSettings settings) =>
+        LooksLikeJapaneseTicker(symbol)
+            ? settings.JapanMarketDataProvider.Equals("Yahoo Finance", StringComparison.OrdinalIgnoreCase)
+            : settings.UsMarketDataProvider.Equals("Yahoo Finance", StringComparison.OrdinalIgnoreCase);
 
     private MarketDataResult MergeWithFallback(string symbol, AppSettings settings, MarketDataResult primaryResult)
     {
@@ -95,12 +109,6 @@ public sealed class MarketDataProviderFactory : IMarketDataService
             return false;
         }
 
-        var normalized = ticker.Trim().ToUpperInvariant();
-        if (normalized.EndsWith(".T", StringComparison.Ordinal))
-        {
-            normalized = normalized[..^2];
-        }
-
-        return normalized.Length is 4 or 5 && normalized.All(char.IsDigit);
+        return MarketDataSymbolResolver.LooksLikeJapaneseTicker(ticker);
     }
 }

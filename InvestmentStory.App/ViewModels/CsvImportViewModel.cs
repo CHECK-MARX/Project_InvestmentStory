@@ -580,6 +580,12 @@ public sealed class CsvImportViewModel : ObservableObject
                              .GroupBy(x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase)
                              .OrderBy(x => x.Key))
                 {
+                    if (IsMutualFundTradeGroup(tradeGroup))
+                    {
+                        skippedTradeGroups++;
+                        continue;
+                    }
+
                     if (holdingKeys.Contains(tradeGroup.Key) ||
                         (positionByKey.TryGetValue(tradeGroup.Key, out var holdingPosition) && HasHoldingSnapshotSource(holdingPosition)))
                     {
@@ -814,6 +820,18 @@ public sealed class CsvImportViewModel : ObservableObject
                 UpdatedAt = latestSettlementDate
             }
         };
+    }
+
+    private static bool IsMutualFundTradeGroup(IEnumerable<BrokerTradeRecord> trades) =>
+        trades.Any(IsMutualFundTrade);
+
+    private static bool IsMutualFundTrade(BrokerTradeRecord trade)
+    {
+        return trade.Ticker.StartsWith("FUND:", StringComparison.OrdinalIgnoreCase) ||
+               trade.Ticker.Contains("FUND", StringComparison.OrdinalIgnoreCase) ||
+               trade.Product.Contains("FUND", StringComparison.OrdinalIgnoreCase) ||
+               trade.Name.Contains("S&P", StringComparison.OrdinalIgnoreCase) ||
+               trade.Name.Contains("SP500", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ApplyTradeSummary(
