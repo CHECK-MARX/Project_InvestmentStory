@@ -167,17 +167,40 @@ public sealed class MutualFundAssetSimulationService
             Math.Clamp(input.StartMonth, 1, 12),
             1);
         var targetAmount = Math.Max(0m, input.TargetAmountJpy);
-        var results = scenarios
+        var scenarioInputs = scenarios.ToList();
+        var baseResults = scenarioInputs
             .Select(scenario => SimulateScenario(summary, effectiveMonthlyContribution, targetAmount, start, months, scenario))
             .ToList();
-        var comparisons = BuildMonthlyComparisons(results, months);
+        var conservative = baseResults.FirstOrDefault(result =>
+            result.IsAvailable &&
+            string.Equals(result.Key, "Conservative", StringComparison.OrdinalIgnoreCase));
+        var usesConservativeTargetHorizon = conservative?.MonthsToTarget is > 0;
+        var chartMonths = usesConservativeTargetHorizon
+            ? Math.Clamp(conservative!.MonthsToTarget!.Value, 1, 100 * 12)
+            : months;
+        var results = baseResults
+            .Select(result => AddChartProjection(
+                result,
+                summary,
+                effectiveMonthlyContribution,
+                targetAmount,
+                start,
+                chartMonths))
+            .ToList();
+        var comparisons = BuildMonthlyComparisons(results, months, useChartProjections: false);
+        var chartComparisons = BuildMonthlyComparisons(results, chartMonths, useChartProjections: true);
 
         return new MutualFundScenarioComparisonResult
         {
             Summary = summary,
             AccountBreakdowns = accountBreakdowns,
             Scenarios = results,
-            MonthlyComparisons = comparisons
+            MonthlyComparisons = comparisons,
+            ChartMonthlyComparisons = chartComparisons,
+            ChartHorizonMonths = chartMonths,
+            ChartEndMonth = chartMonths <= 0 ? start : start.AddMonths(chartMonths),
+            ConservativeTargetMonth = conservative?.TargetAchievementMonth,
+            UsesConservativeTargetHorizon = usesConservativeTargetHorizon
         };
     }
 
@@ -375,7 +398,56 @@ public sealed class MutualFundAssetSimulationService
             CumulativeContributionAtTargetJpy = RoundYen(contributionAtTarget),
             InvestmentGainAtTargetJpy = gainAtTarget,
             NoContributionFinalMarketValueJpy = projections.Count == 0 ? summary.CurrentMarketValueJpy : projections[^1].NoContributionMarketValueJpy,
-            Projections = projections
+            Projections = projections,
+            ChartFinalMarketValueJpy = projections.Count == 0 ? summary.CurrentMarketValueJpy : projections[^1].MarketValueJpy,
+            ChartProjections = projections
+        };
+    }
+
+    private static MutualFundScenarioResult AddChartProjection(
+        MutualFundScenarioResult scenario,
+        MutualFundPortfolioSummary summary,
+        decimal monthlyContribution,
+        decimal targetAmount,
+        DateTime start,
+        int chartMonths)
+    {
+        if (!scenario.IsAvailable || scenario.AnnualReturnRate is null)
+        {
+            return scenario;
+        }
+
+        var chartProjections = BuildScenarioProjections(
+            summary,
+            monthlyContribution,
+            ToMonthlyRate(Math.Max(scenario.AnnualReturnRate.Value, -99.99m)),
+            targetAmount,
+            start,
+            chartMonths);
+
+        return new MutualFundScenarioResult
+        {
+            Key = scenario.Key,
+            Name = scenario.Name,
+            AnnualReturnRate = scenario.AnnualReturnRate,
+            IsEnabled = scenario.IsEnabled,
+            IsAvailable = scenario.IsAvailable,
+            Basis = scenario.Basis,
+            UnavailableReason = scenario.UnavailableReason,
+            FinalMarketValueJpy = scenario.FinalMarketValueJpy,
+            FiveYearMarketValueJpy = scenario.FiveYearMarketValueJpy,
+            TenYearMarketValueJpy = scenario.TenYearMarketValueJpy,
+            TargetAchievementMonth = scenario.TargetAchievementMonth,
+            MonthsToTarget = scenario.MonthsToTarget,
+            ReachesTargetWithinProjection = scenario.ReachesTargetWithinProjection,
+            CumulativeContributionAtTargetJpy = scenario.CumulativeContributionAtTargetJpy,
+            InvestmentGainAtTargetJpy = scenario.InvestmentGainAtTargetJpy,
+            NoContributionFinalMarketValueJpy = scenario.NoContributionFinalMarketValueJpy,
+            Projections = scenario.Projections,
+            ChartFinalMarketValueJpy = chartProjections.Count == 0
+                ? summary.CurrentMarketValueJpy
+                : chartProjections[^1].MarketValueJpy,
+            ChartProjections = chartProjections
         };
     }
 
@@ -416,7 +488,8 @@ public sealed class MutualFundAssetSimulationService
 
     private static IReadOnlyList<MutualFundScenarioMonthlyComparison> BuildMonthlyComparisons(
         IReadOnlyList<MutualFundScenarioResult> scenarios,
-        int months)
+        int months,
+        bool useChartProjections)
     {
         var available = scenarios.Where(x => x.IsAvailable).ToList();
         if (available.Count == 0)
@@ -428,10 +501,10 @@ public sealed class MutualFundAssetSimulationService
         for (var monthIndex = 0; monthIndex < months; monthIndex++)
         {
             var values = available
-                .Where(scenario => scenario.Projections.Count > monthIndex)
+                .Where(scenario => (useChartProjections ? scenario.ChartProjections : scenario.Projections).Count > monthIndex)
                 .ToDictionary(
                     scenario => scenario.Key,
-                    scenario => scenario.Projections[monthIndex],
+                    scenario => (useChartProjections ? scenario.ChartProjections : scenario.Projections)[monthIndex],
                     StringComparer.OrdinalIgnoreCase);
             if (values.Count == 0)
             {

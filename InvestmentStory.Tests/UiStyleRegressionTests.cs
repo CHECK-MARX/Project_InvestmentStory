@@ -54,28 +54,70 @@ public sealed class UiStyleRegressionTests
     {
         var xaml = ReadRepoFile("InvestmentStory.App", "Views", "SimulationView.xaml");
 
-        Assert.Contains("<UniformGrid Columns=\"3\" Margin=\"0,0,0,12\">", xaml);
+        Assert.Contains("未来の資産ストーリー", xaml);
+        Assert.Contains("<UniformGrid Columns=\"3\" Margin=\"0,0,0,4\">", xaml);
+        Assert.Contains("現在資産", xaml);
+        Assert.Contains("目標資産", xaml);
+        Assert.Contains("目標まであと", xaml);
+        Assert.Contains("目標達成年月", xaml);
+        Assert.Contains("現在積立額", xaml);
+        Assert.Contains("想定年利", xaml);
         Assert.Contains("MonthlyContributionInput, UpdateSourceTrigger=PropertyChanged", xaml);
         Assert.Contains("TargetAmountJpy, UpdateSourceTrigger=PropertyChanged", xaml);
         Assert.Contains("ProjectionYears, UpdateSourceTrigger=PropertyChanged", xaml);
-        Assert.DoesNotContain("TargetYears, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("TargetYears, UpdateSourceTrigger=PropertyChanged", xaml);
         Assert.Contains("AnnualReturnRateInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged", xaml);
-        Assert.Contains("ResetCommand", xaml);
-        if (Environment.GetEnvironmentVariable("__INVESTMENT_STORY_LEGACY_UI_ASSERTS") == "1")
-        {
-        Assert.Contains("毎月積立額", xaml);
-        Assert.Contains("将来想定年利(%)", xaml);
-        Assert.Contains("目標金額", xaml);
-        Assert.Contains("目標達成年数", xaml);
-        Assert.DoesNotContain("TargetYears, UpdateSourceTrigger=PropertyChanged", xaml);
         Assert.Contains("試算期間（年）", xaml);
-        }
+        Assert.Contains("必要積立期限（年）", xaml);
         Assert.Contains("MutualFundInputError", xaml);
         Assert.Contains("ScenarioSettings", xaml);
         Assert.Contains("ScenarioComparisonRows", xaml);
         Assert.Contains("ScenarioComparisonChartControl", xaml);
         Assert.Contains("ScenarioChartSeries", xaml);
-        Assert.Contains("ScenarioMonthlyRows", xaml);
+        Assert.Contains("SelectedScenarioKey=\"{Binding SelectedStoryScenario.Value}\"", xaml);
+        Assert.Contains("ScenarioRankingRows", xaml);
+        Assert.Contains("ScenarioAnnualRows", xaml);
+        Assert.True(CountOccurrences(xaml, "AnimatedMetricTextBlock") >= 5);
+        Assert.Contains("Height=\"560\"", xaml);
+        Assert.Contains("HorizontalAlignment=\"Right\"", xaml);
+        Assert.Contains("Width=\"150\"", xaml);
+        Assert.Contains("Height=\"40\"", xaml);
+    }
+
+    [Fact]
+    public void ScenarioComparisonChart_SupportsFourScenarioStoryInteractions()
+    {
+        var source = ReadRepoFile("InvestmentStory.App", "Controls", "ScenarioComparisonChartControl.cs");
+
+        Assert.Contains("Conservative", source);
+        Assert.Contains("Standard", source);
+        Assert.Contains("Aggressive", source);
+        Assert.Contains("Actual", source);
+        Assert.Contains("DrawTargetLine", source);
+        Assert.Contains("DrawTargetLabel", source);
+        Assert.Contains("TargetAchievementMonth", source);
+        Assert.Contains("Color.FromArgb(24", source);
+        Assert.Contains("DrawHover", source);
+        Assert.Contains("BuildAchievementAnnotations", source);
+        Assert.Contains("DrawAchievementAnnotations", source);
+        Assert.Contains("BuildAchievementToolTip", source);
+        Assert.Contains("candidate.PointIndex - clusters[^1][^1].PointIndex > 6", source);
+        Assert.Contains("rect.Width < 1050", source);
+        Assert.Contains("SelectedScenarioKey", source);
+        Assert.Contains("GetSeriesPen", source);
+        Assert.Contains("DrawScenarioMarker", source);
+        Assert.Contains("new DashStyle", source);
+        Assert.Contains("\"保守\"", source);
+        Assert.Contains("\"標準\"", source);
+        Assert.Contains("\"積極\"", source);
+        Assert.Contains("\"実績\"", source);
+        Assert.Contains("目標達成まで", source);
+        Assert.Contains("CumulativeContributionJpy", source);
+        Assert.Contains("UnrealizedGainJpy", source);
+        Assert.Contains("TargetAchievementRate", source);
+        Assert.Contains("OnMouseWheel", source);
+        Assert.Contains("OnMouseMove", source);
+        Assert.Contains("CompositionTarget.Rendering", source);
     }
 
     [Fact]
@@ -195,6 +237,54 @@ public sealed class UiStyleRegressionTests
         Assert.Contains("MarketDataStatus = MarketDataFetchStatus.Trim()", source);
         Assert.Contains("AdditionalAnnualDividendPreview => Formatters.Jpy", source);
         Assert.Contains("RunPassiveIncomeSimulation(saveSettings: false)", source);
+    }
+
+    [Fact]
+    public void DividendPurchasePlanView_UsesTargetYearPurchaseDateAndMonthlyOutputs()
+    {
+        var xaml = ReadRepoFile("InvestmentStory.App", "Views", "DividendPurchasePlanView.xaml");
+
+        Assert.Contains("今年の購入計画シミュレーション", xaml);
+        Assert.DoesNotContain("InputLabelStyle", xaml);
+        Assert.Contains("LabelTextStyle", xaml);
+        Assert.Contains("DividendPlanTargetYear", xaml);
+        Assert.Contains("DividendPlanPurchaseDate", xaml);
+        Assert.DoesNotContain("PassiveIncomeProjectionYears", xaml);
+        Assert.DoesNotContain("試算年数", xaml);
+        Assert.Contains("DividendMonthlyPlanChartControl", xaml);
+        Assert.Contains("DividendCumulativeComparisonChartControl", xaml);
+        Assert.Contains("DividendWaterfallChartControl", xaml);
+        Assert.Contains("DividendHeatmapControl", xaml);
+        Assert.Contains("DividendMonthMapControl", xaml);
+        Assert.Contains("DividendMonthlyCompositionChartControl", xaml);
+        Assert.Contains("DividendInvestmentRankingChartControl", xaml);
+        Assert.Contains("DividendCompositionDonutControl", xaml);
+        Assert.Contains("DividendCalendarMonths", xaml);
+        Assert.Contains("DividendPlanMonthlyRows", xaml);
+        Assert.Contains("DividendStrategyComment", xaml);
+    }
+
+    [Fact]
+    public void DividendPurchasePlanView_ProvidesEditablePlanningSelectionsAndCalendarNavigation()
+    {
+        var xaml = ReadRepoFile("InvestmentStory.App", "Views", "DividendPurchasePlanView.xaml");
+
+        Assert.Contains("PlannedAdditionalShares, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("PlannedBroker, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("PlannedAccountType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("Country, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged", xaml);
+        Assert.Contains("OpenDividendCalendarStockCommand", xaml);
+        Assert.Contains("CommandParameter=\"{Binding SelectedDividendCalendarEvent.StockId}\"", xaml);
+        Assert.Contains("配当情報取得済", ReadRepoFile("InvestmentStory.App", "ViewModels", "SimulationViewModel.cs"));
+    }
+
+    [Fact]
+    public void SimulationView_LabelsDividendTabAsCurrentYearPurchasePlan()
+    {
+        var xaml = ReadRepoFile("InvestmentStory.App", "Views", "SimulationView.xaml");
+
+        Assert.Contains("<TabItem Header=\"今年の購入計画\">", xaml);
+        Assert.Contains("<views:DividendPurchasePlanView DataContext=\"{Binding}\" />", xaml);
     }
 
     private static string ReadRepoFile(params string[] relativeParts)

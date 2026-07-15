@@ -13,15 +13,18 @@ public sealed class SimulationViewModel : ObservableObject
     private readonly InvestmentCalculator _calculator;
     private readonly MutualFundAssetSimulationService _simulationService;
     private readonly DividendGrowthSimulationService _dividendSimulationService = new();
+    private readonly DividendPurchasePlanSimulationService _dividendPurchasePlanService = new();
     private readonly IMarketDataService _marketDataService;
     private readonly IStockLookupService _stockLookupService;
     private readonly IFundMarketDataService? _fundMarketDataService;
     private readonly Func<AppSettings> _loadSettings;
     private readonly Action<AppSettings> _saveSettings;
+    private readonly Action<int>? _openStockDetail;
     private static readonly TimeSpan NewDividendStockFetchTimeout = TimeSpan.FromSeconds(20);
     private IReadOnlyList<StockPosition> _positions = Array.Empty<StockPosition>();
     private IReadOnlyList<BrokerTrade> _brokerTrades = Array.Empty<BrokerTrade>();
     private IReadOnlyList<TaxProfile> _taxProfiles = Array.Empty<TaxProfile>();
+    private IReadOnlyList<DividendPayment> _dividendPayments = Array.Empty<DividendPayment>();
     private SimulationScopeOptionViewModel? _selectedScope;
     private bool _suppressDividendAutoUpdates;
     private decimal _currentAnnualPassiveIncome;
@@ -32,6 +35,8 @@ public sealed class SimulationViewModel : ObservableObject
     private int _passiveIncomeProjectionYears = 10;
     private string _passiveIncomePlanName = "Default";
     private string _passiveIncomeDisplayMode = DividendGrowthDisplayModes.AggregateBySecurity;
+    private int _dividendPlanTargetYear = DateTime.Today.Year;
+    private DateTime _dividendPlanPurchaseDate = DateTime.Today;
     private string _passiveIncomeCurrentGrossDividend = "0円";
     private string _passiveIncomeCurrentNetDividend = "0円";
     private string _passiveIncomePostAddGrossDividend = "0円";
@@ -46,6 +51,18 @@ public sealed class SimulationViewModel : ObservableObject
     private string _passiveIncomeGoalAchievement = "0.00%";
     private string _passiveIncomeGoalGap = "0円";
     private string _passiveIncomeTaxSummary = "税額 0円";
+    private string _passiveIncomeMissedDividend = "0円";
+    private string _passiveIncomeNextYearDividend = "0円";
+    private string _passiveIncomeCurrentYield = "0.00%";
+    private string _passiveIncomeYieldOnCost = "0.00%";
+    private string _passiveIncomePostAddPortfolioYield = "0.00%";
+    private string _passiveIncomePaybackYears = "対象外";
+    private decimal _passiveIncomeCurrentAnnualValue;
+    private decimal _passiveIncomePlannedAnnualValue;
+    private string _dividendStrategyCommentTitle = "購入計画を入力してください";
+    private string _dividendStrategyComment = "買い増し株数または新規購入予定を入力すると、配当戦略を分析します。";
+    private string _dividendStrategyRating = "-";
+    private DividendCalendarEventViewModel? _selectedDividendCalendarEvent;
     private DividendSimulationRowViewModel? _selectedNewDividendSimulationRow;
     private string _passiveIncomeResultSummary = "条件を入力してシミュレーションしてください。";
     private string _passiveIncomeTrendStatus = "不労所得シミュレーションを実行すると、年月別の上昇トレンドを表示します。";
@@ -81,6 +98,17 @@ public sealed class SimulationViewModel : ObservableObject
     private string _actualAnnualizedReturnPeriod = "-";
     private string _actualAnnualizedReturnPrecision = "-";
     private string _actualAnnualizedReturnNote = string.Empty;
+    private MutualFundScenarioComparisonResult? _lastScenarioResult;
+    private DisplayOptionViewModel? _selectedStoryScenario;
+    private string _targetAsset = "0円";
+    private string _goalRemaining = "0円";
+    private string _currentMonthlyContribution = "0円";
+    private string _selectedScenarioReturn = "標準 5.00%";
+    private string _storyTargetDate = "未達";
+    private string _storyRemainingPeriod = "未達";
+    private string _motivationHeadline = "条件を入力して未来の資産ストーリーを確認します。";
+    private string _motivationDetail = string.Empty;
+    private string _chartHorizon = string.Empty;
 
     public SimulationViewModel(
         InvestmentCalculator calculator,
@@ -89,7 +117,8 @@ public sealed class SimulationViewModel : ObservableObject
         Action<AppSettings> saveSettings,
         IMarketDataService? marketDataService = null,
         IStockLookupService? stockLookupService = null,
-        IFundMarketDataService? fundMarketDataService = null)
+        IFundMarketDataService? fundMarketDataService = null,
+        Action<int>? openStockDetail = null)
     {
         _calculator = calculator;
         _simulationService = simulationService;
@@ -98,6 +127,7 @@ public sealed class SimulationViewModel : ObservableObject
             new LocalStockLookupService(),
             new YahooFinanceStockLookupService());
         _fundMarketDataService = fundMarketDataService;
+        _openStockDetail = openStockDetail;
         _loadSettings = loadSettings;
         _saveSettings = saveSettings;
         var settings = _loadSettings();
@@ -107,13 +137,17 @@ public sealed class SimulationViewModel : ObservableObject
         _projectionYears = settings.MutualFundSimulationProjectionYears;
         _targetYears = settings.MutualFundSimulationTargetYears;
         _passiveIncomePlanName = string.IsNullOrWhiteSpace(settings.DividendSimulationPlanName) ? "Default" : settings.DividendSimulationPlanName;
-        _passiveIncomeDisplayMode = string.IsNullOrWhiteSpace(settings.DividendSimulationDisplayMode)
-            ? DividendGrowthDisplayModes.AggregateBySecurity
-            : settings.DividendSimulationDisplayMode;
+        _passiveIncomeDisplayMode = NormalizeDividendPlanDisplayUnit(settings.DividendSimulationDisplayMode);
         _targetAnnualPassiveIncome = settings.DividendSimulationTargetAnnualDividendJpy <= 0m
             ? 1_200_000m
             : settings.DividendSimulationTargetAnnualDividendJpy;
         _passiveIncomeProjectionYears = settings.DividendSimulationProjectionYears <= 0 ? 10 : settings.DividendSimulationProjectionYears;
+        _dividendPlanTargetYear = settings.DividendSimulationTargetYear is >= 2000 and <= 2200
+            ? settings.DividendSimulationTargetYear
+            : DateTime.Today.Year;
+        _dividendPlanPurchaseDate = DateTime.TryParse(settings.DividendSimulationPlannedPurchaseDate, out var savedPurchaseDate)
+            ? savedPurchaseDate.Date
+            : DateTime.Today;
 
         RunCommand = new RelayCommand(RunMutualFundSimulation);
         RunPassiveIncomeCommand = new RelayCommand(RunPassiveIncomeSimulation);
@@ -121,8 +155,20 @@ public sealed class SimulationViewModel : ObservableObject
         AddNewDividendStockCommand = new RelayCommand(AddNewDividendStock);
         RemoveSelectedNewDividendStockCommand = new RelayCommand(RemoveSelectedNewDividendStock, () => SelectedNewDividendSimulationRow is not null);
         FetchNewDividendStockCommand = new RelayCommand(parameter => FetchNewDividendStock(parameter as DividendSimulationRowViewModel));
+        OpenDividendCalendarStockCommand = new RelayCommand(
+            parameter =>
+            {
+                if (parameter is int stockId && stockId > 0)
+                {
+                    _openStockDetail?.Invoke(stockId);
+                }
+            },
+            parameter => parameter is int stockId && stockId > 0 && _openStockDetail is not null);
+        SelectDividendCalendarEventCommand = new RelayCommand(
+            parameter => SelectedDividendCalendarEvent = parameter as DividendCalendarEventViewModel);
         RunTsumitateNisaCommand = RunCommand;
         InitializeScenarioSettings();
+        InitializeStoryScenarioOptions();
     }
 
     public ObservableCollection<SimulationProjectionRowViewModel> Projections { get; } = new();
@@ -130,10 +176,17 @@ public sealed class SimulationViewModel : ObservableObject
     public ObservableCollection<DividendSimulationRowViewModel> DividendSimulationRows { get; } = new();
     public ObservableCollection<DividendSimulationRowViewModel> NewDividendSimulationRows { get; } = new();
     public ObservableCollection<DividendProjectionRowViewModel> DividendProjectionRows { get; } = new();
+    public ObservableCollection<DividendPlanMonthlyRowViewModel> DividendPlanMonthlyRows { get; } = new();
+    public ObservableCollection<DividendPlanRankingRowViewModel> DividendIncreaseRankingRows { get; } = new();
+    public ObservableCollection<DividendPlanRankingRowViewModel> DividendInvestmentRankingRows { get; } = new();
+    public ObservableCollection<DividendPlanCompositionRowViewModel> DividendCompositionRows { get; } = new();
+    public ObservableCollection<DividendPlanStockMonthlyRowViewModel> DividendStockMonthlyRows { get; } = new();
+    public ObservableCollection<DividendCalendarMonthViewModel> DividendCalendarMonths { get; } = new();
     public ObservableCollection<DisplayOptionViewModel> PassiveIncomeDisplayModes { get; } = new()
     {
-        new(DividendGrowthDisplayModes.AggregateBySecurity, "銘柄ごとに集約"),
-        new(DividendGrowthDisplayModes.Position, "口座・証券会社ごと")
+        new(DividendPurchasePlanDisplayUnits.AllAccounts, "全口座"),
+        new(DividendPurchasePlanDisplayUnits.Broker, "証券会社別"),
+        new(DividendPurchasePlanDisplayUnits.Account, "口座別")
     };
     public ObservableCollection<string> DividendBrokerOptions { get; } = new()
     {
@@ -175,13 +228,18 @@ public sealed class SimulationViewModel : ObservableObject
     public ObservableCollection<MutualFundScenarioSettingViewModel> ScenarioSettings { get; } = new();
     public ObservableCollection<MutualFundScenarioComparisonRowViewModel> ScenarioComparisonRows { get; } = new();
     public ObservableCollection<MutualFundScenarioMonthlyRowViewModel> ScenarioMonthlyRows { get; } = new();
+    public ObservableCollection<MutualFundScenarioMonthlyRowViewModel> ScenarioAnnualRows { get; } = new();
     public ObservableCollection<MutualFundScenarioChartSeriesViewModel> ScenarioChartSeries { get; } = new();
+    public ObservableCollection<MutualFundScenarioRankingRowViewModel> ScenarioRankingRows { get; } = new();
+    public ObservableCollection<DisplayOptionViewModel> StoryScenarioOptions { get; } = new();
     public ICommand RunCommand { get; }
     public ICommand RunPassiveIncomeCommand { get; }
     public ICommand SavePassiveIncomePlanCommand { get; }
     public ICommand AddNewDividendStockCommand { get; }
     public ICommand RemoveSelectedNewDividendStockCommand { get; }
     public ICommand FetchNewDividendStockCommand { get; }
+    public ICommand OpenDividendCalendarStockCommand { get; }
+    public ICommand SelectDividendCalendarEventCommand { get; }
     public ICommand RunTsumitateNisaCommand { get; }
 
     public decimal CurrentAnnualPassiveIncome
@@ -228,6 +286,49 @@ public sealed class SimulationViewModel : ObservableObject
             if (SetProperty(ref _passiveIncomeProjectionYears, value) && !_suppressDividendAutoUpdates)
             {
                 RunPassiveIncomeSimulation();
+            }
+        }
+    }
+
+    public int DividendPlanTargetYear
+    {
+        get => _dividendPlanTargetYear;
+        set
+        {
+            var normalized = Math.Clamp(value, 2000, 2200);
+            if (!SetProperty(ref _dividendPlanTargetYear, normalized))
+            {
+                return;
+            }
+
+            var day = Math.Min(DividendPlanPurchaseDate.Day, DateTime.DaysInMonth(normalized, DividendPlanPurchaseDate.Month));
+            _dividendPlanPurchaseDate = new DateTime(normalized, DividendPlanPurchaseDate.Month, day);
+            OnPropertyChanged(nameof(DividendPlanPurchaseDate));
+            if (!_suppressDividendAutoUpdates)
+            {
+                RunPassiveIncomeSimulation(saveSettings: false);
+            }
+        }
+    }
+
+    public DateTime DividendPlanPurchaseDate
+    {
+        get => _dividendPlanPurchaseDate;
+        set
+        {
+            if (!SetProperty(ref _dividendPlanPurchaseDate, value.Date))
+            {
+                return;
+            }
+
+            if (_dividendPlanTargetYear != value.Year)
+            {
+                _dividendPlanTargetYear = value.Year;
+                OnPropertyChanged(nameof(DividendPlanTargetYear));
+            }
+            if (!_suppressDividendAutoUpdates)
+            {
+                RunPassiveIncomeSimulation(saveSettings: false);
             }
         }
     }
@@ -346,6 +447,78 @@ public sealed class SimulationViewModel : ObservableObject
     {
         get => _passiveIncomeTaxSummary;
         private set => SetProperty(ref _passiveIncomeTaxSummary, value);
+    }
+
+    public string PassiveIncomeMissedDividend
+    {
+        get => _passiveIncomeMissedDividend;
+        private set => SetProperty(ref _passiveIncomeMissedDividend, value);
+    }
+
+    public string PassiveIncomeNextYearDividend
+    {
+        get => _passiveIncomeNextYearDividend;
+        private set => SetProperty(ref _passiveIncomeNextYearDividend, value);
+    }
+
+    public string PassiveIncomeCurrentYield
+    {
+        get => _passiveIncomeCurrentYield;
+        private set => SetProperty(ref _passiveIncomeCurrentYield, value);
+    }
+
+    public string PassiveIncomeYieldOnCost
+    {
+        get => _passiveIncomeYieldOnCost;
+        private set => SetProperty(ref _passiveIncomeYieldOnCost, value);
+    }
+
+    public string PassiveIncomePostAddPortfolioYield
+    {
+        get => _passiveIncomePostAddPortfolioYield;
+        private set => SetProperty(ref _passiveIncomePostAddPortfolioYield, value);
+    }
+
+    public string PassiveIncomePaybackYears
+    {
+        get => _passiveIncomePaybackYears;
+        private set => SetProperty(ref _passiveIncomePaybackYears, value);
+    }
+
+    public decimal PassiveIncomeCurrentAnnualValue
+    {
+        get => _passiveIncomeCurrentAnnualValue;
+        private set => SetProperty(ref _passiveIncomeCurrentAnnualValue, value);
+    }
+
+    public decimal PassiveIncomePlannedAnnualValue
+    {
+        get => _passiveIncomePlannedAnnualValue;
+        private set => SetProperty(ref _passiveIncomePlannedAnnualValue, value);
+    }
+
+    public string DividendStrategyCommentTitle
+    {
+        get => _dividendStrategyCommentTitle;
+        private set => SetProperty(ref _dividendStrategyCommentTitle, value);
+    }
+
+    public string DividendStrategyComment
+    {
+        get => _dividendStrategyComment;
+        private set => SetProperty(ref _dividendStrategyComment, value);
+    }
+
+    public string DividendStrategyRating
+    {
+        get => _dividendStrategyRating;
+        private set => SetProperty(ref _dividendStrategyRating, value);
+    }
+
+    public DividendCalendarEventViewModel? SelectedDividendCalendarEvent
+    {
+        get => _selectedDividendCalendarEvent;
+        private set => SetProperty(ref _selectedDividendCalendarEvent, value);
     }
 
     public string PassiveIncomeResultSummary
@@ -595,6 +768,72 @@ public sealed class SimulationViewModel : ObservableObject
         private set => SetProperty(ref _chartStatus, value);
     }
 
+    public DisplayOptionViewModel? SelectedStoryScenario
+    {
+        get => _selectedStoryScenario;
+        set
+        {
+            if (SetProperty(ref _selectedStoryScenario, value) && _lastScenarioResult is not null)
+            {
+                UpdateFocusedScenario(_lastScenarioResult);
+            }
+        }
+    }
+
+    public string TargetAsset
+    {
+        get => _targetAsset;
+        private set => SetProperty(ref _targetAsset, value);
+    }
+
+    public string GoalRemaining
+    {
+        get => _goalRemaining;
+        private set => SetProperty(ref _goalRemaining, value);
+    }
+
+    public string CurrentMonthlyContribution
+    {
+        get => _currentMonthlyContribution;
+        private set => SetProperty(ref _currentMonthlyContribution, value);
+    }
+
+    public string SelectedScenarioReturn
+    {
+        get => _selectedScenarioReturn;
+        private set => SetProperty(ref _selectedScenarioReturn, value);
+    }
+
+    public string StoryTargetDate
+    {
+        get => _storyTargetDate;
+        private set => SetProperty(ref _storyTargetDate, value);
+    }
+
+    public string StoryRemainingPeriod
+    {
+        get => _storyRemainingPeriod;
+        private set => SetProperty(ref _storyRemainingPeriod, value);
+    }
+
+    public string MotivationHeadline
+    {
+        get => _motivationHeadline;
+        private set => SetProperty(ref _motivationHeadline, value);
+    }
+
+    public string MotivationDetail
+    {
+        get => _motivationDetail;
+        private set => SetProperty(ref _motivationDetail, value);
+    }
+
+    public string ChartHorizon
+    {
+        get => _chartHorizon;
+        private set => SetProperty(ref _chartHorizon, value);
+    }
+
     public string StatusMessage
     {
         get => _statusMessage;
@@ -641,10 +880,14 @@ public sealed class SimulationViewModel : ObservableObject
         RunPassiveIncomeSimulation(saveSettings: false);
     }
 
-    public void UpdateDividendPortfolio(IReadOnlyList<StockPosition> positions, IReadOnlyList<TaxProfile> taxProfiles)
+    public void UpdateDividendPortfolio(
+        IReadOnlyList<StockPosition> positions,
+        IReadOnlyList<TaxProfile> taxProfiles,
+        IReadOnlyList<DividendPayment>? dividendPayments = null)
     {
         _positions = positions;
         _taxProfiles = taxProfiles;
+        _dividendPayments = dividendPayments ?? Array.Empty<DividendPayment>();
         RebuildDividendPlanRows();
         RunPassiveIncomeSimulation(saveSettings: false);
     }
@@ -656,24 +899,25 @@ public sealed class SimulationViewModel : ObservableObject
 
     private void RunPassiveIncomeSimulation(bool saveSettings)
     {
-        if (TargetAnnualPassiveIncome < 0m || PassiveIncomeProjectionYears <= 0)
+        if (TargetAnnualPassiveIncome < 0m)
         {
-            PassiveIncomeResultSummary = "目標年間配当は0円以上、試算年数は1年以上で入力してください。";
+            PassiveIncomeResultSummary = "目標年間配当は0円以上で入力してください。";
             return;
         }
 
-        var result = _dividendSimulationService.Simulate(
-            new DividendGrowthSimulationInput
+        var result = _dividendPurchasePlanService.Simulate(
+            new DividendPurchasePlanInput
             {
                 PlanName = PassiveIncomePlanName,
-                DisplayMode = PassiveIncomeDisplayMode,
-                TargetAnnualDividendJpy = TargetAnnualPassiveIncome,
-                ProjectionYears = PassiveIncomeProjectionYears,
-                StartYear = DateTime.Today.Year,
-                PlanItems = BuildDividendPlanItems()
+                TargetYear = DividendPlanTargetYear,
+                PlannedPurchaseDate = DividendPlanPurchaseDate,
+                DisplayUnit = PassiveIncomeDisplayMode,
+                TargetAnnualNetDividendJpy = TargetAnnualPassiveIncome,
+                PlanItems = BuildDividendPlanItems(),
+                DividendPayments = _dividendPayments
             },
             _taxProfiles);
-        ApplyDividendSimulationResult(result);
+        ApplyDividendPurchasePlanResult(result);
 
         if (saveSettings)
         {
@@ -681,46 +925,124 @@ public sealed class SimulationViewModel : ObservableObject
         }
     }
 
-    private void ApplyDividendSimulationResult(DividendGrowthSimulationResult result)
+    private void ApplyDividendPurchasePlanResult(DividendPurchasePlanResult result)
     {
-        PassiveIncomeCurrentGrossDividend = Formatters.Jpy(result.Summary.CurrentGrossAnnualDividendJpy);
-        PassiveIncomeCurrentNetDividend = Formatters.Jpy(result.Summary.CurrentNetAnnualDividendJpy);
-        PassiveIncomePostAddGrossDividend = Formatters.Jpy(result.Summary.PostAddGrossAnnualDividendJpy);
-        PassiveIncomePostAddNetDividend = Formatters.Jpy(result.Summary.PostAddNetAnnualDividendJpy);
-        PassiveIncomeExistingPlannedInvestment = Formatters.Jpy(result.Summary.ExistingPlannedInvestmentJpy);
-        PassiveIncomeNewPlannedInvestment = Formatters.Jpy(result.Summary.NewPlannedInvestmentJpy);
-        PassiveIncomeTotalPlannedInvestment = Formatters.Jpy(result.Summary.TotalPlannedInvestmentJpy);
-        PassiveIncomeDividendIncrease = Formatters.SignedJpy(result.Summary.AnnualDividendIncreaseJpy);
-        PassiveIncomeNetDividendIncrease = Formatters.SignedJpy(result.Summary.NetAnnualDividendIncreaseJpy);
-        PassiveIncomeMonthlyNetDividend = Formatters.Jpy(result.Summary.MonthlyNetDividendJpy);
-        PassiveIncomeInvestmentYield = Formatters.Percent(result.Summary.InvestmentDividendYieldRate);
+        var summary = result.Summary;
+        PassiveIncomeCurrentGrossDividend = Formatters.Jpy(summary.CurrentTargetYearNetDividendJpy);
+        PassiveIncomeCurrentNetDividend = Formatters.Jpy(summary.CurrentTargetYearNetDividendJpy);
+        PassiveIncomePostAddGrossDividend = Formatters.Jpy(summary.PlannedTargetYearNetDividendJpy);
+        PassiveIncomePostAddNetDividend = Formatters.Jpy(summary.PlannedTargetYearNetDividendJpy);
+        PassiveIncomeExistingPlannedInvestment = Formatters.Jpy(result.Holdings.Where(x => !x.IsNewStock).Sum(x => x.PlannedPurchaseAmountJpy));
+        PassiveIncomeNewPlannedInvestment = Formatters.Jpy(result.Holdings.Where(x => x.IsNewStock).Sum(x => x.PlannedPurchaseAmountJpy));
+        PassiveIncomeTotalPlannedInvestment = Formatters.Jpy(summary.PlannedInvestmentJpy);
+        PassiveIncomeDividendIncrease = Formatters.SignedJpy(summary.TargetYearDividendIncreaseJpy);
+        PassiveIncomeNetDividendIncrease = Formatters.SignedJpy(summary.TargetYearDividendIncreaseJpy);
+        PassiveIncomeMonthlyNetDividend = Formatters.Jpy(summary.PlannedTargetYearNetDividendJpy / 12m);
+        PassiveIncomeInvestmentYield = Formatters.Percent(summary.AdditionalInvestmentYieldRate);
         PassiveIncomeGoalAchievement = Formatters.Percent(result.Summary.TargetAchievementRate);
-        PassiveIncomeGoalGap = Formatters.Jpy(result.Summary.TargetGapJpy);
+        PassiveIncomeGoalGap = Formatters.Jpy(Math.Max(0m, TargetAnnualPassiveIncome - summary.NextYearAnnualNetDividendJpy));
+        PassiveIncomeMissedDividend = Formatters.Jpy(summary.MissedTargetYearNetDividendJpy);
+        PassiveIncomeNextYearDividend = Formatters.Jpy(summary.NextYearAnnualNetDividendJpy);
+        PassiveIncomeCurrentYield = Formatters.Percent(summary.CurrentYieldRate);
+        PassiveIncomeYieldOnCost = Formatters.Percent(summary.YieldOnCostRate);
+        PassiveIncomePostAddPortfolioYield = Formatters.Percent(summary.PostAddPortfolioYieldRate);
+        PassiveIncomePaybackYears = summary.AdditionalInvestmentPaybackYears <= 0m
+            ? "対象外"
+            : $"{summary.AdditionalInvestmentPaybackYears:N1}年";
+        PassiveIncomeCurrentAnnualValue = summary.CurrentTargetYearNetDividendJpy;
+        PassiveIncomePlannedAnnualValue = summary.NextYearAnnualNetDividendJpy;
         PassiveIncomeTaxSummary =
-            $"外国税 {Formatters.Jpy(result.Summary.ForeignTaxJpy)} / 国内税 {Formatters.Jpy(result.Summary.DomesticTaxJpy)} / 合計 {Formatters.Jpy(result.Summary.TotalTaxJpy)}";
-        PassiveIncomeResultSummary = result.Summary.TargetAchievementYear is null
-            ? "指定期間内では税引後配当が目標に届きません。買い増し株数、配当成長率、目標額を調整してください。"
-            : $"{result.Summary.TargetAchievementYear}年に税引後配当が目標へ到達する見込みです。";
+            $"外国税 {Formatters.Jpy(summary.ForeignTaxJpy)} / 国内税 {Formatters.Jpy(summary.DomesticTaxJpy)} / 合計 {Formatters.Jpy(summary.TotalTaxJpy)}";
+        PassiveIncomeResultSummary =
+            $"{DividendPlanTargetYear}年は購入予定日 {DividendPlanPurchaseDate:yyyy/MM/dd} と権利付き最終日から判定。" +
+            $"今年の追加配当 {Formatters.SignedJpy(summary.TargetYearDividendIncreaseJpy)}、翌年通期 {Formatters.Jpy(summary.NextYearAnnualNetDividendJpy)}。";
 
         DividendProjectionRows.Clear();
         PassiveIncomeTrendPoints.Clear();
-        foreach (var projection in result.Projections)
+        DividendPlanMonthlyRows.Clear();
+        foreach (var month in result.Months)
         {
-            DividendProjectionRows.Add(new DividendProjectionRowViewModel(projection));
-            PassiveIncomeTrendPoints.Add(new PriceChartPointViewModel
-            {
-                Date = new DateTime(projection.Year, 12, 1),
-                Open = projection.PlannedNetDividendJpy,
-                High = Math.Max(projection.PlannedNetDividendJpy, projection.TargetAnnualDividendJpy),
-                Low = Math.Min(projection.PlannedNetDividendJpy, projection.CurrentOnlyNetDividendJpy),
-                Close = projection.PlannedNetDividendJpy,
-                Volume = projection.CurrentOnlyNetDividendJpy
-            });
+            DividendPlanMonthlyRows.Add(new DividendPlanMonthlyRowViewModel(month));
         }
 
-        PassiveIncomeTrendStatus = result.Projections.Count == 0
-            ? "配当シミュレーションのグラフデータがありません。"
-            : $"{result.Projections[0].Year} - {result.Projections[^1].Year} / 税引後年間配当トレンド";
+        DividendIncreaseRankingRows.Clear();
+        foreach (var holding in result.Holdings.Where(x => x.NextYearAdditionalNetDividendJpy > 0m)
+                     .OrderByDescending(x => x.NextYearAdditionalNetDividendJpy))
+        {
+            DividendIncreaseRankingRows.Add(new DividendPlanRankingRowViewModel(holding));
+        }
+
+        DividendInvestmentRankingRows.Clear();
+        foreach (var holding in result.Holdings.Where(x => x.PlannedPurchaseAmountJpy > 0m)
+                     .OrderByDescending(x => x.PlannedPurchaseAmountJpy))
+        {
+            DividendInvestmentRankingRows.Add(new DividendPlanRankingRowViewModel(holding));
+        }
+
+        DividendCompositionRows.Clear();
+        foreach (var item in result.Composition)
+        {
+            DividendCompositionRows.Add(new DividendPlanCompositionRowViewModel(item));
+        }
+
+        DividendCalendarMonths.Clear();
+        foreach (var month in result.Months)
+        {
+            DividendCalendarMonths.Add(new DividendCalendarMonthViewModel(month));
+        }
+
+        SelectedDividendCalendarEvent = null;
+
+        DividendStockMonthlyRows.Clear();
+        var eventsByTicker = result.Months
+            .SelectMany(x => x.Events)
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Ticker) ? x.Name : x.Ticker, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(group => group.Sum(x => x.CurrentNetDividendJpy + x.AdditionalNetDividendJpy));
+        foreach (var group in eventsByTicker)
+        {
+            DividendStockMonthlyRows.Add(new DividendPlanStockMonthlyRowViewModel(
+                group.Key,
+                group.First().Name,
+                group.ToList()));
+        }
+
+        var topContribution = result.Holdings
+            .Where(x => x.NextYearAdditionalNetDividendJpy > 0m)
+            .OrderByDescending(x => x.NextYearAdditionalNetDividendJpy)
+            .FirstOrDefault();
+        var strongestMonth = result.Months
+            .OrderByDescending(x => x.AdditionalNetDividendJpy)
+            .FirstOrDefault();
+        DividendStrategyRating = summary.AdditionalInvestmentYieldRate switch
+        {
+            >= 5m => "★★★★★",
+            >= 4m => "★★★★☆",
+            >= 3m => "★★★☆☆",
+            > 0m => "★★☆☆☆",
+            _ => "-"
+        };
+        DividendStrategyCommentTitle = topContribution is null
+            ? "購入予定はまだありません"
+            : $"配当増加への最大貢献は {topContribution.Ticker}";
+        DividendStrategyComment = topContribution is null
+            ? "買い増し株数または新規購入予定を入力すると、投資額・今年の受取可否・翌年配当を同じ条件で比較できます。"
+            : $"追加投資 {Formatters.Jpy(summary.PlannedInvestmentJpy)} により、今年は {Formatters.SignedJpy(summary.TargetYearDividendIncreaseJpy)}、" +
+              $"翌年通期は {Formatters.Jpy(summary.NextYearAnnualNetDividendJpy)} の税引後配当見込みです。" +
+              $"追加投資利回りは {Formatters.Percent(summary.AdditionalInvestmentYieldRate)}、回収年数は {PassiveIncomePaybackYears}。" +
+              (strongestMonth is null || strongestMonth.AdditionalNetDividendJpy <= 0m
+                  ? string.Empty
+                  : $" 最も改善する月は {strongestMonth.Month}月（{Formatters.SignedJpy(strongestMonth.AdditionalNetDividendJpy)}）です。") +
+              $" この分析は取得済み・過去実績・推定の配当日程を使用し、実際の入金額は証券会社実績を正とします。";
+
+        var byKey = result.Holdings
+            .GroupBy(x => x.PlanKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        foreach (var row in DividendSimulationRows.Concat(NewDividendSimulationRows))
+        {
+            row.ApplyPlanResult(byKey.GetValueOrDefault(row.PlanKey));
+        }
+
+        PassiveIncomeTrendStatus = $"{DividendPlanTargetYear}年 月別税引後配当（現在保有・買い増し・新規購入）";
     }
 
     private void RebuildDividendPlanRows()
@@ -737,7 +1059,14 @@ public sealed class SimulationViewModel : ObservableObject
             .Concat(currentEdits)
             .GroupBy(GetPlanOverrideKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
-        var defaultRows = _dividendSimulationService.CreateDefaultPlanItems(_positions, PassiveIncomeDisplayMode);
+        var defaultRows = _dividendSimulationService.CreateDefaultPlanItems(
+            _positions,
+            PassiveIncomeDisplayMode switch
+            {
+                DividendPurchasePlanDisplayUnits.Broker => DividendGrowthDisplayModes.AggregateByBroker,
+                DividendPurchasePlanDisplayUnits.Account => DividendGrowthDisplayModes.AggregateByAccount,
+                _ => DividendGrowthDisplayModes.AggregateBySecurity
+            });
 
         DividendSimulationRows.Clear();
         foreach (var item in defaultRows)
@@ -889,6 +1218,7 @@ public sealed class SimulationViewModel : ObservableObject
         var country = MarketDataSymbolResolver.NormalizeCountry(FirstNonBlank(quote?.Country, lookup?.Country, request.Country), currency, ticker);
         var price = quote?.CurrentPrice ?? lookup?.CurrentPrice;
         var annualDividend = quote?.AnnualDividendPerShare ?? lookup?.AnnualDividendPerShare;
+        var dividendFrequency = FirstNonBlank(quote?.DividendFrequency, lookup?.DividendFrequency);
         var exchangeRate = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
             ? 1m
             : quote?.UsdJpyRate ?? request.ExchangeRate;
@@ -924,7 +1254,11 @@ public sealed class SimulationViewModel : ObservableObject
                 dividendSource,
                 source,
                 quote.PriceAcquiredAt ?? now,
-                status);
+                status,
+                dividendFrequency,
+                quote.DividendRecordDate,
+                quote.ExDividendDate,
+                quote.DividendPaymentStartDate);
         }
 
         if (lookup is not null)
@@ -953,7 +1287,8 @@ public sealed class SimulationViewModel : ObservableObject
                 dividendSource,
                 lookup.Source,
                 now,
-                BuildMarketDataStatus(validation, lookup.Source, now));
+                BuildMarketDataStatus(validation, lookup.Source, now),
+                dividendFrequency);
         }
 
         return new DividendStockMarketDataFetchResult(
@@ -1037,7 +1372,8 @@ public sealed class SimulationViewModel : ObservableObject
         settings.DividendSimulationPlanName = string.IsNullOrWhiteSpace(PassiveIncomePlanName) ? "Default" : PassiveIncomePlanName;
         settings.DividendSimulationDisplayMode = PassiveIncomeDisplayMode;
         settings.DividendSimulationTargetAnnualDividendJpy = TargetAnnualPassiveIncome;
-        settings.DividendSimulationProjectionYears = PassiveIncomeProjectionYears;
+        settings.DividendSimulationTargetYear = DividendPlanTargetYear;
+        settings.DividendSimulationPlannedPurchaseDate = DividendPlanPurchaseDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         settings.DividendSimulationPlanJson = JsonSerializer.Serialize(BuildDividendPlanItems());
         _saveSettings(settings);
     }
@@ -1065,7 +1401,6 @@ public sealed class SimulationViewModel : ObservableObject
         IReadOnlyDictionary<string, DividendGrowthPlanItem> overrides)
     {
         if (!overrides.TryGetValue(GetPlanOverrideKey(source), out var saved) &&
-            !overrides.TryGetValue(source.CanonicalKey, out saved) &&
             !overrides.TryGetValue(source.PositionKey, out saved))
         {
             return source;
@@ -1073,6 +1408,7 @@ public sealed class SimulationViewModel : ObservableObject
 
         return new DividendGrowthPlanItem
         {
+            StockId = source.StockId,
             PlanKey = source.PlanKey,
             CanonicalKey = source.CanonicalKey,
             PositionKey = source.PositionKey,
@@ -1086,6 +1422,13 @@ public sealed class SimulationViewModel : ObservableObject
             CurrentPrice = saved.CurrentPrice > 0m ? saved.CurrentPrice : source.CurrentPrice,
             ExchangeRate = saved.ExchangeRate > 0m ? saved.ExchangeRate : source.ExchangeRate,
             AnnualDividendPerShare = saved.AnnualDividendPerShare > 0m ? saved.AnnualDividendPerShare : source.AnnualDividendPerShare,
+            CurrentCostJpy = source.CurrentCostJpy,
+            CurrentMarketValueJpy = source.CurrentMarketValueJpy,
+            DividendFrequency = string.IsNullOrWhiteSpace(saved.DividendFrequency) ? source.DividendFrequency : saved.DividendFrequency,
+            DividendMonths = string.IsNullOrWhiteSpace(saved.DividendMonths) ? source.DividendMonths : saved.DividendMonths,
+            DividendRecordDate = saved.DividendRecordDate ?? source.DividendRecordDate,
+            ExDividendDate = saved.ExDividendDate ?? source.ExDividendDate,
+            DividendPaymentDate = saved.DividendPaymentDate ?? source.DividendPaymentDate,
             AnnualDividendSource = string.IsNullOrWhiteSpace(saved.AnnualDividendSource) ? source.AnnualDividendSource : saved.AnnualDividendSource,
             MarketDataSource = string.IsNullOrWhiteSpace(saved.MarketDataSource) ? source.MarketDataSource : saved.MarketDataSource,
             MarketDataAcquiredAt = saved.MarketDataAcquiredAt ?? source.MarketDataAcquiredAt,
@@ -1099,6 +1442,14 @@ public sealed class SimulationViewModel : ObservableObject
             Components = source.Components
         };
     }
+
+    private static string NormalizeDividendPlanDisplayUnit(string? value) =>
+        value switch
+        {
+            DividendPurchasePlanDisplayUnits.Broker => DividendPurchasePlanDisplayUnits.Broker,
+            DividendPurchasePlanDisplayUnits.Account => DividendPurchasePlanDisplayUnits.Account,
+            _ => DividendPurchasePlanDisplayUnits.AllAccounts
+        };
 
     private static string GetPlanOverrideKey(DividendGrowthPlanItem item) =>
         !string.IsNullOrWhiteSpace(item.PlanKey)
@@ -1242,7 +1593,7 @@ public sealed class SimulationViewModel : ObservableObject
                 MonthlyContributionJpy = MonthlyContributionJpy,
                 TargetAmountJpy = TargetAmountJpy,
                 ProjectionYears = ProjectionYears,
-                TargetYears = ProjectionYears,
+                TargetYears = TargetYears,
                 StartYear = DateTime.Today.Year,
                 StartMonth = DateTime.Today.Month
             },
@@ -1405,6 +1756,16 @@ public sealed class SimulationViewModel : ObservableObject
             "購入日・入出金・積立履歴が不足しているため、実績年利を算出できません。"));
     }
 
+    private void InitializeStoryScenarioOptions()
+    {
+        StoryScenarioOptions.Clear();
+        StoryScenarioOptions.Add(new DisplayOptionViewModel("Conservative", "保守的（3%）"));
+        StoryScenarioOptions.Add(new DisplayOptionViewModel("Standard", "標準（5%）"));
+        StoryScenarioOptions.Add(new DisplayOptionViewModel("Aggressive", "積極的（7%）"));
+        StoryScenarioOptions.Add(new DisplayOptionViewModel("Actual", "実績参考（XIRR）"));
+        SelectedStoryScenario = StoryScenarioOptions.First(x => x.Value == "Standard");
+    }
+
     private void OnMutualFundScenarioChanged()
     {
         if (!_suppressMutualFundAutoUpdates)
@@ -1442,6 +1803,7 @@ public sealed class SimulationViewModel : ObservableObject
         MutualFundScenarioComparisonResult result,
         MutualFundActualAnnualizedReturnEstimate? actualEstimate = null)
     {
+        _lastScenarioResult = result;
         var summary = result.Summary;
         IsMonthlyContributionEnabled = summary.AllowsMonthlyContribution;
         CurrentMarketValue = Formatters.Jpy(summary.CurrentMarketValueJpy);
@@ -1454,6 +1816,11 @@ public sealed class SimulationViewModel : ObservableObject
         ActualAnnualizedReturnBasis = summary.ActualAnnualizedReturnRate is null ? "算出不可" : "保有期間年率換算";
         FundCount = $"{summary.FundCount:N0}件";
         PositionCount = $"{summary.PositionCount:N0}件";
+        TargetAsset = Formatters.Jpy(TargetAmountJpy);
+        GoalRemaining = Formatters.Jpy(Math.Max(0m, TargetAmountJpy - summary.CurrentMarketValueJpy));
+        CurrentMonthlyContribution = summary.AllowsMonthlyContribution
+            ? Formatters.Jpy(summary.EffectiveMonthlyContributionJpy)
+            : "追加積立なし";
 
         actualEstimate ??= summary.ActualAnnualizedReturnEstimate;
         if (actualEstimate is not null)
@@ -1484,9 +1851,12 @@ public sealed class SimulationViewModel : ObservableObject
         RaiseProjectionLabelChanges();
 
         ScenarioComparisonRows.Clear();
+        var chartFinalValues = result.Scenarios
+            .Where(x => x.IsAvailable)
+            .ToDictionary(x => x.Key, x => x.ChartFinalMarketValueJpy, StringComparer.OrdinalIgnoreCase);
         foreach (var scenario in result.Scenarios)
         {
-            ScenarioComparisonRows.Add(new MutualFundScenarioComparisonRowViewModel(scenario, ProjectionYears));
+            ScenarioComparisonRows.Add(new MutualFundScenarioComparisonRowViewModel(scenario, ProjectionYears, chartFinalValues));
         }
 
         ScenarioMonthlyRows.Clear();
@@ -1495,10 +1865,29 @@ public sealed class SimulationViewModel : ObservableObject
             ScenarioMonthlyRows.Add(new MutualFundScenarioMonthlyRowViewModel(row));
         }
 
+        ScenarioAnnualRows.Clear();
+        var chartRows = result.ChartMonthlyComparisons;
+        foreach (var row in chartRows.Where((row, index) =>
+                     row.MonthsFromNow % 12 == 0 || index == chartRows.Count - 1))
+        {
+            ScenarioAnnualRows.Add(new MutualFundScenarioMonthlyRowViewModel(row));
+        }
+
         ScenarioChartSeries.Clear();
         foreach (var scenario in result.Scenarios.Where(x => x.IsAvailable))
         {
             ScenarioChartSeries.Add(new MutualFundScenarioChartSeriesViewModel(scenario, TargetAmountJpy));
+        }
+
+
+        ScenarioRankingRows.Clear();
+        var ranked = result.Scenarios
+            .Where(x => x.IsAvailable)
+            .OrderByDescending(x => x.ChartFinalMarketValueJpy)
+            .ToList();
+        for (var index = 0; index < ranked.Count; index++)
+        {
+            ScenarioRankingRows.Add(new MutualFundScenarioRankingRowViewModel(index + 1, ranked[index]));
         }
 
         var standard = result.Scenarios.FirstOrDefault(x => x.Key == "Standard" && x.IsAvailable) ??
@@ -1513,9 +1902,13 @@ public sealed class SimulationViewModel : ObservableObject
             : standard.TargetAchievementMonth.Value.ToString("yyyy/MM");
         RemainingPeriod = standard is null ? "未達" : FormatRemainingPeriod(standard.MonthsToTarget);
 
-        ChartStatus = result.MonthlyComparisons.Count == 0
+        ChartStatus = result.ChartMonthlyComparisons.Count == 0
             ? "現在保有中の投資信託がありません。CSV取込または登録後に表示されます。"
-            : $"{result.MonthlyComparisons[0].YearMonth:yyyy/MM} - {result.MonthlyComparisons[^1].YearMonth:yyyy/MM} / 4シナリオ月次複利比較";
+            : $"{result.ChartMonthlyComparisons[0].YearMonth:yyyy/MM} - {result.ChartMonthlyComparisons[^1].YearMonth:yyyy/MM} / 4シナリオ月次複利比較";
+        ChartHorizon = result.UsesConservativeTargetHorizon && result.ConservativeTargetMonth is { } conservativeTarget
+            ? $"保守的シナリオの目標到達 {conservativeTarget:yyyy/MM} まで表示"
+            : $"表示期間 {Math.Max(1, ProjectionYears):N0}年";
+        UpdateFocusedScenario(result);
         StatusMessage = summary.ActualAnnualizedReturnRate is null
             ? "実績参考年利は購入日・入出金・積立履歴が不足しているため算出不可です。税金、信託報酬、為替は考慮していません。"
             : "実績参考年利は過去の運用結果に基づく参考値です。将来の運用成果を保証するものではありません。税金、信託報酬、為替は考慮していません。";
@@ -1525,6 +1918,51 @@ public sealed class SimulationViewModel : ObservableObject
         TrendPoints.Clear();
 
         OnPropertyChanged(nameof(MonthlyContributionInput));
+    }
+
+    private void UpdateFocusedScenario(MutualFundScenarioComparisonResult result)
+    {
+        var selectedKey = SelectedStoryScenario?.Value ?? "Standard";
+        var scenario = result.Scenarios.FirstOrDefault(x =>
+                           x.IsAvailable && string.Equals(x.Key, selectedKey, StringComparison.OrdinalIgnoreCase))
+                       ?? result.Scenarios.FirstOrDefault(x => x.IsAvailable && x.Key == "Standard")
+                       ?? result.Scenarios.FirstOrDefault(x => x.IsAvailable);
+        if (scenario is null)
+        {
+            SelectedScenarioReturn = "算出不可";
+            StoryTargetDate = "未達";
+            StoryRemainingPeriod = "未達";
+            MotivationHeadline = "表示できるシナリオがありません。";
+            MotivationDetail = "年利設定と投資信託の現在保有データを確認してください。";
+            return;
+        }
+
+        SelectedScenarioReturn = scenario.AnnualReturnRate is { } rate
+            ? $"{scenario.Name} {rate:N2}%"
+            : $"{scenario.Name} 算出不可";
+        StoryTargetDate = scenario.TargetAchievementMonth?.ToString("yyyy/MM") ?? "未達";
+        StoryRemainingPeriod = FormatRemainingPeriod(scenario.MonthsToTarget);
+        FinalAssetAmount = Formatters.Jpy(scenario.FinalMarketValueJpy);
+        StopContributionFinalAsset = Formatters.Jpy(scenario.NoContributionFinalMarketValueJpy);
+        TargetAchievementMonth = StoryTargetDate;
+        RemainingPeriod = StoryRemainingPeriod;
+
+        var gap = Math.Max(0m, TargetAmountJpy - result.Summary.CurrentMarketValueJpy);
+        if (gap == 0m)
+        {
+            MotivationHeadline = "目標資産を達成しています。";
+            MotivationDetail = $"現在資産は目標を{Formatters.Jpy(result.Summary.CurrentMarketValueJpy - TargetAmountJpy)}上回っています。";
+        }
+        else if (scenario.TargetAchievementMonth is { } targetMonth)
+        {
+            MotivationHeadline = $"目標まであと{Formatters.Jpy(gap)}";
+            MotivationDetail = $"このまま積み立てると、{targetMonth:yyyy年MM月}に目標達成予定です。あと{StoryRemainingPeriod}です。";
+        }
+        else
+        {
+            MotivationHeadline = $"目標まであと{Formatters.Jpy(gap)}";
+            MotivationDetail = "現在の条件では100年以内に到達しません。積立額または想定年利を見直してください。";
+        }
     }
 
     private void ApplyResult(MutualFundAssetSimulationResult result)
@@ -2038,7 +2476,10 @@ public sealed class MutualFundScenarioSettingViewModel : ObservableObject
 
 public sealed class MutualFundScenarioComparisonRowViewModel
 {
-    public MutualFundScenarioComparisonRowViewModel(MutualFundScenarioResult scenario, int projectionYears)
+    public MutualFundScenarioComparisonRowViewModel(
+        MutualFundScenarioResult scenario,
+        int projectionYears,
+        IReadOnlyDictionary<string, decimal> chartFinalValues)
     {
         Scenario = scenario.Name;
         AnnualReturnRate = scenario.AnnualReturnRate is null ? "算出不可" : $"{scenario.AnnualReturnRate.Value:N2}%";
@@ -2054,6 +2495,10 @@ public sealed class MutualFundScenarioComparisonRowViewModel
         Basis = string.IsNullOrWhiteSpace(scenario.UnavailableReason)
             ? scenario.Basis
             : $"{scenario.Basis}: {scenario.UnavailableReason}";
+        DifferenceFromConservative = FormatDifference(scenario, chartFinalValues, "Conservative");
+        DifferenceFromStandard = FormatDifference(scenario, chartFinalValues, "Standard");
+        DifferenceFromAggressive = FormatDifference(scenario, chartFinalValues, "Aggressive");
+        DifferenceFromActual = FormatDifference(scenario, chartFinalValues, "Actual");
     }
 
     public string Scenario { get; }
@@ -2066,6 +2511,25 @@ public sealed class MutualFundScenarioComparisonRowViewModel
     public string CumulativeContribution { get; }
     public string InvestmentGain { get; }
     public string Basis { get; }
+    public string DifferenceFromConservative { get; }
+    public string DifferenceFromStandard { get; }
+    public string DifferenceFromAggressive { get; }
+    public string DifferenceFromActual { get; }
+
+    private static string FormatDifference(
+        MutualFundScenarioResult scenario,
+        IReadOnlyDictionary<string, decimal> values,
+        string comparisonKey)
+    {
+        if (!scenario.IsAvailable ||
+            !values.TryGetValue(scenario.Key, out var current) ||
+            !values.TryGetValue(comparisonKey, out var comparison))
+        {
+            return "-";
+        }
+
+        return Formatters.SignedJpy(current - comparison);
+    }
 
     private static string FormatMonths(int? months)
     {
@@ -2146,10 +2610,12 @@ public sealed class MutualFundScenarioChartSeriesViewModel : ObservableObject
         AnnualReturnRate = scenario.AnnualReturnRate is null ? string.Empty : $"{scenario.AnnualReturnRate.Value:N2}%";
         TargetAmountJpy = targetAmount;
         TargetAchievementMonth = scenario.TargetAchievementMonth;
-        Points = scenario.Projections
+        Points = scenario.ChartProjections
             .Select(row => new MutualFundScenarioChartPointViewModel(
                 row.YearMonth,
                 row.MarketValueJpy,
+                row.CumulativeContributionJpy,
+                row.UnrealizedGainJpy,
                 row.TargetAchievementRate))
             .ToList();
     }
@@ -2168,7 +2634,30 @@ public sealed class MutualFundScenarioChartSeriesViewModel : ObservableObject
     }
 }
 
-public sealed record MutualFundScenarioChartPointViewModel(DateTime YearMonth, decimal MarketValueJpy, decimal TargetAchievementRate);
+public sealed record MutualFundScenarioChartPointViewModel(
+    DateTime YearMonth,
+    decimal MarketValueJpy,
+    decimal CumulativeContributionJpy,
+    decimal UnrealizedGainJpy,
+    decimal TargetAchievementRate);
+
+public sealed class MutualFundScenarioRankingRowViewModel
+{
+    public MutualFundScenarioRankingRowViewModel(int rank, MutualFundScenarioResult scenario)
+    {
+        Rank = $"{rank:N0}位";
+        Scenario = scenario.Name;
+        AnnualReturnRate = scenario.AnnualReturnRate is { } rate ? $"{rate:N2}%" : "算出不可";
+        FinalMarketValue = Formatters.Jpy(scenario.ChartFinalMarketValueJpy);
+        TargetAchievement = scenario.TargetAchievementMonth?.ToString("yyyy/MM") ?? "未達";
+    }
+
+    public string Rank { get; }
+    public string Scenario { get; }
+    public string AnnualReturnRate { get; }
+    public string FinalMarketValue { get; }
+    public string TargetAchievement { get; }
+}
 
 public sealed record DividendStockMarketDataFetchResult(
     bool IsSuccess,
@@ -2183,7 +2672,11 @@ public sealed record DividendStockMarketDataFetchResult(
     string DividendSource,
     string Source,
     DateTime? AcquiredAt,
-    string Status);
+    string Status,
+    string DividendFrequency = "",
+    DateTime? DividendRecordDate = null,
+    DateTime? ExDividendDate = null,
+    DateTime? DividendPaymentDate = null);
 
 public sealed record DividendStockMarketDataFetchRequest(
     string Query,
@@ -2219,13 +2712,20 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     private string _plannedAccountType;
     private decimal _annualDividendGrowthRate;
     private string _purchaseMode;
+    private string _dividendFrequency;
+    private string _dividendMonths;
+    private DateTime? _dividendRecordDate;
+    private DateTime? _exDividendDate;
+    private DateTime? _dividendPaymentDate;
     private string _inputError = string.Empty;
     private readonly IReadOnlyList<DividendGrowthPlanItem> _components;
+    private DividendPurchasePlanHolding? _planResult;
 
     public DividendSimulationRowViewModel(DividendGrowthPlanItem item, Action changed)
     {
         _changed = changed;
         PlanKey = item.PlanKey;
+        StockId = item.StockId;
         CanonicalKey = item.CanonicalKey;
         PositionKey = item.PositionKey;
         IsNewStock = item.IsNewStock;
@@ -2252,6 +2752,13 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
         _annualDividendGrowthRate = item.AnnualDividendGrowthRate;
         _purchaseMode = item.PurchaseMode;
         _components = item.Components;
+        CurrentCostJpy = item.CurrentCostJpy;
+        CurrentMarketValueJpy = item.CurrentMarketValueJpy;
+        _dividendFrequency = item.DividendFrequency;
+        _dividendMonths = item.DividendMonths;
+        _dividendRecordDate = item.DividendRecordDate;
+        _exDividendDate = item.ExDividendDate;
+        _dividendPaymentDate = item.DividendPaymentDate;
         BrokerOptions = DividendSimulationSelectionOptions.BuildBrokerOptions(_broker, _plannedBroker);
         CountryOptions = DividendSimulationSelectionOptions.CountryOptions;
         CurrencyOptions = DividendSimulationSelectionOptions.CurrencyOptions;
@@ -2260,6 +2767,7 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     }
 
     public string PlanKey { get; }
+    public int StockId { get; }
     public string CanonicalKey { get; }
     public string PositionKey { get; }
     public bool IsNewStock { get; }
@@ -2268,6 +2776,37 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     public IReadOnlyList<string> CurrencyOptions { get; }
     public IReadOnlyList<SelectionOption<string>> AccountOptions { get; }
     public IReadOnlyList<SelectionOption<string>> PurchaseModeOptions { get; }
+    public decimal CurrentCostJpy { get; }
+    public decimal CurrentMarketValueJpy { get; }
+    public string DividendFrequency
+    {
+        get => _dividendFrequency;
+        private set => SetProperty(ref _dividendFrequency, value);
+    }
+
+    public string DividendMonths
+    {
+        get => _dividendMonths;
+        private set => SetProperty(ref _dividendMonths, value);
+    }
+
+    public DateTime? DividendRecordDate
+    {
+        get => _dividendRecordDate;
+        private set => SetProperty(ref _dividendRecordDate, value);
+    }
+
+    public DateTime? ExDividendDate
+    {
+        get => _exDividendDate;
+        private set => SetProperty(ref _exDividendDate, value);
+    }
+
+    public DateTime? DividendPaymentDate
+    {
+        get => _dividendPaymentDate;
+        private set => SetProperty(ref _dividendPaymentDate, value);
+    }
 
     public string Ticker
     {
@@ -2412,6 +2951,31 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     public string PostAddSharesPreview => $"{CurrentShares + PlannedAdditionalShares:N2}";
     public string PlannedInvestmentPreview => Formatters.Jpy(PlannedAdditionalShares * CurrentPrice * EffectiveExchangeRate);
     public string PostAddAnnualDividendPreview => FormatMoney((CurrentShares + PlannedAdditionalShares) * AnnualDividendPerShare);
+    public string CurrentYield => _planResult is null ? "-" : Formatters.Percent(_planResult.CurrentYieldRate);
+    public string YieldOnCost => _planResult is null ? "-" : Formatters.Percent(_planResult.YieldOnCostRate);
+    public string ThisYearDividend => _planResult is null ? "-" : Formatters.Jpy(_planResult.TargetYearPlannedNetDividendJpy);
+    public string NextYearDividend => _planResult is null ? "-" : Formatters.Jpy(_planResult.PostAddNextYearNetDividendJpy);
+    public string AnnualDividendIncrease => _planResult is null ? "-" : Formatters.SignedJpy(_planResult.NextYearAdditionalNetDividendJpy);
+    public string AdditionalInvestmentYield => _planResult is null ? "-" : Formatters.Percent(_planResult.AdditionalInvestmentYieldRate);
+    public string DividendComposition => _planResult is null ? "-" : Formatters.Percent(_planResult.DividendCompositionRate);
+    public string DividendMonthsDisplay => _planResult is null || string.IsNullOrWhiteSpace(_planResult.DividendMonths) ? "未取得" : _planResult.DividendMonths;
+    public string NextLastRightsDate => _planResult?.NextLastRightsDate?.ToString("yyyy/MM/dd") ?? "未取得";
+    public string NextPaymentDate => _planResult?.NextPaymentDate?.ToString("yyyy/MM/dd") ?? "未取得";
+    public string EligibilityStatus => _planResult?.EligibilityStatus switch
+    {
+        DividendPlanEligibility.Eligible => "受取可能",
+        DividendPlanEligibility.Ineligible => "受取不可",
+        DividendPlanEligibility.Estimated => "推定",
+        _ => "未取得"
+    };
+    public string DataQuality => _planResult?.DataQuality switch
+    {
+        DividendPlanDataQuality.Acquired => "配当情報取得済",
+        DividendPlanDataQuality.Estimated => "推定",
+        _ => "未取得"
+    };
+    public string DividendPaybackYears => _planResult is null || _planResult.DividendPaybackYears <= 0m ? "-" : $"{_planResult.DividendPaybackYears:N1}年";
+    public string TargetContribution => _planResult is null ? "-" : Formatters.Jpy(_planResult.TargetContributionJpy);
     public string InputError
     {
         get => _inputError;
@@ -2421,6 +2985,7 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
     public DividendGrowthPlanItem ToPlanItem() =>
         new()
         {
+            StockId = StockId,
             PlanKey = PlanKey,
             CanonicalKey = string.IsNullOrWhiteSpace(CanonicalKey) ? Ticker.Trim() : CanonicalKey,
             PositionKey = PositionKey,
@@ -2434,6 +2999,13 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
             CurrentPrice = CurrentPrice,
             ExchangeRate = EffectiveExchangeRate,
             AnnualDividendPerShare = AnnualDividendPerShare,
+            CurrentCostJpy = CurrentCostJpy,
+            CurrentMarketValueJpy = CurrentMarketValueJpy,
+            DividendFrequency = DividendFrequency,
+            DividendMonths = DividendMonths,
+            DividendRecordDate = DividendRecordDate,
+            ExDividendDate = ExDividendDate,
+            DividendPaymentDate = DividendPaymentDate,
             AnnualDividendSource = AnnualDividendSource.Trim(),
             MarketDataSource = MarketDataSource.Trim(),
             MarketDataAcquiredAt = MarketDataAcquiredAt,
@@ -2446,6 +3018,25 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
             IsNewStock = IsNewStock,
             Components = _components
         };
+
+    public void ApplyPlanResult(DividendPurchasePlanHolding? result)
+    {
+        _planResult = result;
+        OnPropertyChanged(nameof(CurrentYield));
+        OnPropertyChanged(nameof(YieldOnCost));
+        OnPropertyChanged(nameof(ThisYearDividend));
+        OnPropertyChanged(nameof(NextYearDividend));
+        OnPropertyChanged(nameof(AnnualDividendIncrease));
+        OnPropertyChanged(nameof(AdditionalInvestmentYield));
+        OnPropertyChanged(nameof(DividendComposition));
+        OnPropertyChanged(nameof(DividendMonthsDisplay));
+        OnPropertyChanged(nameof(NextLastRightsDate));
+        OnPropertyChanged(nameof(NextPaymentDate));
+        OnPropertyChanged(nameof(EligibilityStatus));
+        OnPropertyChanged(nameof(DataQuality));
+        OnPropertyChanged(nameof(DividendPaybackYears));
+        OnPropertyChanged(nameof(TargetContribution));
+    }
 
     public void BeginMarketDataFetch()
     {
@@ -2498,6 +3089,18 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
         if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.DividendSource))
         {
             AnnualDividendSource = result.DividendSource;
+        }
+
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed && !string.IsNullOrWhiteSpace(result.DividendFrequency))
+        {
+            DividendFrequency = result.DividendFrequency;
+        }
+
+        if (result.StatusKind != MarketDataFetchStatusKinds.Failed)
+        {
+            DividendRecordDate = result.DividendRecordDate ?? DividendRecordDate;
+            ExDividendDate = result.ExDividendDate ?? ExDividendDate;
+            DividendPaymentDate = result.DividendPaymentDate ?? DividendPaymentDate;
         }
 
         if (result.StatusKind != MarketDataFetchStatusKinds.Failed)
@@ -2584,6 +3187,249 @@ public sealed class DividendSimulationRowViewModel : ObservableObject
         OnPropertyChanged(nameof(PostAddAnnualDividendPreview));
         _changed();
     }
+}
+
+public sealed class DividendPlanMonthlyRowViewModel
+{
+    public DividendPlanMonthlyRowViewModel(DividendPurchasePlanMonthlyResult row)
+    {
+        Year = row.Year;
+        Month = row.Month;
+        CurrentValue = row.CurrentNetDividendJpy;
+        ExistingAdditionalValue = row.ExistingAdditionalNetDividendJpy;
+        NewPurchaseValue = row.NewPurchaseNetDividendJpy;
+        MissedValue = row.MissedNetDividendJpy;
+        TargetValue = row.TargetNetDividendJpy;
+        PlannedValue = row.PlannedNetDividendJpy;
+        CurrentCumulativeValue = row.CurrentCumulativeNetDividendJpy;
+        PlannedCumulativeValue = row.CumulativeNetDividendJpy;
+        YearMonth = $"{row.Year}/{row.Month:00}";
+        CurrentDividend = Formatters.Jpy(row.CurrentNetDividendJpy);
+        PlannedDividend = Formatters.Jpy(row.PlannedNetDividendJpy);
+        AdditionalDividend = Formatters.SignedJpy(row.AdditionalNetDividendJpy);
+        CumulativeDividend = Formatters.Jpy(row.CumulativeNetDividendJpy);
+        CurrentCumulativeDividend = Formatters.Jpy(row.CurrentCumulativeNetDividendJpy);
+        TargetDividend = Formatters.Jpy(row.TargetNetDividendJpy);
+        TargetAchievement = Formatters.Percent(row.TargetAchievementRate);
+        TargetDifference = row.TargetDifferenceJpy >= 0m
+            ? $"余剰 {Formatters.Jpy(row.TargetDifferenceJpy)}"
+            : $"不足 {Formatters.Jpy(Math.Abs(row.TargetDifferenceJpy))}";
+        Breakdown = row.Events.Count == 0
+            ? "配当予定なし"
+            : string.Join(" / ", row.Events.GroupBy(x => x.Ticker).Select(g => $"{g.Key} {Formatters.Jpy(g.Sum(x => x.CurrentNetDividendJpy + x.AdditionalNetDividendJpy))}"));
+        ToolTipText = $"{YearMonth}\n合計 {PlannedDividend}\n現在保有 {CurrentDividend}\n買い増し {Formatters.Jpy(row.ExistingAdditionalNetDividendJpy)}\n新規購入 {Formatters.Jpy(row.NewPurchaseNetDividendJpy)}\n受取不可 {Formatters.Jpy(row.MissedNetDividendJpy)}\n{Breakdown}";
+    }
+
+    public int Year { get; }
+    public int Month { get; }
+    public decimal CurrentValue { get; }
+    public decimal ExistingAdditionalValue { get; }
+    public decimal NewPurchaseValue { get; }
+    public decimal MissedValue { get; }
+    public decimal TargetValue { get; }
+    public decimal PlannedValue { get; }
+    public decimal CurrentCumulativeValue { get; }
+    public decimal PlannedCumulativeValue { get; }
+    public string YearMonth { get; }
+    public string CurrentDividend { get; }
+    public string PlannedDividend { get; }
+    public string AdditionalDividend { get; }
+    public string CumulativeDividend { get; }
+    public string CurrentCumulativeDividend { get; }
+    public string TargetDividend { get; }
+    public string TargetAchievement { get; }
+    public string TargetDifference { get; }
+    public string Breakdown { get; }
+    public string ToolTipText { get; }
+}
+
+public sealed class DividendPlanRankingRowViewModel
+{
+    public DividendPlanRankingRowViewModel(DividendPurchasePlanHolding row)
+    {
+        Ticker = row.Ticker;
+        Name = row.Name;
+        Value = row.NextYearAdditionalNetDividendJpy;
+        Amount = Formatters.SignedJpy(Value);
+        InvestmentValue = row.PlannedPurchaseAmountJpy;
+        InvestmentAmount = Formatters.Jpy(InvestmentValue);
+        Yield = Formatters.Percent(row.AdditionalInvestmentYieldRate);
+        PaybackYears = row.DividendPaybackYears <= 0m ? "対象外" : $"{row.DividendPaybackYears:N1}年";
+        PlannedShares = $"{row.PlannedAdditionalShares:N2}株";
+        ToolTipText = $"{Ticker} {Name}\n追加配当 {Amount}\n追加投資額 {InvestmentAmount}\n追加投資利回り {Yield}\n回収年数 {PaybackYears}\n予定株数 {PlannedShares}";
+    }
+    public string Ticker { get; }
+    public string Name { get; }
+    public decimal Value { get; }
+    public string Amount { get; }
+    public decimal InvestmentValue { get; }
+    public string InvestmentAmount { get; }
+    public string Yield { get; }
+    public string PaybackYears { get; }
+    public string PlannedShares { get; }
+    public string ToolTipText { get; }
+}
+
+public sealed class DividendPlanCompositionRowViewModel
+{
+    public DividendPlanCompositionRowViewModel(DividendPurchasePlanComposition row)
+        : this(row.Ticker, row.Name, row.AnnualNetDividendJpy, row.CompositionRate,
+            row.CurrentCompositionRate, row.CompositionRateChange)
+    {
+    }
+
+    public DividendPlanCompositionRowViewModel(
+        string ticker,
+        string name,
+        decimal value,
+        decimal rate,
+        decimal currentRate = 0m,
+        decimal rateChange = 0m)
+    {
+        Ticker = ticker;
+        Name = name;
+        Value = value;
+        Amount = Formatters.Jpy(Value);
+        Rate = Formatters.Percent(rate);
+        CurrentRate = Formatters.Percent(currentRate);
+        RateChange = $"{rateChange:+0.00;-0.00;0.00}pt";
+    }
+    public string Ticker { get; }
+    public string Name { get; }
+    public decimal Value { get; }
+    public string Amount { get; }
+    public string Rate { get; }
+    public string CurrentRate { get; }
+    public string RateChange { get; }
+}
+
+public sealed class DividendPlanStockMonthlyRowViewModel
+{
+    public DividendPlanStockMonthlyRowViewModel(
+        string ticker,
+        string name,
+        IReadOnlyList<DividendPurchasePlanEvent> events)
+    {
+        Ticker = ticker;
+        Name = name;
+        CurrentValues = BuildValues(events, x => x.CurrentNetDividendJpy);
+        ExistingAdditionalValues = BuildValues(events.Where(x => !x.IsNewStock).ToList(), x => x.AdditionalNetDividendJpy);
+        NewPurchaseValues = BuildValues(events.Where(x => x.IsNewStock).ToList(), x => x.AdditionalNetDividendJpy);
+        MissedValues = BuildValues(events, x => x.MissedNetDividendJpy);
+        PlannedValues = Enumerable.Range(0, 12)
+            .Select(index => CurrentValues[index] + ExistingAdditionalValues[index] + NewPurchaseValues[index])
+            .ToArray();
+        Statuses = Enumerable.Range(1, 12)
+            .Select(month => ResolveStatus(events.Where(x => x.Month == month).ToList()))
+            .ToArray();
+        TotalValue = PlannedValues.Sum();
+    }
+
+    public string Ticker { get; }
+    public string Name { get; }
+    public IReadOnlyList<decimal> CurrentValues { get; }
+    public IReadOnlyList<decimal> ExistingAdditionalValues { get; }
+    public IReadOnlyList<decimal> NewPurchaseValues { get; }
+    public IReadOnlyList<decimal> PlannedValues { get; }
+    public IReadOnlyList<decimal> MissedValues { get; }
+    public IReadOnlyList<string> Statuses { get; }
+    public decimal TotalValue { get; }
+
+    public string ToolTipForMonth(int month)
+    {
+        var index = Math.Clamp(month, 1, 12) - 1;
+        return $"{Ticker} {Name}\n{month}月 合計 {Formatters.Jpy(PlannedValues[index])}\n" +
+               $"現在 {Formatters.Jpy(CurrentValues[index])}\n" +
+               $"買い増し {Formatters.Jpy(ExistingAdditionalValues[index])}\n" +
+               $"新規購入 {Formatters.Jpy(NewPurchaseValues[index])}\n" +
+               $"受取不可 {Formatters.Jpy(MissedValues[index])}\n{Statuses[index]}";
+    }
+
+    private static IReadOnlyList<decimal> BuildValues(
+        IReadOnlyList<DividendPurchasePlanEvent> events,
+        Func<DividendPurchasePlanEvent, decimal> selector) =>
+        Enumerable.Range(1, 12)
+            .Select(month => events.Where(x => x.Month == month).Sum(selector))
+            .ToArray();
+
+    private static string ResolveStatus(IReadOnlyList<DividendPurchasePlanEvent> events)
+    {
+        if (events.Count == 0) return "予定なし";
+        if (events.Any(x => x.EligibilityStatus == DividendPlanEligibility.Missing)) return "情報未取得";
+        if (events.Any(x => x.EligibilityStatus == DividendPlanEligibility.Ineligible)) return "購入が間に合わない";
+        if (events.Any(x => x.EligibilityStatus == DividendPlanEligibility.Estimated)) return "推定";
+        return "受取見込み";
+    }
+}
+
+public sealed class DividendCalendarMonthViewModel
+{
+    public DividendCalendarMonthViewModel(DividendPurchasePlanMonthlyResult row)
+    {
+        MonthLabel = $"{row.Month}月";
+        Items = row.Events.Count == 0
+            ? "予定なし"
+            : string.Join("\n", row.Events.OrderBy(x => x.PaymentDate).Select(x =>
+                $"{x.PaymentDate:MM/dd} {x.Ticker} {Status(x)} {Formatters.Jpy(x.CurrentNetDividendJpy + x.AdditionalNetDividendJpy)}"));
+        ToolTipText = $"{row.Year}年{row.Month}月\n{Items}";
+        Events = row.Events
+            .OrderBy(x => x.PaymentDate)
+            .Select(x => new DividendCalendarEventViewModel(x))
+            .ToList();
+    }
+
+    public string MonthLabel { get; }
+    public string Items { get; }
+    public string ToolTipText { get; }
+    public IReadOnlyList<DividendCalendarEventViewModel> Events { get; }
+
+    private static string Status(DividendPurchasePlanEvent item) => item.EligibilityStatus switch
+    {
+        DividendPlanEligibility.Eligible => "確定",
+        DividendPlanEligibility.Estimated => "見込み",
+        DividendPlanEligibility.Ineligible => "間に合わない",
+        _ => "未取得"
+    };
+}
+
+public sealed class DividendCalendarEventViewModel
+{
+    public DividendCalendarEventViewModel(DividendPurchasePlanEvent item)
+    {
+        StockId = item.StockId;
+        Ticker = item.Ticker;
+        Name = item.Name;
+        PaymentDate = item.PaymentDate.ToString("yyyy/MM/dd");
+        CurrentDividend = Formatters.Jpy(item.CurrentNetDividendJpy);
+        AdditionalDividend = Formatters.SignedJpy(item.AdditionalNetDividendJpy);
+        PlannedDividend = Formatters.Jpy(item.CurrentNetDividendJpy + item.AdditionalNetDividendJpy);
+        MissedDividend = Formatters.Jpy(item.MissedNetDividendJpy);
+        StatusDisplay = Status(item);
+        DataSource = item.Source;
+        DisplayText = $"{item.PaymentDate:MM/dd} {item.Ticker} {Status(item)} {Formatters.Jpy(item.CurrentNetDividendJpy + item.AdditionalNetDividendJpy)}";
+        ToolTipText = $"{item.Name}\n支払予定日 {item.PaymentDate:yyyy/MM/dd}\n権利付き最終日 {item.LastRightsDate:yyyy/MM/dd}\n{Status(item)} / {item.Source}";
+    }
+
+    public int StockId { get; }
+    public string Ticker { get; }
+    public string Name { get; }
+    public string PaymentDate { get; }
+    public string CurrentDividend { get; }
+    public string AdditionalDividend { get; }
+    public string PlannedDividend { get; }
+    public string MissedDividend { get; }
+    public string StatusDisplay { get; }
+    public string DataSource { get; }
+    public string DisplayText { get; }
+    public string ToolTipText { get; }
+
+    private static string Status(DividendPurchasePlanEvent item) => item.EligibilityStatus switch
+    {
+        DividendPlanEligibility.Eligible => "受取確定",
+        DividendPlanEligibility.Estimated => "受取見込み",
+        DividendPlanEligibility.Ineligible => "購入が間に合わない",
+        _ => "情報未取得"
+    };
 }
 
 public sealed class DividendProjectionRowViewModel

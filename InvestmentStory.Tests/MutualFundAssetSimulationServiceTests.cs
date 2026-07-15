@@ -812,6 +812,64 @@ public sealed class MutualFundAssetSimulationServiceTests
     }
 
     [Fact]
+    public void SimulateScenarios_ExtendsChartToConservativeTargetWithoutChangingProjectionResult()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(
+            monthlyContribution: 100m,
+            targetAmount: 5_000m,
+            projectionYears: 1,
+            startYear: 2026,
+            startMonth: 7);
+
+        var result = _service.SimulateScenarios(
+            positions,
+            MutualFundSimulationScopeKeys.AllAccounts,
+            input,
+            CreateDefaultScenarios());
+
+        var conservative = AssertScenario(result, "Conservative");
+        Assert.True(result.UsesConservativeTargetHorizon);
+        Assert.Equal(conservative.MonthsToTarget, result.ChartHorizonMonths);
+        Assert.Equal(conservative.TargetAchievementMonth, result.ConservativeTargetMonth);
+        Assert.Equal(12, conservative.Projections.Count);
+        Assert.Equal(conservative.FinalMarketValueJpy, conservative.Projections[^1].MarketValueJpy);
+        Assert.Equal(result.ChartHorizonMonths, conservative.ChartProjections.Count);
+        Assert.Equal(conservative.TargetAchievementMonth, conservative.ChartProjections[^1].YearMonth);
+        Assert.True(conservative.ChartFinalMarketValueJpy >= input.TargetAmountJpy);
+    }
+
+    [Fact]
+    public void SimulateScenarios_UsesSameConservativeHorizonForEveryAvailableChartSeries()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(1, AccountTypes.Specific, unitsHeld: 10000m, averageCostNav: 1000m, currentNav: 1000m)
+        };
+        var input = CreateInput(monthlyContribution: 100m, targetAmount: 5_000m, projectionYears: 1);
+
+        var result = _service.SimulateScenarios(
+            positions,
+            MutualFundSimulationScopeKeys.AllAccounts,
+            input,
+            CreateDefaultScenarios());
+
+        Assert.NotEmpty(result.ChartMonthlyComparisons);
+        Assert.Equal(result.ChartHorizonMonths, result.ChartMonthlyComparisons.Count);
+        foreach (var scenario in result.Scenarios.Where(x => x.IsAvailable))
+        {
+            Assert.Equal(result.ChartHorizonMonths, scenario.ChartProjections.Count);
+            Assert.Equal(result.ChartEndMonth, scenario.ChartProjections[^1].YearMonth);
+            Assert.Equal(
+                scenario.ChartFinalMarketValueJpy,
+                result.ChartMonthlyComparisons[^1].ScenarioValues[scenario.Key].MarketValueJpy);
+        }
+    }
+
+    [Fact]
     public void SimulateScenarios_IsDeterministicForSameInput()
     {
         var positions = CreateSbiSp500Positions();

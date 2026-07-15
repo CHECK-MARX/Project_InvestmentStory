@@ -1,0 +1,302 @@
+<UserControl x:Class="InvestmentStory.App.Views.DividendPurchasePlanView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:InvestmentStory.App.Controls">
+    <StackPanel Margin="10">
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="今年の購入計画シミュレーション" Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock Margin="0,6,0,0" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap">
+                    <Run Text="購入予定日と権利付き最終日から、今年受け取れる税引後配当を判定します。" />
+                    <LineBreak />
+                    <Run Text="年間配当は翌年以降の見込みです。配当予定日は取得情報または過去実績から推定します。実際の入金額は証券会社CSVを正とします。" />
+                </TextBlock>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="新規予定銘柄" Command="{Binding AddNewDividendStockCommand}" Style="{StaticResource SecondaryButtonStyle}" Width="130" Height="40" />
+                <Button Content="再計算" Command="{Binding RunPassiveIncomeCommand}" Style="{StaticResource ActionButtonStyle}" Width="120" Height="40" />
+                <Button Content="計画を保存" Command="{Binding SavePassiveIncomePlanCommand}" Style="{StaticResource SuccessButtonStyle}" Width="130" Height="40" />
+            </StackPanel>
+        </Grid>
+
+        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="試算条件" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.3*" />
+                        <ColumnDefinition Width="0.65*" />
+                        <ColumnDefinition Width="0.9*" />
+                        <ColumnDefinition Width="0.9*" />
+                        <ColumnDefinition Width="1*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                        <TextBlock Text="計画名" Style="{StaticResource LabelTextStyle}" />
+                        <TextBox Text="{Binding PassiveIncomePlanName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                        <TextBlock Text="対象年" Style="{StaticResource LabelTextStyle}" />
+                        <TextBox Text="{Binding DividendPlanTargetYear, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Margin="0,0,12,0">
+                        <TextBlock Text="購入予定日" Style="{StaticResource LabelTextStyle}" />
+                        <DatePicker SelectedDate="{Binding DividendPlanPurchaseDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Margin="0,0,12,0">
+                        <TextBlock Text="表示単位" Style="{StaticResource LabelTextStyle}" />
+                        <ComboBox ItemsSource="{Binding PassiveIncomeDisplayModes}" DisplayMemberPath="DisplayName" SelectedValuePath="Value"
+                                  SelectedValue="{Binding PassiveIncomeDisplayMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="4">
+                        <TextBlock Text="目標年間配当（税引後）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBox Text="{Binding TargetAnnualPassiveIncome, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <UniformGrid Columns="4" Margin="0,0,0,16">
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="現在の今年配当見込み" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeCurrentNetDividend}" Style="{StaticResource MetricValueTextStyle}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="購入後の今年配当見込み" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomePostAddNetDividend}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource DividendBrush}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="今年増える配当" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeNetDividendIncrease}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource ProfitBrush}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="今年受け取れない配当" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeMissedDividend}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource WarningBrush}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="翌年年間配当見込み" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeNextYearDividend}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource DividendBrush}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="年間目標達成率" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeGoalAchievement}" Style="{StaticResource MetricValueTextStyle}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="追加投資予定額" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeTotalPlannedInvestment}" Style="{StaticResource MetricValueTextStyle}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="追加投資利回り" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeInvestmentYield}" Style="{StaticResource MetricValueTextStyle}"/><TextBlock Text="{Binding PassiveIncomePostAddPortfolioYield, StringFormat=購入後PF {0}}" Style="{StaticResource SubtleTextStyle}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="現在利回り" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeCurrentYield}" Style="{StaticResource MetricValueTextStyle}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="取得額ベース利回り" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeYieldOnCost}" Style="{StaticResource MetricValueTextStyle}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="追加投資の回収年数" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomePaybackYears}" Style="{StaticResource MetricValueTextStyle}" Foreground="{DynamicResource WarningBrush}"/></StackPanel></Border>
+            <Border Style="{StaticResource MetricCardStyle}"><StackPanel><TextBlock Text="目標まであと" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding PassiveIncomeGoalGap}" Style="{StaticResource MetricValueTextStyle}"/></StackPanel></Border>
+        </UniformGrid>
+
+        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="現在保有銘柄の買い増し" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,12" />
+                <DataGrid ItemsSource="{Binding DividendSimulationRows}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" Height="330" FrozenColumnCount="2">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="コード" Binding="{Binding Ticker}" Width="85" IsReadOnly="True" />
+                        <DataGridTextColumn Header="銘柄" Binding="{Binding Name}" Width="180" IsReadOnly="True" />
+                        <DataGridTextColumn Header="現在株数" Binding="{Binding CurrentShares, StringFormat={}{0:N2}}" Width="90" IsReadOnly="True" />
+                        <DataGridTemplateColumn Header="買い増し株数" Width="105"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBox Text="{Binding PlannedAdditionalShares, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTextColumn Header="買い増し後" Binding="{Binding PostAddSharesPreview}" Width="90" IsReadOnly="True" />
+                        <DataGridTemplateColumn Header="買付先証券" Width="135"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding BrokerOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding PlannedBroker, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MinWidth="120" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="買付口座" Width="150"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding AccountOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding PlannedAccountType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MinWidth="135" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTextColumn Header="現在株価" Binding="{Binding CurrentPrice, StringFormat={}{0:N2}}" Width="95" IsReadOnly="True" />
+                        <DataGridTextColumn Header="予定買付額" Binding="{Binding PlannedInvestmentPreview}" Width="115" IsReadOnly="True" />
+                        <DataGridTextColumn Header="1株年間配当" Binding="{Binding AnnualDividendPerShare, StringFormat={}{0:N4}}" Width="110" IsReadOnly="True" />
+                        <DataGridTextColumn Header="現在利回り" Binding="{Binding CurrentYield}" Width="100" IsReadOnly="True" />
+                        <DataGridTextColumn Header="取得額利回り" Binding="{Binding YieldOnCost}" Width="105" IsReadOnly="True" />
+                        <DataGridTextColumn Header="今年受取配当" Binding="{Binding ThisYearDividend}" Width="120" IsReadOnly="True" />
+                        <DataGridTextColumn Header="来年年間配当" Binding="{Binding NextYearDividend}" Width="120" IsReadOnly="True" />
+                        <DataGridTextColumn Header="年間増加額" Binding="{Binding AnnualDividendIncrease}" Width="115" IsReadOnly="True" />
+                        <DataGridTextColumn Header="追加投資利回り" Binding="{Binding AdditionalInvestmentYield}" Width="115" IsReadOnly="True" />
+                        <DataGridTextColumn Header="回収年数" Binding="{Binding DividendPaybackYears}" Width="90" IsReadOnly="True" />
+                        <DataGridTextColumn Header="配当構成比" Binding="{Binding DividendComposition}" Width="100" IsReadOnly="True" />
+                        <DataGridTextColumn Header="配当予定月" Binding="{Binding DividendMonthsDisplay}" Width="110" IsReadOnly="True" />
+                        <DataGridTextColumn Header="次回権利付き最終日" Binding="{Binding NextLastRightsDate}" Width="130" IsReadOnly="True" />
+                        <DataGridTextColumn Header="次回支払予定日" Binding="{Binding NextPaymentDate}" Width="120" IsReadOnly="True" />
+                        <DataGridTextColumn Header="判定" Binding="{Binding EligibilityStatus}" Width="95" IsReadOnly="True" />
+                        <DataGridTextColumn Header="品質" Binding="{Binding DataQuality}" Width="120" IsReadOnly="True" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+            <StackPanel>
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="新規購入予定銘柄" Style="{StaticResource SectionTitleStyle}" />
+                    <Button Grid.Column="1" Content="選択行を削除" Command="{Binding RemoveSelectedNewDividendStockCommand}" Style="{StaticResource DangerButtonStyle}" Width="120" Height="38" />
+                </Grid>
+                <DataGrid ItemsSource="{Binding NewDividendSimulationRows}" SelectedItem="{Binding SelectedNewDividendSimulationRow}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" Height="300" FrozenColumnCount="2">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="コード" Width="100"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBox Text="{Binding Ticker, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="銘柄名" Width="190"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="予定株数" Width="95"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBox Text="{Binding PlannedAdditionalShares, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="現在株価" Width="95"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBox Text="{Binding CurrentPrice, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="証券会社" Width="135"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding BrokerOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding Broker, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MinWidth="120" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="国" Width="125"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding CountryOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding Country, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MinWidth="110" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="口座区分" Width="150"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding AccountOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding PlannedAccountType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MinWidth="135" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTextColumn Header="通貨" Binding="{Binding Currency}" Width="70" IsReadOnly="True" />
+                        <DataGridTemplateColumn Header="1株年間配当" Width="110"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBox Text="{Binding AnnualDividendPerShare, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalContentAlignment="Right" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                        <DataGridTextColumn Header="配当回数" Binding="{Binding DividendFrequency}" Width="90" IsReadOnly="True" />
+                        <DataGridTextColumn Header="予定買付額" Binding="{Binding PlannedInvestmentPreview}" Width="115" IsReadOnly="True" />
+                        <DataGridTextColumn Header="今年受取配当" Binding="{Binding ThisYearDividend}" Width="120" IsReadOnly="True" />
+                        <DataGridTextColumn Header="来年年間配当" Binding="{Binding NextYearDividend}" Width="120" IsReadOnly="True" />
+                        <DataGridTextColumn Header="追加投資利回り" Binding="{Binding AdditionalInvestmentYield}" Width="115" IsReadOnly="True" />
+                        <DataGridTextColumn Header="回収年数" Binding="{Binding DividendPaybackYears}" Width="90" IsReadOnly="True" />
+                        <DataGridTextColumn Header="目標貢献額" Binding="{Binding TargetContribution}" Width="110" IsReadOnly="True" />
+                        <DataGridTextColumn Header="配当予定月" Binding="{Binding DividendMonthsDisplay}" Width="105" IsReadOnly="True" />
+                        <DataGridTextColumn Header="権利付き最終日" Binding="{Binding NextLastRightsDate}" Width="120" IsReadOnly="True" />
+                        <DataGridTextColumn Header="支払予定日" Binding="{Binding NextPaymentDate}" Width="110" IsReadOnly="True" />
+                        <DataGridTextColumn Header="判定" Binding="{Binding EligibilityStatus}" Width="90" IsReadOnly="True" />
+                        <DataGridTextColumn Header="品質" Binding="{Binding DataQuality}" Width="110" IsReadOnly="True" />
+                        <DataGridTextColumn Header="取得元" Binding="{Binding AnnualDividendSource}" Width="140" IsReadOnly="True" />
+                        <DataGridTemplateColumn Header="取得" Width="80"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="取得" Command="{Binding DataContext.FetchNewDividendStockCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource SecondaryButtonStyle}" Height="30" Width="60" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="月別配当比較（積み上げ・累計・月目標）" Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock Text="青: 現在保有 / 紫: 買い増し / オレンジ: 新規購入 / シアン: 年間累計 / 白点線: 月目標" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,10" />
+                <controls:DividendMonthlyPlanChartControl Height="430" Items="{Binding DividendPlanMonthlyRows}" />
+            </StackPanel>
+        </Border>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="年間累計配当（現在 / 購入後）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/>
+                    <controls:DividendCumulativeComparisonChartControl Height="300" Items="{Binding DividendPlanMonthlyRows}" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="AI分析（ルールベース）" Style="{StaticResource SectionTitleStyle}"/>
+                    <TextBlock Text="{Binding DividendStrategyRating}" FontSize="25" Foreground="{DynamicResource WarningBrush}" Margin="0,12,0,4"/>
+                    <TextBlock Text="{Binding DividendStrategyCommentTitle}" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding DividendStrategyComment}" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="24"/>
+                    <TextBlock Text="外部AIへデータは送信していません。共通試算結果をテンプレート分析しています。" Style="{StaticResource SubtleTextStyle}" Margin="0,14,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+            <StackPanel>
+                <TextBlock Text="配当カレンダー" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10" />
+                <ItemsControl ItemsSource="{Binding DividendCalendarMonths}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource MetricCardStyle}" Margin="5" ToolTip="{Binding ToolTipText}">
+                                <StackPanel MinHeight="96">
+                                    <TextBlock Text="{Binding MonthLabel}" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource AccentBlueBrush}"/>
+                                    <ItemsControl ItemsSource="{Binding Events}" Margin="0,6,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Content="{Binding DisplayText}"
+                                                        Command="{Binding DataContext.SelectDividendCalendarEventCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip="{Binding ToolTipText}"
+                                                        Style="{StaticResource SecondaryButtonStyle}"
+                                                        HorizontalContentAlignment="Left" HorizontalAlignment="Stretch"
+                                                        Margin="0,2,0,0" MinHeight="30" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border Margin="5,12,5,0" Padding="14" Background="{DynamicResource ElevatedSurfaceBrush}" BorderBrush="{DynamicResource AccentBlueBrush}" BorderThickness="1" CornerRadius="6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers><DataTrigger Binding="{Binding SelectedDividendCalendarEvent}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="1.4*"/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="選択した配当" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.Ticker}" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.Name}" Style="{StaticResource SubtleTextStyle}"/></StackPanel>
+                        <StackPanel Grid.Column="1"><TextBlock Text="支払予定日" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.PaymentDate}"/></StackPanel>
+                        <StackPanel Grid.Column="2"><TextBlock Text="現在" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.CurrentDividend}"/></StackPanel>
+                        <StackPanel Grid.Column="3"><TextBlock Text="追加" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.AdditionalDividend}" Foreground="{DynamicResource ProfitBrush}"/></StackPanel>
+                        <StackPanel Grid.Column="4"><TextBlock Text="購入後" Style="{StaticResource SubtleTextStyle}"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.PlannedDividend}"/><TextBlock Text="{Binding SelectedDividendCalendarEvent.StatusDisplay}" Foreground="{DynamicResource WarningBrush}"/></StackPanel>
+                        <Button Grid.Column="5" Content="銘柄詳細" Command="{Binding OpenDividendCalendarStockCommand}" CommandParameter="{Binding SelectedDividendCalendarEvent.StockId}" Style="{StaticResource SecondaryButtonStyle}" Width="90" Height="34"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="配当増加ランキング" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10"/>
+                    <controls:DividendIncreaseRankingChartControl Height="250" Items="{Binding DividendIncreaseRankingRows}" />
+                    <DataGrid ItemsSource="{Binding DividendIncreaseRankingRows}" AutoGenerateColumns="False" IsReadOnly="True" Height="210" Margin="0,8,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="銘柄" Binding="{Binding Ticker}" Width="70"/>
+                            <DataGridTextColumn Header="追加配当" Binding="{Binding Amount}" Width="105"/>
+                            <DataGridTextColumn Header="投資額" Binding="{Binding InvestmentAmount}" Width="105"/>
+                            <DataGridTextColumn Header="利回り" Binding="{Binding Yield}" Width="80"/>
+                            <DataGridTextColumn Header="回収" Binding="{Binding PaybackYears}" Width="75"/>
+                            <DataGridTextColumn Header="株数" Binding="{Binding PlannedShares}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="購入後の年間配当構成比" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/>
+                    <controls:DividendCompositionDonutControl Height="300" Items="{Binding DividendCompositionRows}" />
+                    <DataGrid ItemsSource="{Binding DividendCompositionRows}" AutoGenerateColumns="False" IsReadOnly="True" Height="168" Margin="0,8,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="銘柄" Binding="{Binding Ticker}" Width="*"/>
+                            <DataGridTextColumn Header="購入後" Binding="{Binding Rate}" Width="90"/>
+                            <DataGridTextColumn Header="購入前" Binding="{Binding CurrentRate}" Width="90"/>
+                            <DataGridTextColumn Header="変化" Binding="{Binding RateChange}" Width="90"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="1.4*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
+                <StackPanel><TextBlock Text="配当ウォーターフォール" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendWaterfallChartControl Height="300" CurrentValue="{Binding PassiveIncomeCurrentAnnualValue}" Items="{Binding DividendIncreaseRankingRows}" /></StackPanel>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
+                <StackPanel><TextBlock Text="追加投資ランキング" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendInvestmentRankingChartControl Height="300" Items="{Binding DividendInvestmentRankingRows}" /></StackPanel>
+            </Border>
+        </Grid>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
+                <StackPanel><TextBlock Text="月別配当ヒートマップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendHeatmapControl Height="330" Items="{Binding DividendStockMonthlyRows}" /></StackPanel>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
+                <StackPanel><TextBlock Text="配当月マップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><TextBlock Text="青: 受取見込み / オレンジ: 推定 / グレー: 間に合わない / 赤: 未取得" Style="{StaticResource SubtleTextStyle}"/><controls:DividendMonthMapControl Height="305" Items="{Binding DividendStockMonthlyRows}" /></StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+            <StackPanel><TextBlock Text="月別配当構成（銘柄別）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendMonthlyCompositionChartControl Height="360" Items="{Binding DividendStockMonthlyRows}" /></StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource MetricCardStyle}">
+            <StackPanel>
+                <TextBlock Text="月別シミュレーション表 / 月目標比較" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10" />
+                <DataGrid ItemsSource="{Binding DividendPlanMonthlyRows}" AutoGenerateColumns="False" Height="340" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="年月" Binding="{Binding YearMonth}" Width="90" />
+                        <DataGridTextColumn Header="現在配当" Binding="{Binding CurrentDividend}" Width="115" />
+                        <DataGridTextColumn Header="購入後" Binding="{Binding PlannedDividend}" Width="115" />
+                        <DataGridTextColumn Header="増加額" Binding="{Binding AdditionalDividend}" Width="110" />
+                        <DataGridTextColumn Header="現在累計" Binding="{Binding CurrentCumulativeDividend}" Width="115" />
+                        <DataGridTextColumn Header="購入後累計" Binding="{Binding CumulativeDividend}" Width="120" />
+                        <DataGridTextColumn Header="月目標" Binding="{Binding TargetDividend}" Width="110" />
+                        <DataGridTextColumn Header="達成率" Binding="{Binding TargetAchievement}" Width="90" />
+                        <DataGridTextColumn Header="不足 / 余剰" Binding="{Binding TargetDifference}" Width="130" />
+                        <DataGridTextColumn Header="備考・銘柄別内訳" Binding="{Binding Breakdown}" Width="*" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock Text="{Binding PassiveIncomeTaxSummary}" Style="{StaticResource SubtleTextStyle}" Margin="0,10,0,0" />
+                <TextBlock Text="{Binding PassiveIncomeResultSummary}" Foreground="{DynamicResource WarningBrush}" Margin="0,5,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

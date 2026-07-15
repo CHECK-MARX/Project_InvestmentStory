@@ -99,7 +99,8 @@ public sealed class MainViewModel : ObservableObject
             appSettings => _repository.SaveSettings(appSettings),
             _marketDataService,
             _stockLookupService,
-            _fundMarketDataService);
+            _fundMarketDataService,
+            ShowStockDetail);
         CsvImport = new CsvImportViewModel(
             () => _repository.GetPositions(),
             position => _repository.SavePosition(position),
@@ -290,7 +291,7 @@ public sealed class MainViewModel : ObservableObject
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         Simulation.UpdateMutualFundPortfolio(positions, _repository.GetAllBrokerTrades());
-        Simulation.UpdateDividendPortfolio(positions, _repository.GetTaxProfiles());
+        Simulation.UpdateDividendPortfolio(positions, _repository.GetTaxProfiles(), dividends);
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
         var detailSnapshots = ResolveDetailSnapshots();
@@ -508,6 +509,8 @@ public sealed class MainViewModel : ObservableObject
             DividendSimulationPlanName = source.DividendSimulationPlanName,
             DividendSimulationDisplayMode = source.DividendSimulationDisplayMode,
             DividendSimulationTargetAnnualDividendJpy = source.DividendSimulationTargetAnnualDividendJpy,
+            DividendSimulationTargetYear = source.DividendSimulationTargetYear,
+            DividendSimulationPlannedPurchaseDate = source.DividendSimulationPlannedPurchaseDate,
             DividendSimulationProjectionYears = source.DividendSimulationProjectionYears,
             DividendSimulationPlanJson = source.DividendSimulationPlanJson
         };

@@ -3,6 +3,8 @@ namespace InvestmentStory.Core.Models;
 public static class DividendGrowthDisplayModes
 {
     public const string AggregateBySecurity = "AggregateBySecurity";
+    public const string AggregateByBroker = "AggregateByBroker";
+    public const string AggregateByAccount = "AggregateByAccount";
     public const string Position = "Position";
 }
 
@@ -25,6 +27,7 @@ public sealed class DividendGrowthSimulationInput
 
 public sealed class DividendGrowthPlanItem
 {
+    public int StockId { get; init; }
     public string PlanKey { get; init; } = string.Empty;
     public string CanonicalKey { get; init; } = string.Empty;
     public string PositionKey { get; init; } = string.Empty;
@@ -38,6 +41,13 @@ public sealed class DividendGrowthPlanItem
     public decimal CurrentPrice { get; init; }
     public decimal ExchangeRate { get; init; } = 1m;
     public decimal AnnualDividendPerShare { get; init; }
+    public decimal CurrentCostJpy { get; init; }
+    public decimal CurrentMarketValueJpy { get; init; }
+    public string DividendFrequency { get; init; } = string.Empty;
+    public string DividendMonths { get; init; } = string.Empty;
+    public DateTime? DividendRecordDate { get; init; }
+    public DateTime? ExDividendDate { get; init; }
+    public DateTime? DividendPaymentDate { get; init; }
     public string AnnualDividendSource { get; init; } = string.Empty;
     public string MarketDataSource { get; init; } = string.Empty;
     public DateTime? MarketDataAcquiredAt { get; init; }

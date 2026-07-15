@@ -28,6 +28,8 @@ public sealed class AppSettings
     public string DividendSimulationPlanName { get; set; } = "Default";
     public string DividendSimulationDisplayMode { get; set; } = DividendGrowthDisplayModes.AggregateBySecurity;
     public decimal DividendSimulationTargetAnnualDividendJpy { get; set; } = 1_200_000m;
+    public int DividendSimulationTargetYear { get; set; } = DateTime.Today.Year;
+    public string DividendSimulationPlannedPurchaseDate { get; set; } = string.Empty;
     public int DividendSimulationProjectionYears { get; set; } = 10;
     public string DividendSimulationPlanJson { get; set; } = string.Empty;
 }

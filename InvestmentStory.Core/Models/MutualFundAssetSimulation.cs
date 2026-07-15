@@ -123,6 +123,11 @@ public sealed class MutualFundScenarioComparisonResult
     public IReadOnlyList<MutualFundSimulationAccountBreakdown> AccountBreakdowns { get; init; } = Array.Empty<MutualFundSimulationAccountBreakdown>();
     public IReadOnlyList<MutualFundScenarioResult> Scenarios { get; init; } = Array.Empty<MutualFundScenarioResult>();
     public IReadOnlyList<MutualFundScenarioMonthlyComparison> MonthlyComparisons { get; init; } = Array.Empty<MutualFundScenarioMonthlyComparison>();
+    public IReadOnlyList<MutualFundScenarioMonthlyComparison> ChartMonthlyComparisons { get; init; } = Array.Empty<MutualFundScenarioMonthlyComparison>();
+    public int ChartHorizonMonths { get; init; }
+    public DateTime? ChartEndMonth { get; init; }
+    public DateTime? ConservativeTargetMonth { get; init; }
+    public bool UsesConservativeTargetHorizon { get; init; }
 }
 
 public sealed class MutualFundScenarioResult
@@ -144,6 +149,8 @@ public sealed class MutualFundScenarioResult
     public decimal InvestmentGainAtTargetJpy { get; init; }
     public decimal NoContributionFinalMarketValueJpy { get; init; }
     public IReadOnlyList<MutualFundScenarioMonthlyProjection> Projections { get; init; } = Array.Empty<MutualFundScenarioMonthlyProjection>();
+    public decimal ChartFinalMarketValueJpy { get; init; }
+    public IReadOnlyList<MutualFundScenarioMonthlyProjection> ChartProjections { get; init; } = Array.Empty<MutualFundScenarioMonthlyProjection>();
 }
 
 public sealed class MutualFundScenarioMonthlyProjection

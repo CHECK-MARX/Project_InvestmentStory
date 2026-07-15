@@ -73,6 +73,41 @@ public sealed class DividendGrowthSimulationServiceTests
     }
 
     [Fact]
+    public void CreateDefaultPlanItems_BrokerModeAggregatesOnlyWithinSameBroker()
+    {
+        var positions = new[]
+        {
+            CreateStockPosition("MO", "Altria", broker: "SBI", accountType: AccountTypes.NisaGrowth, shares: 10m, canonicalKey: "US:MO"),
+            CreateStockPosition("MO", "Altria", broker: "SBI", accountType: AccountTypes.Specific, shares: 20m, canonicalKey: "US:MO"),
+            CreateStockPosition("MO", "Altria", broker: "Nomura", accountType: AccountTypes.Specific, shares: 30m, canonicalKey: "US:MO")
+        };
+
+        var items = _service.CreateDefaultPlanItems(positions, DividendGrowthDisplayModes.AggregateByBroker);
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal(30m, items.Single(item => item.Broker == "SBI").CurrentShares);
+        Assert.Equal(30m, items.Single(item => item.Broker == "Nomura").CurrentShares);
+    }
+
+    [Fact]
+    public void CreateDefaultPlanItems_AccountModeKeepsBrokerAndAccountPositionsDistinct()
+    {
+        var positions = new[]
+        {
+            CreateStockPosition("MO", "Altria", broker: "SBI", accountType: AccountTypes.NisaGrowth, shares: 10m, canonicalKey: "US:MO"),
+            CreateStockPosition("MO", "Altria", broker: "SBI", accountType: AccountTypes.Specific, shares: 20m, canonicalKey: "US:MO"),
+            CreateStockPosition("MO", "Altria", broker: "Nomura", accountType: AccountTypes.Specific, shares: 30m, canonicalKey: "US:MO")
+        };
+
+        var items = _service.CreateDefaultPlanItems(positions, DividendGrowthDisplayModes.AggregateByAccount);
+
+        Assert.Equal(3, items.Count);
+        Assert.Contains(items, item => item.Broker == "SBI" && item.AccountType == AccountTypes.NisaGrowth && item.CurrentShares == 10m);
+        Assert.Contains(items, item => item.Broker == "SBI" && item.AccountType == AccountTypes.Specific && item.CurrentShares == 20m);
+        Assert.Contains(items, item => item.Broker == "Nomura" && item.AccountType == AccountTypes.Specific && item.CurrentShares == 30m);
+    }
+
+    [Fact]
     public void Simulate_CalculatesPlannedPurchaseAmount()
     {
         var item = CreatePlanItem("KO", shares: 20m, price: 80m, dividend: 2m, plannedShares: 10m, exchangeRate: 160m);

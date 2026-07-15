@@ -22,7 +22,7 @@ public sealed class DividendGrowthSimulationService
             .Where(IsCurrentDividendItem)
             .ToList();
 
-        if (!string.Equals(displayMode, DividendGrowthDisplayModes.AggregateBySecurity, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(displayMode, DividendGrowthDisplayModes.Position, StringComparison.OrdinalIgnoreCase))
         {
             return items
                 .OrderBy(item => item.Ticker, StringComparer.OrdinalIgnoreCase)
@@ -31,9 +31,17 @@ public sealed class DividendGrowthSimulationService
                 .ToList();
         }
 
-        return items
-            .GroupBy(item => item.CanonicalKey, StringComparer.OrdinalIgnoreCase)
-            .Select(group => AggregatePlanItems(group.ToList()))
+        var groups = items.GroupBy(
+            item => displayMode switch
+            {
+                DividendGrowthDisplayModes.AggregateByBroker => $"{item.CanonicalKey}|{item.Broker}",
+                DividendGrowthDisplayModes.AggregateByAccount => $"{item.CanonicalKey}|{item.Broker}|{NormalizeAccountType(item.AccountType)}",
+                _ => item.CanonicalKey
+            },
+            StringComparer.OrdinalIgnoreCase);
+
+        return groups
+            .Select(group => AggregatePlanItems(group.ToList(), group.Key))
             .OrderBy(item => item.Ticker, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -111,6 +119,7 @@ public sealed class DividendGrowthSimulationService
 
         return new DividendGrowthPlanItem
         {
+            StockId = stock.Id,
             PlanKey = positionKey,
             CanonicalKey = canonicalKey,
             PositionKey = positionKey,
@@ -124,6 +133,13 @@ public sealed class DividendGrowthSimulationService
             CurrentPrice = holding.CurrentPrice,
             ExchangeRate = exchangeRate <= 0m ? 1m : exchangeRate,
             AnnualDividendPerShare = Math.Max(0m, holding.AnnualDividendPerShare),
+            CurrentCostJpy = Math.Max(0m, position.Purchase.Shares) * Math.Max(0m, position.Purchase.UnitPrice) *
+                             (NormalizeCurrency(stock.Currency) == "JPY" ? 1m : Math.Max(1m, position.Purchase.ExchangeRate)) +
+                             Math.Max(0m, position.Purchase.Fee),
+            CurrentMarketValueJpy = Math.Max(0m, holding.CurrentShares) * Math.Max(0m, holding.CurrentPrice) *
+                                    (NormalizeCurrency(stock.Currency) == "JPY" ? 1m : Math.Max(1m, exchangeRate)),
+            DividendFrequency = holding.DividendFrequency,
+            DividendMonths = holding.DividendMonths,
             AnnualDividendSource = ResolveDividendSource(holding),
             PlannedAdditionalShares = 0m,
             PlannedBroker = stock.Broker,
@@ -133,7 +149,7 @@ public sealed class DividendGrowthSimulationService
         };
     }
 
-    private static DividendGrowthPlanItem AggregatePlanItems(IReadOnlyList<DividendGrowthPlanItem> items)
+    private static DividendGrowthPlanItem AggregatePlanItems(IReadOnlyList<DividendGrowthPlanItem> items, string aggregateKey)
     {
         var first = items.First();
         var brokers = DistinctNonBlank(items.Select(item => item.Broker)).ToList();
@@ -142,9 +158,10 @@ public sealed class DividendGrowthSimulationService
 
         return new DividendGrowthPlanItem
         {
-            PlanKey = first.CanonicalKey,
+            StockId = 0,
+            PlanKey = aggregateKey,
             CanonicalKey = first.CanonicalKey,
-            PositionKey = first.CanonicalKey,
+            PositionKey = aggregateKey,
             Ticker = first.Ticker,
             Name = first.Name,
             Broker = brokers.Count <= 1 ? first.Broker : "複数",
@@ -155,6 +172,16 @@ public sealed class DividendGrowthSimulationService
             CurrentPrice = FirstPositive(items.Select(item => item.CurrentPrice)),
             ExchangeRate = FirstPositive(items.Select(item => item.ExchangeRate), 1m),
             AnnualDividendPerShare = FirstPositive(items.Select(item => item.AnnualDividendPerShare)),
+            CurrentCostJpy = items.Sum(item => item.CurrentCostJpy),
+            CurrentMarketValueJpy = items.Sum(item => item.CurrentMarketValueJpy),
+            DividendFrequency = FirstNonBlank(items.Select(item => item.DividendFrequency).ToArray()),
+            DividendMonths = string.Join(",", items
+                .SelectMany(item => ParseDividendMonths(item.DividendMonths))
+                .Distinct()
+                .Order()),
+            DividendRecordDate = items.Select(item => item.DividendRecordDate).FirstOrDefault(value => value is not null),
+            ExDividendDate = items.Select(item => item.ExDividendDate).FirstOrDefault(value => value is not null),
+            DividendPaymentDate = items.Select(item => item.DividendPaymentDate).FirstOrDefault(value => value is not null),
             AnnualDividendSource = items.Any(item => item.AnnualDividendPerShare > 0m)
                 ? FirstNonBlank(items.Select(item => item.AnnualDividendSource).ToArray())
                 : "配当情報未取得",
@@ -167,6 +194,13 @@ public sealed class DividendGrowthSimulationService
             Components = items
         };
     }
+
+    private static IEnumerable<int> ParseDividendMonths(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? Array.Empty<int>()
+            : value.Split(new[] { ',', '/', '、', ' ', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => int.TryParse(part.Trim().Replace("月", string.Empty, StringComparison.Ordinal), out var month) ? month : 0)
+                .Where(month => month is >= 1 and <= 12);
 
     private DividendGrowthSimulationHolding BuildHolding(
         DividendGrowthPlanItem item,
