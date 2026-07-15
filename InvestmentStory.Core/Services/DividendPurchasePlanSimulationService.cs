@@ -31,12 +31,8 @@ public sealed class DividendPurchasePlanSimulationService
             allEvents.AddRange(result.Events);
         }
 
+        var hasPurchasePlan = input.PlanItems.Any(x => x.PlannedAdditionalShares > 0m);
         var nextYearTotal = holdings.Sum(x => x.PostAddNextYearNetDividendJpy);
-        holdings = holdings
-            .Select(x => CopyWithComposition(x, nextYearTotal))
-            .OrderByDescending(x => x.TargetYearAdditionalNetDividendJpy)
-            .ThenBy(x => x.Ticker, StringComparer.OrdinalIgnoreCase)
-            .ToList();
 
         var monthlyTarget = target / 12m;
         var currentCumulative = 0m;
@@ -67,6 +63,20 @@ public sealed class DividendPurchasePlanSimulationService
         var currentTargetYear = months.Sum(x => x.CurrentNetDividendJpy);
         var addedTargetYear = months.Sum(x => x.AdditionalNetDividendJpy);
         var plannedTargetYear = currentTargetYear + addedTargetYear;
+        if (!hasPurchasePlan)
+        {
+            // With no purchase plan the three headline values must use the same
+            // target-year event basis. This avoids unexplained rounding/schedule
+            // differences between "before", "after", and "next year".
+            plannedTargetYear = currentTargetYear;
+            nextYearTotal = currentTargetYear;
+        }
+
+        holdings = holdings
+            .Select(x => CopyWithComposition(x, nextYearTotal))
+            .OrderByDescending(x => x.TargetYearAdditionalNetDividendJpy)
+            .ThenBy(x => x.Ticker, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var missed = months.Sum(x => x.MissedNetDividendJpy);
         var investment = holdings.Sum(x => x.PlannedPurchaseAmountJpy);
         var currentMarketValue = input.PlanItems.Where(x => !x.IsNewStock).Sum(CurrentMarketValueJpy);

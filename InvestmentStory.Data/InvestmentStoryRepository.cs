@@ -528,6 +528,206 @@ public sealed class InvestmentStoryRepository
         transaction.Commit();
     }
 
+    public DividendPurchasePlan? GetLastDividendPurchasePlan()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, Name, TargetYear, PlannedPurchaseDate, DisplayUnit,
+                   TargetAnnualNetDividendJpy, IsLastUsed, CreatedAt, UpdatedAt
+            FROM DividendPurchasePlans
+            ORDER BY IsLastUsed DESC, UpdatedAt DESC, Id DESC
+            LIMIT 1;
+            """;
+
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        var plan = new DividendPurchasePlan
+        {
+            Id = reader.GetInt32(0),
+            Name = GetStringOrDefault(reader, 1, "Default"),
+            TargetYear = reader.GetInt32(2),
+            PlannedPurchaseDate = GetDateOrToday(reader, 3),
+            DisplayUnit = GetStringOrDefault(reader, 4, DividendPurchasePlanDisplayUnits.AllAccounts),
+            TargetAnnualNetDividendJpy = GetDecimalOrZero(reader, 5),
+            IsLastUsed = reader.GetInt32(6) != 0,
+            CreatedAt = GetDateTimeOrDefault(reader, 7, DateTime.MinValue),
+            UpdatedAt = GetDateTimeOrDefault(reader, 8, DateTime.MinValue)
+        };
+        reader.Close();
+
+        using var itemCommand = connection.CreateCommand();
+        itemCommand.CommandText = """
+            SELECT Id, PlanId, ItemOrder, IsNewStock, StockId, PlanKey,
+                   CanonicalSecurityKey, PositionKey, Ticker, Name, Broker, AccountType,
+                   Country, Currency, CurrentShares, CurrentPrice, ExchangeRate,
+                   AnnualDividendPerShare, CurrentCostJpy, CurrentMarketValueJpy,
+                   DividendFrequency, DividendMonths, DividendRecordDate, ExDividendDate,
+                   DividendPaymentDate, AnnualDividendSource, MarketDataSource,
+                   MarketDataAcquiredAt, MarketDataStatus, DataQuality,
+                   PlannedAdditionalShares, PlannedBroker, PlannedAccountType,
+                   AnnualDividendGrowthRate, PurchaseMode
+            FROM DividendPurchasePlanItems
+            WHERE PlanId = $planId
+            ORDER BY ItemOrder, Id;
+            """;
+        itemCommand.Parameters.AddWithValue("$planId", plan.Id);
+
+        using var itemReader = itemCommand.ExecuteReader();
+        var items = new List<DividendPurchasePlanItem>();
+        while (itemReader.Read())
+        {
+            items.Add(new DividendPurchasePlanItem
+            {
+                Id = itemReader.GetInt32(0),
+                PlanId = itemReader.GetInt32(1),
+                ItemOrder = itemReader.GetInt32(2),
+                IsNewStock = itemReader.GetInt32(3) != 0,
+                StockId = itemReader.GetInt32(4),
+                PlanKey = GetString(itemReader, 5),
+                CanonicalSecurityKey = GetString(itemReader, 6),
+                PositionKey = GetString(itemReader, 7),
+                Ticker = GetString(itemReader, 8),
+                Name = GetString(itemReader, 9),
+                Broker = GetString(itemReader, 10),
+                AccountType = GetStringOrDefault(itemReader, 11, AccountTypes.Unknown),
+                Country = GetString(itemReader, 12),
+                Currency = GetStringOrDefault(itemReader, 13, "JPY"),
+                CurrentShares = GetDecimalOrZero(itemReader, 14),
+                CurrentPrice = GetDecimalOrZero(itemReader, 15),
+                ExchangeRate = GetDecimalOrDefault(itemReader, 16, 1m),
+                AnnualDividendPerShare = GetDecimalOrZero(itemReader, 17),
+                CurrentCostJpy = GetDecimalOrZero(itemReader, 18),
+                CurrentMarketValueJpy = GetDecimalOrZero(itemReader, 19),
+                DividendFrequency = GetString(itemReader, 20),
+                DividendMonths = GetString(itemReader, 21),
+                DividendRecordDate = GetNullableDateTime(itemReader, 22),
+                ExDividendDate = GetNullableDateTime(itemReader, 23),
+                DividendPaymentDate = GetNullableDateTime(itemReader, 24),
+                AnnualDividendSource = GetString(itemReader, 25),
+                MarketDataSource = GetString(itemReader, 26),
+                MarketDataAcquiredAt = GetNullableDateTime(itemReader, 27),
+                MarketDataStatus = GetString(itemReader, 28),
+                DataQuality = GetString(itemReader, 29),
+                PlannedAdditionalShares = GetDecimalOrZero(itemReader, 30),
+                PlannedBroker = GetString(itemReader, 31),
+                PlannedAccountType = GetStringOrDefault(itemReader, 32, AccountTypes.Unknown),
+                AnnualDividendGrowthRate = GetDecimalOrZero(itemReader, 33),
+                PurchaseMode = GetStringOrDefault(itemReader, 34, DividendGrowthPurchaseModes.OneTime)
+            });
+        }
+
+        plan.Items = items;
+        return plan;
+    }
+
+    public int SaveDividendPurchasePlan(DividendPurchasePlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var now = DateTime.Now;
+        var planId = plan.Id;
+
+        using (var clearLastUsed = connection.CreateCommand())
+        {
+            clearLastUsed.Transaction = transaction;
+            clearLastUsed.CommandText = "UPDATE DividendPurchasePlans SET IsLastUsed = 0 WHERE IsLastUsed <> 0;";
+            clearLastUsed.ExecuteNonQuery();
+        }
+
+        if (planId > 0)
+        {
+            using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE DividendPurchasePlans SET
+                    Name = $name,
+                    TargetYear = $targetYear,
+                    PlannedPurchaseDate = $purchaseDate,
+                    DisplayUnit = $displayUnit,
+                    TargetAnnualNetDividendJpy = $targetDividend,
+                    IsLastUsed = 1,
+                    UpdatedAt = $updatedAt
+                WHERE Id = $id;
+                """;
+            AddDividendPurchasePlanParameters(update, plan, now);
+            update.Parameters.AddWithValue("$id", planId);
+            if (update.ExecuteNonQuery() == 0)
+            {
+                planId = 0;
+            }
+        }
+
+        if (planId == 0)
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO DividendPurchasePlans
+                    (Name, TargetYear, PlannedPurchaseDate, DisplayUnit,
+                     TargetAnnualNetDividendJpy, IsLastUsed, CreatedAt, UpdatedAt)
+                VALUES
+                    ($name, $targetYear, $purchaseDate, $displayUnit,
+                     $targetDividend, 1, $updatedAt, $updatedAt);
+                SELECT last_insert_rowid();
+                """;
+            AddDividendPurchasePlanParameters(insert, plan, now);
+            planId = Convert.ToInt32((long)(insert.ExecuteScalar() ?? 0L));
+        }
+
+        using (var deleteItems = connection.CreateCommand())
+        {
+            deleteItems.Transaction = transaction;
+            deleteItems.CommandText = "DELETE FROM DividendPurchasePlanItems WHERE PlanId = $planId;";
+            deleteItems.Parameters.AddWithValue("$planId", planId);
+            deleteItems.ExecuteNonQuery();
+        }
+
+        var itemOrder = 0;
+        foreach (var item in plan.Items)
+        {
+            using var insertItem = connection.CreateCommand();
+            insertItem.Transaction = transaction;
+            insertItem.CommandText = """
+                INSERT INTO DividendPurchasePlanItems
+                    (PlanId, ItemOrder, IsNewStock, StockId, PlanKey,
+                     CanonicalSecurityKey, PositionKey, Ticker, Name, Broker, AccountType,
+                     Country, Currency, CurrentShares, CurrentPrice, ExchangeRate,
+                     AnnualDividendPerShare, CurrentCostJpy, CurrentMarketValueJpy,
+                     DividendFrequency, DividendMonths, DividendRecordDate, ExDividendDate,
+                     DividendPaymentDate, AnnualDividendSource, MarketDataSource,
+                     MarketDataAcquiredAt, MarketDataStatus, DataQuality,
+                     PlannedAdditionalShares, PlannedBroker, PlannedAccountType,
+                     AnnualDividendGrowthRate, PurchaseMode, UpdatedAt)
+                VALUES
+                    ($planId, $itemOrder, $isNewStock, $stockId, $planKey,
+                     $canonicalKey, $positionKey, $ticker, $name, $broker, $accountType,
+                     $country, $currency, $currentShares, $currentPrice, $exchangeRate,
+                     $annualDividend, $currentCost, $currentMarketValue,
+                     $frequency, $months, $recordDate, $exDate,
+                     $paymentDate, $dividendSource, $marketSource,
+                     $marketAcquiredAt, $marketStatus, $dataQuality,
+                     $plannedShares, $plannedBroker, $plannedAccount,
+                     $growthRate, $purchaseMode, $updatedAt);
+                """;
+            AddDividendPurchasePlanItemParameters(insertItem, planId, itemOrder, item, now);
+            insertItem.ExecuteNonQuery();
+            itemOrder++;
+        }
+
+        transaction.Commit();
+        plan.Id = planId;
+        plan.IsLastUsed = true;
+        plan.UpdatedAt = now;
+        return planId;
+    }
+
     public void SaveApiFetchLogs(IEnumerable<ApiFetchLogEntry> logs)
     {
         using var connection = OpenConnection();
@@ -1107,6 +1307,66 @@ public sealed class InvestmentStoryRepository
         command.ExecuteNonQuery();
 
         return connection;
+    }
+
+    private static void AddDividendPurchasePlanParameters(
+        SqliteCommand command,
+        DividendPurchasePlan plan,
+        DateTime updatedAt)
+    {
+        command.Parameters.AddWithValue("$name", string.IsNullOrWhiteSpace(plan.Name) ? "Default" : plan.Name.Trim());
+        command.Parameters.AddWithValue("$targetYear", Math.Clamp(plan.TargetYear, 2000, 2200));
+        command.Parameters.AddWithValue("$purchaseDate", ToDateText(plan.PlannedPurchaseDate));
+        command.Parameters.AddWithValue("$displayUnit", plan.DisplayUnit ?? DividendPurchasePlanDisplayUnits.AllAccounts);
+        command.Parameters.AddWithValue("$targetDividend", Math.Max(0m, plan.TargetAnnualNetDividendJpy));
+        command.Parameters.AddWithValue("$updatedAt", ToDateTimeText(updatedAt));
+    }
+
+    private static void AddDividendPurchasePlanItemParameters(
+        SqliteCommand command,
+        int planId,
+        int itemOrder,
+        DividendPurchasePlanItem item,
+        DateTime updatedAt)
+    {
+        var planKey = string.IsNullOrWhiteSpace(item.PlanKey)
+            ? $"{(item.IsNewStock ? "New" : "Existing")}:{itemOrder}:{item.PositionKey}:{item.Ticker}"
+            : item.PlanKey;
+        command.Parameters.AddWithValue("$planId", planId);
+        command.Parameters.AddWithValue("$itemOrder", itemOrder);
+        command.Parameters.AddWithValue("$isNewStock", item.IsNewStock ? 1 : 0);
+        command.Parameters.AddWithValue("$stockId", item.StockId);
+        command.Parameters.AddWithValue("$planKey", planKey);
+        command.Parameters.AddWithValue("$canonicalKey", item.CanonicalSecurityKey ?? string.Empty);
+        command.Parameters.AddWithValue("$positionKey", item.PositionKey ?? string.Empty);
+        command.Parameters.AddWithValue("$ticker", item.Ticker ?? string.Empty);
+        command.Parameters.AddWithValue("$name", item.Name ?? string.Empty);
+        command.Parameters.AddWithValue("$broker", item.Broker ?? string.Empty);
+        command.Parameters.AddWithValue("$accountType", item.AccountType ?? AccountTypes.Unknown);
+        command.Parameters.AddWithValue("$country", item.Country ?? string.Empty);
+        command.Parameters.AddWithValue("$currency", item.Currency ?? "JPY");
+        command.Parameters.AddWithValue("$currentShares", item.CurrentShares);
+        command.Parameters.AddWithValue("$currentPrice", item.CurrentPrice);
+        command.Parameters.AddWithValue("$exchangeRate", item.ExchangeRate <= 0m ? 1m : item.ExchangeRate);
+        command.Parameters.AddWithValue("$annualDividend", item.AnnualDividendPerShare);
+        command.Parameters.AddWithValue("$currentCost", item.CurrentCostJpy);
+        command.Parameters.AddWithValue("$currentMarketValue", item.CurrentMarketValueJpy);
+        command.Parameters.AddWithValue("$frequency", item.DividendFrequency ?? string.Empty);
+        command.Parameters.AddWithValue("$months", item.DividendMonths ?? string.Empty);
+        command.Parameters.AddWithValue("$recordDate", ToNullableDateTimeText(item.DividendRecordDate));
+        command.Parameters.AddWithValue("$exDate", ToNullableDateTimeText(item.ExDividendDate));
+        command.Parameters.AddWithValue("$paymentDate", ToNullableDateTimeText(item.DividendPaymentDate));
+        command.Parameters.AddWithValue("$dividendSource", item.AnnualDividendSource ?? string.Empty);
+        command.Parameters.AddWithValue("$marketSource", item.MarketDataSource ?? string.Empty);
+        command.Parameters.AddWithValue("$marketAcquiredAt", ToNullableDateTimeText(item.MarketDataAcquiredAt));
+        command.Parameters.AddWithValue("$marketStatus", item.MarketDataStatus ?? string.Empty);
+        command.Parameters.AddWithValue("$dataQuality", item.DataQuality ?? string.Empty);
+        command.Parameters.AddWithValue("$plannedShares", Math.Max(0m, item.PlannedAdditionalShares));
+        command.Parameters.AddWithValue("$plannedBroker", item.PlannedBroker ?? string.Empty);
+        command.Parameters.AddWithValue("$plannedAccount", item.PlannedAccountType ?? AccountTypes.Unknown);
+        command.Parameters.AddWithValue("$growthRate", item.AnnualDividendGrowthRate);
+        command.Parameters.AddWithValue("$purchaseMode", item.PurchaseMode ?? DividendGrowthPurchaseModes.OneTime);
+        command.Parameters.AddWithValue("$updatedAt", ToDateTimeText(updatedAt));
     }
 
     private static void NormalizePositionForPersistence(StockPosition position)
@@ -1818,6 +2078,16 @@ public sealed class InvestmentStoryRepository
     private static DateTime GetDateTimeOrDefault(SqliteDataReader reader, int ordinal, DateTime defaultValue) =>
         reader.IsDBNull(ordinal) ? defaultValue : ParseDateTime(reader.GetString(ordinal), defaultValue);
 
+    private static DateTime? GetNullableDateTime(SqliteDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return DateTime.TryParse(reader.GetString(ordinal), out var value) ? value : null;
+    }
+
     private static string GetDividendStatus(SqliteDataReader reader, int ordinal, decimal annualDividendPerShare)
     {
         var value = GetString(reader, ordinal);
@@ -1896,6 +2166,9 @@ public sealed class InvestmentStoryRepository
         date == default || date == DateTime.MinValue ? string.Empty : ToDateText(date);
 
     private static string ToDateTimeText(DateTime date) => date.ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static object ToNullableDateTimeText(DateTime? date) =>
+        date.HasValue ? ToDateTimeText(date.Value) : DBNull.Value;
 
     private static string NormalizeCurrency(string currency)
     {

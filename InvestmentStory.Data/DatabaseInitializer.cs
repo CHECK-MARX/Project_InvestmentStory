@@ -16,6 +16,7 @@ public sealed class DatabaseInitializer
         using var connection = new SqliteConnection(CreateConnectionString(databasePath));
         connection.Open();
         Execute(connection, "PRAGMA foreign_keys = ON;");
+        BackupBeforeDividendPurchasePlanMigrationIfNeeded(connection, databasePath);
         CreateTables(connection);
         BackupBeforeSecurityMigrationIfNeeded(connection, databasePath);
         DropCsvIdempotencyIndexesBeforeMigration(connection);
@@ -226,6 +227,69 @@ public sealed class DatabaseInitializer
             """);
 
         Execute(connection, """
+            CREATE TABLE IF NOT EXISTS DividendPurchasePlans (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL DEFAULT 'Default',
+                TargetYear INTEGER NOT NULL,
+                PlannedPurchaseDate TEXT NOT NULL,
+                DisplayUnit TEXT NOT NULL DEFAULT 'AllAccounts',
+                TargetAnnualNetDividendJpy REAL NOT NULL DEFAULT 0,
+                IsLastUsed INTEGER NOT NULL DEFAULT 0,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS DividendPurchasePlanItems (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                PlanId INTEGER NOT NULL,
+                ItemOrder INTEGER NOT NULL DEFAULT 0,
+                IsNewStock INTEGER NOT NULL DEFAULT 0,
+                StockId INTEGER NOT NULL DEFAULT 0,
+                PlanKey TEXT NOT NULL DEFAULT '',
+                CanonicalSecurityKey TEXT NOT NULL DEFAULT '',
+                PositionKey TEXT NOT NULL DEFAULT '',
+                Ticker TEXT NOT NULL DEFAULT '',
+                Name TEXT NOT NULL DEFAULT '',
+                Broker TEXT NOT NULL DEFAULT '',
+                AccountType TEXT NOT NULL DEFAULT 'Unknown',
+                Country TEXT NOT NULL DEFAULT '',
+                Currency TEXT NOT NULL DEFAULT 'JPY',
+                CurrentShares REAL NOT NULL DEFAULT 0,
+                CurrentPrice REAL NOT NULL DEFAULT 0,
+                ExchangeRate REAL NOT NULL DEFAULT 1,
+                AnnualDividendPerShare REAL NOT NULL DEFAULT 0,
+                CurrentCostJpy REAL NOT NULL DEFAULT 0,
+                CurrentMarketValueJpy REAL NOT NULL DEFAULT 0,
+                DividendFrequency TEXT NOT NULL DEFAULT '',
+                DividendMonths TEXT NOT NULL DEFAULT '',
+                DividendRecordDate TEXT NULL,
+                ExDividendDate TEXT NULL,
+                DividendPaymentDate TEXT NULL,
+                AnnualDividendSource TEXT NOT NULL DEFAULT '',
+                MarketDataSource TEXT NOT NULL DEFAULT '',
+                MarketDataAcquiredAt TEXT NULL,
+                MarketDataStatus TEXT NOT NULL DEFAULT '',
+                DataQuality TEXT NOT NULL DEFAULT '',
+                PlannedAdditionalShares REAL NOT NULL DEFAULT 0,
+                PlannedBroker TEXT NOT NULL DEFAULT '',
+                PlannedAccountType TEXT NOT NULL DEFAULT 'Unknown',
+                AnnualDividendGrowthRate REAL NOT NULL DEFAULT 0,
+                PurchaseMode TEXT NOT NULL DEFAULT 'OneTime',
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (PlanId) REFERENCES DividendPurchasePlans(Id) ON DELETE CASCADE,
+                UNIQUE(PlanId, PlanKey)
+            );
+            """);
+
+        Execute(connection, """
+            CREATE INDEX IF NOT EXISTS IX_DividendPurchasePlans_LastUsed
+            ON DividendPurchasePlans(IsLastUsed, UpdatedAt DESC);
+            """);
+
+        Execute(connection, """
             CREATE TABLE IF NOT EXISTS ApiFetchLogs (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ApiType TEXT NOT NULL,
@@ -316,6 +380,18 @@ public sealed class DatabaseInitializer
         if (!ColumnExists(connection, "Stocks", "CanonicalSecurityKey"))
         {
             BackupDatabase(databasePath, "before_security_fix");
+        }
+    }
+
+    private static void BackupBeforeDividendPurchasePlanMigrationIfNeeded(
+        SqliteConnection connection,
+        string databasePath)
+    {
+        if (TableExists(connection, "Stocks") &&
+            (!TableExists(connection, "DividendPurchasePlans") ||
+             !TableExists(connection, "DividendPurchasePlanItems")))
+        {
+            BackupDatabase(databasePath, "before_dividend_purchase_plan");
         }
     }
 
@@ -1431,6 +1507,14 @@ public sealed class DatabaseInitializer
         }
 
         return false;
+    }
+
+    private static bool TableExists(SqliteConnection connection, string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $name;";
+        command.Parameters.AddWithValue("$name", tableName);
+        return Convert.ToInt32(command.ExecuteScalar()) > 0;
     }
 
     private static void SeedSampleData(SqliteConnection connection)

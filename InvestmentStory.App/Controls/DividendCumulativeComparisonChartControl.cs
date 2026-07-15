@@ -46,6 +46,7 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
         var current = Brush("AccentBlueBrush", Brushes.DeepSkyBlue);
         var planned = Brush("DividendBrush", Brushes.MediumPurple);
         var grid = Brush("BorderBrush", Brushes.DimGray);
+        var isUnchanged = _rows.All(row => row.CurrentCumulativeValue == row.PlannedCumulativeValue);
         _left = 62d;
         var top = 42d;
         var right = 24d;
@@ -56,9 +57,16 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
         var max = Math.Max(1m, _rows.Max(x => Math.Max(x.CurrentCumulativeValue, x.PlannedCumulativeValue)) * 1.08m);
 
         dc.DrawLine(new Pen(current, 2.2), new Point(8, 16), new Point(28, 16));
-        DrawText(dc, "現在", 11, 34, 8, text);
-        dc.DrawLine(new Pen(planned, 2.6), new Point(90, 16), new Point(110, 16));
-        DrawText(dc, "購入後", 11, 116, 8, text);
+        DrawText(dc, isUnchanged ? "現在＝購入後" : "現在", 11, 34, 8, text);
+        if (!isUnchanged)
+        {
+            dc.DrawLine(new Pen(planned, 2.6), new Point(90, 16), new Point(110, 16));
+            DrawText(dc, "購入後", 11, 116, 8, text);
+        }
+        else
+        {
+            DrawText(dc, "購入計画なしのため同額", 11, Math.Max(150d, ActualWidth - 178d), 8, secondary);
+        }
 
         for (var tick = 0; tick <= 4; tick++)
         {
@@ -77,11 +85,21 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
             DrawText(dc, $"{row.Month}月", 10, x - 12, top + height + 8, secondary);
         }
 
-        DrawArea(dc, plannedPoints, top + height, Color.FromArgb(40, 167, 139, 250));
-        DrawLine(dc, currentPoints, new Pen(current, 2.1));
-        DrawLine(dc, plannedPoints, new Pen(planned, 2.8));
-        foreach (var point in plannedPoints)
-            dc.DrawEllipse(planned, null, point, 3.2, 3.2);
+        if (isUnchanged)
+        {
+            DrawArea(dc, currentPoints, top + height, Color.FromArgb(32, 56, 189, 248));
+            DrawLine(dc, currentPoints, new Pen(current, 2.6));
+            foreach (var point in currentPoints)
+                dc.DrawEllipse(current, null, point, 3.2, 3.2);
+        }
+        else
+        {
+            DrawArea(dc, plannedPoints, top + height, Color.FromArgb(40, 167, 139, 250));
+            DrawLine(dc, currentPoints, new Pen(current, 2.1));
+            DrawLine(dc, plannedPoints, new Pen(planned, 2.8));
+            foreach (var point in plannedPoints)
+                dc.DrawEllipse(planned, null, point, 3.2, 3.2);
+        }
     }
 
     private void OnMouseMove(object sender, MouseEventArgs e)
@@ -94,7 +112,7 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
             return;
         }
         var row = _rows[index];
-        ToolTip = $"{row.YearMonth}\n現在累計 {row.CurrentCumulativeDividend}\n購入後累計 {row.CumulativeDividend}\n差額 {row.AdditionalDividend}\n月目標 {row.TargetDividend}";
+        ToolTip = row.ToolTipText;
     }
 
     private static void DrawLine(DrawingContext dc, IReadOnlyList<Point> points, Pen pen)

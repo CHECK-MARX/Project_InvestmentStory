@@ -244,7 +244,9 @@ public sealed class UiStyleRegressionTests
     {
         var xaml = ReadRepoFile("InvestmentStory.App", "Views", "DividendPurchasePlanView.xaml");
 
-        Assert.Contains("今年の購入計画シミュレーション", xaml);
+        Assert.Contains("DividendPlanPageTitle", xaml);
+        Assert.Contains("対象年受取配当", xaml);
+        Assert.Contains("翌年年間配当", xaml);
         Assert.DoesNotContain("InputLabelStyle", xaml);
         Assert.Contains("LabelTextStyle", xaml);
         Assert.Contains("DividendPlanTargetYear", xaml);

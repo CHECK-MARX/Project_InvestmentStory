@@ -41,7 +41,7 @@ public sealed class DividendIncreaseRankingChartControl : FrameworkElement
                 ?? new List<DividendPlanRankingRowViewModel>();
         if (_rows.Count == 0 || ActualWidth < 240d || ActualHeight < 100d)
         {
-            DrawText(dc, "追加配当のある購入計画がありません。", 13, 16, 18, Brush("SecondaryTextBrush", Brushes.Gray));
+            DrawText(dc, "購入予定を入力すると表示されます", 13, 16, 18, Brush("SecondaryTextBrush", Brushes.Gray));
             return;
         }
 

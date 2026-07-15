@@ -100,7 +100,9 @@ public sealed class MainViewModel : ObservableObject
             _marketDataService,
             _stockLookupService,
             _fundMarketDataService,
-            ShowStockDetail);
+            ShowStockDetail,
+            () => _repository.GetLastDividendPurchasePlan(),
+            plan => _repository.SaveDividendPurchasePlan(plan));
         CsvImport = new CsvImportViewModel(
             () => _repository.GetPositions(),
             position => _repository.SavePosition(position),
@@ -140,7 +142,17 @@ public sealed class MainViewModel : ObservableObject
         });
         ShowDividendsCommand = new RelayCommand(() => Navigate(Dividends, "配当実績"));
         ShowPassiveIncomeCommand = new RelayCommand(() => Navigate(PassiveIncome, "不労所得"));
-        ShowSimulationCommand = new RelayCommand(() => Navigate(Simulation, "未来シミュレーション"));
+        ShowSimulationCommand = new RelayCommand(() =>
+        {
+            // Preserve in-session edits. When there are no edits, reopen the last plan
+            // from the currently active (normal or sample) database.
+            if (!Simulation.HasUnsavedDividendPlanChanges)
+            {
+                Simulation.ReloadDividendPurchasePlan();
+            }
+
+            Navigate(Simulation, "未来シミュレーション");
+        });
         ShowCsvImportCommand = new RelayCommand(() => Navigate(CsvImport, "CSV取込"));
         ShowBrokerIntegrationCommand = new RelayCommand(() => Navigate(BrokerIntegration, "取込・統合設定"));
         ShowSettingsCommand = new RelayCommand(() =>
@@ -463,6 +475,7 @@ public sealed class MainViewModel : ObservableObject
         _repository = SampleDataSeeder.ResetSampleSessionDatabase(sampleSettings);
         _selectedDetailStockId = null;
         IsSampleMode = true;
+        Simulation.ReloadDividendPurchasePlan();
         Settings.Load();
     }
 
@@ -475,6 +488,7 @@ public sealed class MainViewModel : ObservableObject
         _selectedDetailStockId = null;
         IsSampleMode = false;
         DatabasePaths.DeleteSampleSessionDatabase();
+        Simulation.ReloadDividendPurchasePlan();
         Settings.Load();
         LoadData();
         Navigate(Dashboard, "ダッシュボード");

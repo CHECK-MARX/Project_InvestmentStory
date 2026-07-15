@@ -113,6 +113,19 @@ public sealed class DividendPurchasePlanSimulationServiceTests
     }
 
     [Fact]
+    public void NoPurchasePlan_UsesSameTargetYearBasisForBeforeAfterAndFollowingYear()
+    {
+        var item = CreateUsNisaItem(plannedShares: 0m);
+
+        var result = Simulate(item, new DateTime(2026, 7, 14), QuarterlyHistory(item.StockId, item.Ticker));
+
+        Assert.Equal(result.Summary.CurrentTargetYearNetDividendJpy, result.Summary.PlannedTargetYearNetDividendJpy);
+        Assert.Equal(result.Summary.CurrentTargetYearNetDividendJpy, result.Summary.NextYearAnnualNetDividendJpy);
+        Assert.Equal(0m, result.Summary.TargetYearDividendIncreaseJpy);
+        Assert.Equal(0m, result.Summary.PlannedInvestmentJpy);
+    }
+
+    [Fact]
     public void PurchaseOnLastRightsDate_IsEligibleForThatDividend()
     {
         var item = CreateUsNisaItem(plannedShares: 10m);

@@ -63,6 +63,11 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
         var cumulativeMax = Math.Max(1m, _rows.Max(x => x.PlannedCumulativeValue) * 1.08m);
 
         DrawLegend(dc, current, add, newly, cumulative, target, text);
+        DrawText(dc, "月別配当額", 11, 2, 34, secondary);
+        var rightAxisTitle = new FormattedText("年間累計配当額", CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, new Typeface("Yu Gothic UI"), 11, secondary, 1.0);
+        DrawText(dc, "年間累計配当額", 11,
+            Math.Max(_left + _chartWidth - rightAxisTitle.Width, _left), 34, secondary);
         for (var tick = 0; tick <= 4; tick++)
         {
             var y = _top + chartHeight - chartHeight * tick / 4d;
