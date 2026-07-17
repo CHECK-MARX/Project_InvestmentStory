@@ -5,9 +5,17 @@ namespace InvestmentStory.App.ViewModels;
 
 public sealed class DividendPaymentRowViewModel
 {
-    public DividendPaymentRowViewModel(DividendPayment payment)
+    private readonly string? _displayStatus;
+    private readonly string? _dataQuality;
+
+    public DividendPaymentRowViewModel(
+        DividendPayment payment,
+        string? displayStatus = null,
+        string? dataQuality = null)
     {
         Payment = payment;
+        _displayStatus = displayStatus;
+        _dataQuality = dataQuality;
     }
 
     public DividendPayment Payment { get; }
@@ -17,16 +25,24 @@ public sealed class DividendPaymentRowViewModel
     public string StockName => Payment.StockName;
     public string Broker => Payment.Broker;
     public string AccountType => Payment.AccountType;
-    public string Status => Payment.DividendStatus switch
+    public string Status => _displayStatus ?? Payment.DividendStatus switch
     {
-        "Actual" => "実績",
-        "Estimated" => "見込み",
-        "Planned" => "予定",
-        "Confirmed" => "確認済み予定",
-        "PaymentDue" => "入金予定日経過",
+        "Actual" => "入金済み",
+        "Estimated" => "推定",
+        "Planned" => "入金予定",
+        "Confirmed" => "入金予定",
+        "PaymentDue" => "予定日経過（CSV未照合）",
         "Replaced" => "置換済み",
         _ => Payment.DividendStatus
     };
+    public string DataQuality => _dataQuality ?? (Payment.DividendStatus switch
+    {
+        "Actual" => "実績",
+        "Estimated" => "推定",
+        "PaymentDue" => "未照合",
+        "Planned" or "Confirmed" => "予定",
+        _ => "-"
+    });
     public string Source => Payment.Source;
     public string Quantity => Payment.Quantity == 0m ? "-" : Payment.Quantity.ToString("N2");
     public string DividendPerShare => Payment.DividendPerShare == 0m ? "-" : Formatters.Money(Payment.DividendPerShare, Payment.Currency);

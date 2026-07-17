@@ -2,13 +2,13 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
+using InvestmentStory.Core.Models;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendHeatmapControl : FrameworkElement
+public sealed class DividendHeatmapControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendHeatmapControl),
@@ -20,12 +20,6 @@ public sealed class DividendHeatmapControl : FrameworkElement
     private double _cellWidth;
     private double _cellHeight;
 
-    public DividendHeatmapControl()
-    {
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => ToolTip = null;
-    }
-
     public IEnumerable? Items
     {
         get => (IEnumerable?)GetValue(ItemsProperty);
@@ -35,6 +29,7 @@ public sealed class DividendHeatmapControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         _rows = Items?.OfType<DividendPlanStockMonthlyRowViewModel>()
                     .Where(x => x.TotalValue > 0m).OrderByDescending(x => x.TotalValue).Take(12).ToList()
                 ?? new List<DividendPlanStockMonthlyRowViewModel>();
@@ -45,17 +40,17 @@ public sealed class DividendHeatmapControl : FrameworkElement
         }
 
         _left = Math.Clamp(ActualWidth * 0.18d, 78d, 150d);
-        _top = 32d;
+        _top = 56d;
         _cellWidth = Math.Max(22d, (ActualWidth - _left - 10d) / 12d);
         _cellHeight = Math.Max(22d, (ActualHeight - _top - 8d) / _rows.Count);
         var text = Brush("PrimaryTextBrush", Brushes.White);
         var secondary = Brush("SecondaryTextBrush", Brushes.Gray);
         var border = Brush("BorderBrush", Brushes.DimGray);
-        var accent = (Brush("AccentBlueBrush", Brushes.DeepSkyBlue) as SolidColorBrush)?.Color ?? Colors.DeepSkyBlue;
         var max = Math.Max(1m, _rows.SelectMany(x => x.PlannedValues).Max());
 
+        DrawScaleLegend(dc, max, secondary);
         for (var month = 1; month <= 12; month++)
-            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 8, secondary);
+            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 34, secondary);
 
         foreach (var (row, rowIndex) in _rows.Select((row, index) => (row, index)))
         {
@@ -64,25 +59,43 @@ public sealed class DividendHeatmapControl : FrameworkElement
             for (var monthIndex = 0; monthIndex < 12; monthIndex++)
             {
                 var value = row.PlannedValues[monthIndex];
-                var ratio = value <= 0m ? 0d : Math.Clamp((double)(value / max), 0.12d, 1d);
-                var fill = value <= 0m
-                    ? new SolidColorBrush(Color.FromArgb(40, 100, 116, 139))
-                    : new SolidColorBrush(Color.FromArgb((byte)(55 + ratio * 200), accent.R, accent.G, accent.B));
+                var status = row.ScheduleStatuses[monthIndex];
                 var rect = new Rect(_left + monthIndex * _cellWidth + 2, y + 2, _cellWidth - 4, _cellHeight - 4);
-                dc.DrawRoundedRectangle(fill, new Pen(border, 0.5), rect, 3, 3);
+                if (status is null && value <= 0m)
+                {
+                    dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(18, 100, 116, 139)),
+                        new Pen(border, .35), rect, 3, 3);
+                    continue;
+                }
+                var seriesKey = status is null ? "status:none" : $"status:{status}";
+                if (!IsSeriesVisible(seriesKey)) continue;
+                var opacity = InteractionOpacity(row.Ticker, monthIndex + 1, status);
+                var fill = DividendChartColorRegistry.HeatmapBrush(value, max, status);
+                fill.Opacity *= opacity;
+                var pen = status is null
+                    ? new Pen(border, .5)
+                    : new Pen(DividendChartColorRegistry.StatusBrush(status.Value, opacity), 1.2);
+                if (status is not null && DividendChartColorRegistry.ForStatus(status.Value).DashPattern is { } dash)
+                    pen.DashStyle = new DashStyle(dash, 0);
+                dc.DrawRoundedRectangle(fill, pen, rect, 3, 3);
+                AddHitTarget(rect, row.ToolTipForMonth(monthIndex + 1), row.Ticker,
+                    monthIndex + 1, status, seriesKey);
             }
         }
     }
 
-    private void OnMouseMove(object sender, MouseEventArgs e)
+    private void DrawScaleLegend(DrawingContext dc, decimal max, Brush secondary)
     {
-        if (_rows.Count == 0 || _cellWidth <= 0d || _cellHeight <= 0d) return;
-        var point = e.GetPosition(this);
-        var month = (int)((point.X - _left) / _cellWidth) + 1;
-        var row = (int)((point.Y - _top) / _cellHeight);
-        ToolTip = month is >= 1 and <= 12 && row >= 0 && row < _rows.Count
-            ? _rows[row].ToolTipForMonth(month)
-            : null;
+        DrawText(dc, "金額", 9, 4, 2, secondary);
+        var color = DividendChartColorRegistry.ForStatus(DividendScheduleStatus.Expected).Color;
+        for (var index = 0; index < 5; index++)
+        {
+            dc.DrawRectangle(new SolidColorBrush(Color.FromArgb((byte)(35 + index * 48), color.R, color.G, color.B)),
+                null, new Rect(34 + index * 20, 2, 20, 12));
+        }
+        DrawText(dc, "0", 9, 34, 17, secondary);
+        DrawText(dc, $"{max:N0}円", 9, 104, 17, secondary);
+        DrawText(dc, "塗り=金額 / 枠=状態 / 空欄=配当なし", 9, 190, 5, secondary);
     }
 
     private Brush Brush(string key, Brush fallback) => TryFindResource(key) as Brush ?? fallback;

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+using InvestmentStory.App.Controls;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
@@ -13,25 +14,34 @@ public sealed class DividendsViewModel : ObservableObject
     private readonly Action _updateSchedules;
     private readonly Func<IReadOnlyList<TaxProfile>> _getTaxProfiles;
     private readonly Func<TaxProfile, int> _saveTaxProfile;
+    private readonly Func<int, IncomeGoal?> _getGoal;
+    private readonly DividendDashboardService _dashboardService = new();
+    private List<DividendPayment> _allPayments = new();
+    private IncomeGoal? _fallbackGoal;
+    private DateTime _asOf = DateTime.Today;
+    private DividendDashboardAnalysis _analysis = new();
     private DividendPaymentRowViewModel? _selectedPayment;
     private TaxProfile? _selectedTaxProfile;
     private int _paymentId;
     private int _selectedStockId;
     private bool _showDetails;
     private string _message = string.Empty;
+    private int _selectedYear = DateTime.Today.Year;
 
     public DividendsViewModel(
         Action<DividendPayment> save,
         Action<int> delete,
         Action? updateSchedules = null,
         Func<IReadOnlyList<TaxProfile>>? getTaxProfiles = null,
-        Func<TaxProfile, int>? saveTaxProfile = null)
+        Func<TaxProfile, int>? saveTaxProfile = null,
+        Func<int, IncomeGoal?>? getGoal = null)
     {
         _save = save;
         _delete = delete;
         _updateSchedules = updateSchedules ?? (() => { });
         _getTaxProfiles = getTaxProfiles ?? (() => Array.Empty<TaxProfile>());
         _saveTaxProfile = saveTaxProfile ?? (_ => 0);
+        _getGoal = getGoal ?? (_ => null);
         NewCommand = new RelayCommand(NewPayment);
         SaveCommand = new RelayCommand(Save);
         DeleteCommand = new RelayCommand(Delete, () => SelectedPayment is not null);
@@ -45,13 +55,47 @@ public sealed class DividendsViewModel : ObservableObject
     public ObservableCollection<DividendPaymentRowViewModel> ActualPayments { get; } = new();
     public ObservableCollection<DividendPaymentRowViewModel> PlannedPayments { get; } = new();
     public ObservableCollection<DividendPaymentRowViewModel> ReplacedPayments { get; } = new();
+    public ObservableCollection<int> YearOptions { get; } = new();
+    public ObservableCollection<DividendDashboardEntryViewModel> DividendChartEntries { get; } = new();
+    public ObservableCollection<DividendMonthlySummaryRowViewModel> MonthlySummaryRows { get; } = new();
+    public ObservableCollection<DividendAnnualRankingRowViewModel> AnnualRankingRows { get; } = new();
     public ObservableCollection<TaxProfile> TaxProfiles { get; } = new();
+    public DividendChartInteractionState DividendChartInteraction { get; } = new();
     public ICommand NewCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand ToggleDetailsCommand { get; }
     public ICommand UpdateSchedulesCommand { get; }
     public RelayCommand DeleteCommand { get; }
     public RelayCommand SaveTaxProfileCommand { get; }
+
+    public int SelectedYear
+    {
+        get => _selectedYear;
+        set
+        {
+            if (SetProperty(ref _selectedYear, value))
+            {
+                RebuildDashboard();
+            }
+        }
+    }
+
+    public string ActualNetJpy => Formatters.Jpy(_analysis.ActualNetJpy);
+    public string UpcomingNetJpy => Formatters.Jpy(_analysis.UpcomingNetJpy);
+    public string YearEndForecastJpy => Formatters.Jpy(_analysis.YearEndForecastJpy);
+    public string AnnualGoalJpy => Formatters.Jpy(_analysis.AnnualGoalJpy);
+    public string AchievementRate => Formatters.Percent(_analysis.AchievementRate);
+    public string RemainingJpy => Formatters.Jpy(_analysis.RemainingJpy);
+    public string GrossTotalJpy => Formatters.Jpy(_analysis.GrossTotalJpy);
+    public string ForeignTaxTotalJpy => Formatters.Jpy(_analysis.ForeignTaxTotalJpy);
+    public string DomesticTaxTotalJpy => Formatters.Jpy(_analysis.DomesticTaxTotalJpy);
+    public string UnmatchedCount => $"{_analysis.UnmatchedCount:N0}件";
+    public string MaximumMonth => $"{_analysis.Bias.MaximumMonth}月 / {Formatters.Jpy(_analysis.Bias.MaximumMonthJpy)}";
+    public string MinimumMonth => $"{_analysis.Bias.MinimumMonth}月 / {Formatters.Jpy(_analysis.Bias.MinimumMonthJpy)}";
+    public string MonthlyAverage => Formatters.Jpy(_analysis.Bias.MonthlyAverageJpy);
+    public string MonthlyMedian => Formatters.Jpy(_analysis.Bias.MonthlyMedianJpy);
+    public string ZeroDividendMonthCount => $"{_analysis.Bias.ZeroDividendMonthCount:N0}か月";
+    public string TopTwoConcentration => Formatters.Percent(_analysis.Bias.TopTwoMonthConcentrationRate);
 
     public DividendPaymentRowViewModel? SelectedPayment
     {
@@ -131,8 +175,15 @@ public sealed class DividendsViewModel : ObservableObject
         private set => SetProperty(ref _message, value);
     }
 
-    public void Update(IEnumerable<StockPosition> positions, IEnumerable<DividendPayment> payments)
+    public void Update(
+        IEnumerable<StockPosition> positions,
+        IEnumerable<DividendPayment> payments,
+        IncomeGoal? currentGoal = null,
+        DateTime? asOf = null)
     {
+        _allPayments = payments.ToList();
+        _fallbackGoal = currentGoal;
+        _asOf = (asOf ?? DateTime.Today).Date;
         var selectedStockId = SelectedStockId;
         StockOptions.Clear();
         foreach (var position in positions.OrderBy(x => x.Stock.Ticker))
@@ -147,27 +198,28 @@ public sealed class DividendsViewModel : ObservableObject
             });
         }
 
-        Payments.Clear();
-        ActualPayments.Clear();
-        PlannedPayments.Clear();
         ReplacedPayments.Clear();
-        foreach (var payment in payments.OrderByDescending(x => x.PaymentDate))
+        foreach (var payment in _allPayments
+                     .Where(x => string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
+                     .OrderByDescending(x => x.PaymentDate))
         {
             var row = new DividendPaymentRowViewModel(payment);
-            Payments.Add(row);
-            if (DividendConstants.IsUnconfirmed(payment.DividendStatus))
-            {
-                PlannedPayments.Add(row);
-            }
-            else if (string.Equals(payment.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
-            {
-                ReplacedPayments.Add(row);
-            }
-            else if (DividendConstants.IsVisibleActual(payment.DividendStatus))
-            {
-                ActualPayments.Add(row);
-            }
+            ReplacedPayments.Add(row);
         }
+
+        var availableYears = _allPayments.Select(x => x.PaymentDate.Year)
+            .Append(_asOf.Year)
+            .Where(x => x > 1900)
+            .Distinct()
+            .OrderByDescending(x => x)
+            .ToList();
+        YearOptions.Clear();
+        foreach (var year in availableYears)
+        {
+            YearOptions.Add(year);
+        }
+        _selectedYear = availableYears.Contains(_selectedYear) ? _selectedYear : _asOf.Year;
+        OnPropertyChanged(nameof(SelectedYear));
 
         TaxProfiles.Clear();
         foreach (var profile in _getTaxProfiles())
@@ -179,6 +231,57 @@ public sealed class DividendsViewModel : ObservableObject
         SelectedStockId = StockOptions.Any(x => x.StockId == selectedStockId)
             ? selectedStockId
             : StockOptions.FirstOrDefault()?.StockId ?? 0;
+        RebuildDashboard();
+        RefreshAllProperties();
+    }
+
+    private void RebuildDashboard()
+    {
+        var goal = _getGoal(SelectedYear);
+        if (goal is null && _fallbackGoal?.TargetYear == SelectedYear)
+        {
+            goal = _fallbackGoal;
+        }
+
+        _analysis = _dashboardService.Build(
+            _allPayments,
+            SelectedYear,
+            goal?.AnnualPassiveIncomeGoal ?? 0m,
+            _asOf);
+
+        Payments.Clear();
+        PlannedPayments.Clear();
+        ActualPayments.Clear();
+        DividendChartEntries.Clear();
+        MonthlySummaryRows.Clear();
+        AnnualRankingRows.Clear();
+
+        foreach (var entry in _analysis.Entries)
+        {
+            var paymentRow = new DividendPaymentRowViewModel(
+                entry.Payment,
+                entry.DisplayStatus,
+                entry.DataQuality);
+            Payments.Add(paymentRow);
+            PlannedPayments.Add(paymentRow);
+            DividendChartEntries.Add(new DividendDashboardEntryViewModel(entry));
+            if (entry.IsActual)
+            {
+                ActualPayments.Add(paymentRow);
+            }
+        }
+
+        foreach (var month in _analysis.Months)
+        {
+            MonthlySummaryRows.Add(new DividendMonthlySummaryRowViewModel(month));
+        }
+
+        foreach (var item in _analysis.Rankings.Select((ranking, index) =>
+                     new DividendAnnualRankingRowViewModel(ranking, index + 1)))
+        {
+            AnnualRankingRows.Add(item);
+        }
+
         RefreshAllProperties();
     }
 

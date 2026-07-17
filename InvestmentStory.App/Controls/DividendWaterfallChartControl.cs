@@ -2,13 +2,12 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendWaterfallChartControl : FrameworkElement
+public sealed class DividendWaterfallChartControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendWaterfallChartControl),
@@ -16,16 +15,6 @@ public sealed class DividendWaterfallChartControl : FrameworkElement
     public static readonly DependencyProperty CurrentValueProperty = DependencyProperty.Register(
         nameof(CurrentValue), typeof(decimal), typeof(DividendWaterfallChartControl),
         new FrameworkPropertyMetadata(0m, FrameworkPropertyMetadataOptions.AffectsRender));
-
-    private IReadOnlyList<Segment> _segments = Array.Empty<Segment>();
-    private double _left;
-    private double _slot;
-
-    public DividendWaterfallChartControl()
-    {
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => ToolTip = null;
-    }
 
     public IEnumerable? Items
     {
@@ -42,6 +31,7 @@ public sealed class DividendWaterfallChartControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         var additions = Items?.OfType<DividendPlanRankingRowViewModel>()
             .Where(x => x.Value > 0m).OrderByDescending(x => x.Value).Take(7).ToList()
             ?? new List<DividendPlanRankingRowViewModel>();
@@ -49,7 +39,6 @@ public sealed class DividendWaterfallChartControl : FrameworkElement
         {
             DrawText(dc, "購入計画を入力すると配当ウォーターフォールを表示します。", 13, 16, 18,
                 Brush("SecondaryTextBrush", Brushes.Gray));
-            _segments = Array.Empty<Segment>();
             return;
         }
 
@@ -62,61 +51,55 @@ public sealed class DividendWaterfallChartControl : FrameworkElement
             segments.Add(new Segment(row.Ticker, row.Value, before, running, row, false));
         }
         segments.Add(new Segment("購入後", running, 0m, running, null, true));
-        _segments = segments;
-
         var text = Brush("PrimaryTextBrush", Brushes.White);
         var secondary = Brush("SecondaryTextBrush", Brushes.Gray);
         var baseBrush = Brush("AccentBlueBrush", Brushes.DeepSkyBlue);
-        var addBrush = Brush("ProfitBrush", Brushes.MediumSeaGreen);
         var finalBrush = Brush("DividendBrush", Brushes.MediumPurple);
         var grid = Brush("BorderBrush", Brushes.DimGray);
-        _left = 58d;
+        var left = 58d;
         var top = 28d;
         var bottom = 48d;
-        var width = Math.Max(140d, ActualWidth - _left - 20d);
+        var width = Math.Max(140d, ActualWidth - left - 20d);
         var height = Math.Max(90d, ActualHeight - top - bottom);
-        _slot = width / segments.Count;
+        var slot = width / segments.Count;
         var max = Math.Max(1m, running * 1.12m);
 
         for (var tick = 0; tick <= 4; tick++)
         {
             var y = top + height - height * tick / 4d;
-            dc.DrawLine(new Pen(grid, 0.6), new Point(_left, y), new Point(_left + width, y));
+            dc.DrawLine(new Pen(grid, 0.6), new Point(left, y), new Point(left + width, y));
             DrawText(dc, FormatAxis(max * tick / 4m), 10, 2, y - 7, secondary);
         }
 
         for (var index = 0; index < segments.Count; index++)
         {
             var segment = segments[index];
-            var x = _left + index * _slot + _slot * 0.2;
-            var barWidth = _slot * 0.6;
+            var x = left + index * slot + slot * 0.2;
+            var barWidth = slot * 0.6;
             var yTop = Y(segment.To, max, top, height);
             var yBottom = Y(segment.From, max, top, height);
             var rect = new Rect(x, Math.Min(yTop, yBottom), barWidth, Math.Max(2, Math.Abs(yBottom - yTop)));
-            var brush = index == segments.Count - 1 ? finalBrush : segment.IsTotal ? baseBrush : addBrush;
-            dc.DrawRoundedRectangle(brush, null, rect, 3, 3);
+            var seriesKey = segment.Row is null ? $"waterfall:{index}" : $"ticker:{segment.Row.Ticker}";
+            var opacity = InteractionOpacity(segment.Row?.Ticker, null, null);
+            var brush = index == segments.Count - 1
+                ? WithOpacity(finalBrush, opacity)
+                : segment.IsTotal
+                    ? WithOpacity(baseBrush, opacity)
+                    : DividendChartColorRegistry.SecurityBrush(segment.Row!.Ticker, opacityMultiplier: opacity);
+            if (segment.Row is null || IsSeriesVisible(seriesKey))
+                dc.DrawRoundedRectangle(brush, null, rect, 3, 3);
             DrawText(dc, segment.Label, 10, x, top + height + 9, text);
+            var tooltip = segment.Row?.ToolTipText
+                          ?? $"{segment.Label}\n税引後年間配当 {segment.To:N0}円";
+            AddHitTarget(new Rect(x - slot * .1, top, slot, height + bottom), tooltip,
+                segment.Row?.Ticker ?? "", seriesKey: seriesKey);
             if (!segment.IsTotal && index < segments.Count - 1)
             {
                 var connectorY = Y(segment.To, max, top, height);
                 dc.DrawLine(new Pen(secondary, 0.8) { DashStyle = DashStyles.Dash },
-                    new Point(x + barWidth, connectorY), new Point(x + _slot, connectorY));
+                    new Point(x + barWidth, connectorY), new Point(x + slot, connectorY));
             }
         }
-    }
-
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        if (_segments.Count == 0 || _slot <= 0d) return;
-        var index = (int)((e.GetPosition(this).X - _left) / _slot);
-        if (index < 0 || index >= _segments.Count)
-        {
-            ToolTip = null;
-            return;
-        }
-        var segment = _segments[index];
-        ToolTip = segment.Row?.ToolTipText
-                  ?? $"{segment.Label}\n税引後年間配当 {segment.To:N0}円";
     }
 
     private static double Y(decimal value, decimal max, double top, double height) =>

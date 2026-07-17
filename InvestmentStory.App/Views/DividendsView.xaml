@@ -1,188 +1,359 @@
-﻿<UserControl x:Class="InvestmentStory.App.Views.DividendsView"
+<UserControl x:Class="InvestmentStory.App.Views.DividendsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
-            <StackPanel>
-                <DockPanel Margin="0,0,0,12">
-                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                        <Button Content="予定を更新" Command="{Binding UpdateSchedulesCommand}" Style="{StaticResource ActionButtonStyle}" />
-                        <Button Content="新規" Command="{Binding NewCommand}" Style="{StaticResource ActionButtonStyle}" />
-                        <Button Content="保存" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" />
-                        <Button Content="削除" Command="{Binding DeleteCommand}" Style="{StaticResource DangerButtonStyle}" />
-                    </StackPanel>
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:InvestmentStory.App.Controls">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <DockPanel Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <TextBlock Text="対象年" VerticalAlignment="Center" Margin="0,0,8,0"
+                               Foreground="{DynamicResource SecondaryTextBrush}" />
+                    <ComboBox ItemsSource="{Binding YearOptions}"
+                              SelectedItem="{Binding SelectedYear, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Width="110" Height="36" Margin="0,0,10,0" />
+                    <Button Content="予定を更新" Command="{Binding UpdateSchedulesCommand}"
+                            Style="{StaticResource ActionButtonStyle}" />
+                </StackPanel>
+                <StackPanel>
                     <TextBlock Text="配当実績・予定" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="実績と予定を照合し、対象年の入金状況・税額・年末見込みを同じ集計基準で表示します。"
+                               Foreground="{DynamicResource SecondaryTextBrush}" FontSize="14" />
+                </StackPanel>
+            </DockPanel>
+
+            <TextBlock Text="年間サマリー" Style="{StaticResource SectionTitleStyle}" Margin="0,10,0,12" />
+            <WrapPanel>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242" BorderBrush="{DynamicResource AccentBlueBrush}">
+                    <StackPanel>
+                        <TextBlock Text="今年入金済み配当" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding ActualNetJpy}" Style="{StaticResource MetricValueTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242" BorderBrush="{DynamicResource DividendBrush}">
+                    <StackPanel>
+                        <TextBlock Text="今後入金予定" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding UpcomingNetJpy}" Style="{StaticResource MetricValueTextStyle}"
+                                   Foreground="{DynamicResource DividendBrush}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242" BorderBrush="{DynamicResource AccentBlueBrush}">
+                    <StackPanel>
+                        <TextBlock Text="年末見込み" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding YearEndForecastJpy}" Style="{StaticResource MetricValueTextStyle}"
+                                   Foreground="{DynamicResource AccentBlueBrush}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242" BorderBrush="{DynamicResource WarningBrush}">
+                    <StackPanel>
+                        <TextBlock Text="年間目標" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding AnnualGoalJpy}" Style="{StaticResource MetricValueTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel>
+                        <TextBlock Text="達成率" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding AchievementRate}" Style="{StaticResource MetricValueTextStyle}"
+                                   Foreground="{DynamicResource WarningBrush}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel>
+                        <TextBlock Text="あと必要額" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding RemainingJpy}" Style="{StaticResource MetricValueTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel>
+                        <TextBlock Text="税引前合計" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding GrossTotalJpy}" Style="{StaticResource MetricValueTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel>
+                        <TextBlock Text="外国税合計" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding ForeignTaxTotalJpy}" Style="{StaticResource MetricValueTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel>
+                        <TextBlock Text="国内税合計" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding DomesticTaxTotalJpy}" Style="{StaticResource MetricValueTextStyle}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242" BorderBrush="{DynamicResource WarningBrush}">
+                    <StackPanel>
+                        <TextBlock Text="未照合件数" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="{Binding UnmatchedCount}" Style="{StaticResource MetricValueTextStyle}"
+                                   Foreground="{DynamicResource WarningBrush}" />
+                    </StackPanel>
+                </Border>
+            </WrapPanel>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,8,0,16">
+                <StackPanel>
+                    <TextBlock Text="月別配当（銘柄別・実績／予定）" Style="{StaticResource SectionTitleStyle}" />
+                    <controls:DividendMonthlyStackedChartControl Items="{Binding DividendChartEntries}"
+                                                                 SummaryItems="{Binding MonthlySummaryRows}"
+                                                                 InteractionState="{Binding DividendChartInteraction}"
+                                                                 Height="410" ClipToBounds="True" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="年間累計（実績・実績＋予定・目標）" Style="{StaticResource SectionTitleStyle}" />
+                    <controls:DividendAnnualCumulativeChartControl Items="{Binding MonthlySummaryRows}"
+                                                                   InteractionState="{Binding DividendChartInteraction}"
+                                                                   Height="360" ClipToBounds="True" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource MetricCardStyle}" Padding="14" Margin="0,0,0,16">
+                <DockPanel>
+                    <Button Content="選択解除" Command="{Binding DividendChartInteraction.ClearCommand}"
+                            DockPanel.Dock="Right" Style="{StaticResource SecondaryButtonStyle}"
+                            Width="96" Height="34" />
+                    <StackPanel>
+                        <TextBlock Text="グラフ選択内容" Style="{StaticResource SubtleTextStyle}" />
+                        <TextBlock Text="{Binding DividendChartInteraction.DetailText}"
+                                   Foreground="{DynamicResource PrimaryTextBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
                 </DockPanel>
+            </Border>
 
-                <TextBlock Text="証券会社CSVで取り込んだ入金実績を正として扱います。予定・見込みは参考値で、CSV実績と一致したものは置換済みに移します。"
-                           TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="14" Margin="0,0,0,12" />
-                <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8" />
-
-                <WrapPanel>
-                    <StackPanel Width="170">
-                        <TextBlock Text="入金日" Style="{StaticResource LabelTextStyle}" />
-                        <DatePicker SelectedDate="{Binding PaymentDate, Mode=TwoWay}" Height="30" Margin="0,0,14,10" />
-                    </StackPanel>
-                    <StackPanel Width="260">
-                        <TextBlock Text="銘柄" Style="{StaticResource LabelTextStyle}" />
-                        <ComboBox ItemsSource="{Binding StockOptions}" SelectedValue="{Binding SelectedStockId, Mode=TwoWay}"
-                                  DisplayMemberPath="Display" SelectedValuePath="StockId" Height="30" Margin="0,0,14,10" />
-                    </StackPanel>
-                    <StackPanel Width="160">
-                        <TextBlock Text="口座区分" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding AccountType, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="190">
-                        <TextBlock Text="証券会社" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding Broker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="150">
-                        <TextBlock Text="数量" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding Quantity, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="160">
-                        <TextBlock Text="1株配当" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding DividendPerShare, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="160">
-                        <TextBlock Text="税引後金額" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding NetAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="130">
-                        <TextBlock Text="通貨" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding Currency, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="170">
-                        <TextBlock Text="為替レート" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding ExchangeRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="420">
-                        <TextBlock Text="メモ" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding Memo, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                </WrapPanel>
-
-                <Button Content="{Binding DetailsButtonText}" Command="{Binding ToggleDetailsCommand}"
-                        Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Margin="0,2,0,12" />
-
-                <WrapPanel Visibility="{Binding ShowDetails, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <StackPanel Width="160">
-                        <TextBlock Text="税引前金額" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding GrossAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="160">
-                        <TextBlock Text="外国税" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding ForeignTaxAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="160">
-                        <TextBlock Text="国内税" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding DomesticTaxAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="160">
-                        <TextBlock Text="税額合計" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding TaxAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="180">
-                        <TextBlock Text="円換算額" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding JpyAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="180">
-                        <TextBlock Text="為替取得日時" Style="{StaticResource LabelTextStyle}" />
-                        <DatePicker SelectedDate="{Binding ExchangeRateAcquiredAt, Mode=TwoWay}" Height="30" Margin="0,0,14,10" />
-                    </StackPanel>
-                    <StackPanel Width="170">
-                        <TextBlock Text="為替取得元" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding ExchangeRateSource, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                    <StackPanel Width="150">
-                        <TextBlock Text="取得区分" Style="{StaticResource LabelTextStyle}" />
-                        <TextBox Text="{Binding ExchangeRateInputType, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
-                    </StackPanel>
-                </WrapPanel>
-            </StackPanel>
-        </Border>
-
-        <TabControl Grid.Row="1">
-            <TabItem Header="配当予定">
-                <DataGrid ItemsSource="{Binding PlannedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="予定日" Binding="{Binding PaymentDate}" Width="100" />
-                        <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="120" />
-                        <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
-                        <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="170" />
-                        <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120" />
-                        <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
-                        <DataGridTextColumn Header="1株配当" Binding="{Binding DividendPerShare}" Width="120" />
-                        <DataGridTextColumn Header="税引前" Binding="{Binding GrossAmount}" Width="120" />
-                        <DataGridTextColumn Header="税額概算" Binding="{Binding TaxAmount}" Width="120" />
-                        <DataGridTextColumn Header="税引後JPY" Binding="{Binding JpyAmount}" Width="130" />
-                        <DataGridTextColumn Header="税メモ" Binding="{Binding TaxNote}" Width="110" />
-                        <DataGridTextColumn Header="元データ" Binding="{Binding Source}" Width="150" />
-                    </DataGrid.Columns>
-                </DataGrid>
-            </TabItem>
-
-            <TabItem Header="配当実績">
-                <DataGrid ItemsSource="{Binding ActualPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="入金日" Binding="{Binding PaymentDate}" Width="100" />
-                        <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
-                        <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="170" />
-                        <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120" />
-                        <DataGridTextColumn Header="口座" Binding="{Binding AccountType}" Width="100" />
-                        <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
-                        <DataGridTextColumn Header="1株配当" Binding="{Binding DividendPerShare}" Width="120" />
-                        <DataGridTextColumn Header="税引前" Binding="{Binding GrossAmount}" Width="120" />
-                        <DataGridTextColumn Header="外国税" Binding="{Binding ForeignTaxAmount}" Width="120" />
-                        <DataGridTextColumn Header="国内税" Binding="{Binding DomesticTaxAmount}" Width="120" />
-                        <DataGridTextColumn Header="税額合計" Binding="{Binding TaxAmount}" Width="120" />
-                        <DataGridTextColumn Header="税引後" Binding="{Binding NetAmount}" Width="120" />
-                        <DataGridTextColumn Header="円換算額" Binding="{Binding JpyAmount}" Width="130" />
-                        <DataGridTextColumn Header="為替" Binding="{Binding ExchangeRate}" Width="120" />
-                        <DataGridTextColumn Header="元データ" Binding="{Binding Source}" Width="120" />
-                        <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
-                    </DataGrid.Columns>
-                </DataGrid>
-            </TabItem>
-
-            <TabItem Header="差分確認">
-                <DataGrid ItemsSource="{Binding ReplacedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="元予定日" Binding="{Binding PaymentDate}" Width="100" />
-                        <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="120" />
-                        <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
-                        <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="170" />
-                        <DataGridTextColumn Header="予定額JPY" Binding="{Binding JpyAmount}" Width="140" />
-                        <DataGridTextColumn Header="置換元" Binding="{Binding Source}" Width="180" />
-                        <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
-                    </DataGrid.Columns>
-                </DataGrid>
-            </TabItem>
-
-            <TabItem Header="税率設定">
-                <DockPanel Margin="8">
-                    <Button Content="税率設定を保存" DockPanel.Dock="Top" Command="{Binding SaveTaxProfileCommand}"
-                            Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" Margin="0,0,0,8" />
-                    <DataGrid ItemsSource="{Binding TaxProfiles}" SelectedItem="{Binding SelectedTaxProfile, Mode=TwoWay}" AutoGenerateColumns="False">
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="月別サマリー" Style="{StaticResource SectionTitleStyle}" />
+                    <DataGrid ItemsSource="{Binding MonthlySummaryRows}" Height="390" FrozenColumnCount="1">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="170" />
-                            <DataGridTextColumn Header="国" Binding="{Binding Country, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
-                            <DataGridTextColumn Header="通貨" Binding="{Binding Currency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80" />
-                            <DataGridTextColumn Header="口座区分" Binding="{Binding AccountType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
-                            <DataGridTextColumn Header="外国税率%" Binding="{Binding ForeignWithholdingTaxRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
-                            <DataGridTextColumn Header="国内税率%" Binding="{Binding TotalDomesticTaxRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
-                            <DataGridCheckBoxColumn Header="国内非課税" Binding="{Binding IsDomesticTaxExempt, Mode=TwoWay}" Width="100" />
-                            <DataGridCheckBoxColumn Header="外国非課税" Binding="{Binding IsForeignTaxExempt, Mode=TwoWay}" Width="100" />
-                            <DataGridTextColumn Header="メモ" Binding="{Binding Memo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                            <DataGridTextColumn Header="月" Binding="{Binding MonthLabel}" Width="80" />
+                            <DataGridTextColumn Header="入金済み" Binding="{Binding Actual}" Width="140" />
+                            <DataGridTextColumn Header="今後予定" Binding="{Binding Upcoming}" Width="140" />
+                            <DataGridTextColumn Header="未照合" Binding="{Binding Unmatched}" Width="140" />
+                            <DataGridTextColumn Header="年末見込み" Binding="{Binding Forecast}" Width="150" />
+                            <DataGridTextColumn Header="月目標" Binding="{Binding Goal}" Width="140" />
+                            <DataGridTextColumn Header="差額" Binding="{Binding Difference}" Width="150" />
                         </DataGrid.Columns>
                     </DataGrid>
-                </DockPanel>
-            </TabItem>
-        </TabControl>
-    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                            <Button Content="新規" Command="{Binding NewCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                            <Button Content="保存" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" />
+                            <Button Content="削除" Command="{Binding DeleteCommand}" Style="{StaticResource DangerButtonStyle}" />
+                        </StackPanel>
+                        <TextBlock Text="配当実績・予定一覧" Style="{StaticResource SectionTitleStyle}" />
+                    </DockPanel>
+
+                    <Expander Header="配当実績を登録・編集" Margin="0,0,0,12">
+                        <StackPanel Margin="0,12,0,4">
+                            <TextBlock Text="証券会社CSVで取り込んだ入金実績を正として扱います。予定と一致した実績は二重計上しません。"
+                                       TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}"
+                                       FontSize="14" Margin="0,0,0,10" />
+                            <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8" />
+                            <WrapPanel>
+                                <StackPanel Width="170">
+                                    <TextBlock Text="入金日" Style="{StaticResource LabelTextStyle}" />
+                                    <DatePicker SelectedDate="{Binding PaymentDate, Mode=TwoWay}" Height="30" Margin="0,0,14,10" />
+                                </StackPanel>
+                                <StackPanel Width="260">
+                                    <TextBlock Text="銘柄" Style="{StaticResource LabelTextStyle}" />
+                                    <ComboBox ItemsSource="{Binding StockOptions}" SelectedValue="{Binding SelectedStockId, Mode=TwoWay}"
+                                              DisplayMemberPath="Display" SelectedValuePath="StockId" Height="30" Margin="0,0,14,10" />
+                                </StackPanel>
+                                <StackPanel Width="160">
+                                    <TextBlock Text="口座区分" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding AccountType, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="190">
+                                    <TextBlock Text="証券会社" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding Broker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="150">
+                                    <TextBlock Text="数量" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding Quantity, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="160">
+                                    <TextBlock Text="1株配当" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding DividendPerShare, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="160">
+                                    <TextBlock Text="税引後金額" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding NetAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="130">
+                                    <TextBlock Text="通貨" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding Currency, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="170">
+                                    <TextBlock Text="為替レート" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding ExchangeRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="420">
+                                    <TextBlock Text="メモ" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding Memo, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                            </WrapPanel>
+                            <Button Content="{Binding DetailsButtonText}" Command="{Binding ToggleDetailsCommand}"
+                                    Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Margin="0,2,0,12" />
+                            <WrapPanel Visibility="{Binding ShowDetails, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel Width="160">
+                                    <TextBlock Text="税引前金額" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding GrossAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="160">
+                                    <TextBlock Text="外国税" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding ForeignTaxAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="160">
+                                    <TextBlock Text="国内税" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding DomesticTaxAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="160">
+                                    <TextBlock Text="税額合計" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding TaxAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="180">
+                                    <TextBlock Text="円換算額" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding JpyAmount, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="180">
+                                    <TextBlock Text="為替取得日時" Style="{StaticResource LabelTextStyle}" />
+                                    <DatePicker SelectedDate="{Binding ExchangeRateAcquiredAt, Mode=TwoWay}" Height="30" Margin="0,0,14,10" />
+                                </StackPanel>
+                                <StackPanel Width="170">
+                                    <TextBlock Text="為替取得元" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding ExchangeRateSource, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Width="150">
+                                    <TextBlock Text="取得区分" Style="{StaticResource LabelTextStyle}" />
+                                    <TextBox Text="{Binding ExchangeRateInputType, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                </StackPanel>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Expander>
+
+                    <TabControl Height="430">
+                        <TabItem Header="配当予定">
+                            <DataGrid ItemsSource="{Binding PlannedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}"
+                                      FrozenColumnCount="2">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="予定日" Binding="{Binding PaymentDate}" Width="105" />
+                                    <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="190" />
+                                    <DataGridTextColumn Header="品質" Binding="{Binding DataQuality}" Width="90" />
+                                    <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
+                                    <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="180" />
+                                    <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
+                                    <DataGridTextColumn Header="1株配当" Binding="{Binding DividendPerShare}" Width="120" />
+                                    <DataGridTextColumn Header="税引前" Binding="{Binding GrossAmountJpy}" Width="130" />
+                                    <DataGridTextColumn Header="税額" Binding="{Binding TaxAmountJpy}" Width="120" />
+                                    <DataGridTextColumn Header="税引後" Binding="{Binding JpyAmount}" Width="130" />
+                                    <DataGridTextColumn Header="元データ" Binding="{Binding Source}" Width="150" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </TabItem>
+                        <TabItem Header="配当実績">
+                            <DataGrid ItemsSource="{Binding ActualPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}"
+                                      FrozenColumnCount="2">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="入金日" Binding="{Binding PaymentDate}" Width="105" />
+                                    <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
+                                    <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="180" />
+                                    <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120" />
+                                    <DataGridTextColumn Header="口座" Binding="{Binding AccountType}" Width="115" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
+                                    <DataGridTextColumn Header="1株配当" Binding="{Binding DividendPerShare}" Width="120" />
+                                    <DataGridTextColumn Header="税引前" Binding="{Binding GrossAmountJpy}" Width="130" />
+                                    <DataGridTextColumn Header="外国税" Binding="{Binding ForeignTaxAmount}" Width="120" />
+                                    <DataGridTextColumn Header="国内税" Binding="{Binding DomesticTaxAmount}" Width="120" />
+                                    <DataGridTextColumn Header="税引後" Binding="{Binding JpyAmount}" Width="130" />
+                                    <DataGridTextColumn Header="元データ" Binding="{Binding Source}" Width="130" />
+                                    <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </TabItem>
+                        <TabItem Header="差分確認">
+                            <DataGrid ItemsSource="{Binding ReplacedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="元予定日" Binding="{Binding PaymentDate}" Width="105" />
+                                    <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="120" />
+                                    <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
+                                    <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="180" />
+                                    <DataGridTextColumn Header="予定額" Binding="{Binding JpyAmount}" Width="140" />
+                                    <DataGridTextColumn Header="置換元" Binding="{Binding Source}" Width="180" />
+                                    <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </TabItem>
+                        <TabItem Header="税率設定">
+                            <DockPanel Margin="8">
+                                <Button Content="税率設定を保存" DockPanel.Dock="Top" Command="{Binding SaveTaxProfileCommand}"
+                                        Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" Margin="0,0,0,8" />
+                                <DataGrid ItemsSource="{Binding TaxProfiles}" SelectedItem="{Binding SelectedTaxProfile, Mode=TwoWay}">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="名称" Binding="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="170" />
+                                        <DataGridTextColumn Header="国" Binding="{Binding Country, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="通貨" Binding="{Binding Currency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                                        <DataGridTextColumn Header="口座区分" Binding="{Binding AccountType, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                                        <DataGridTextColumn Header="外国税率%" Binding="{Binding ForeignWithholdingTaxRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
+                                        <DataGridTextColumn Header="国内税率%" Binding="{Binding TotalDomesticTaxRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110" />
+                                        <DataGridCheckBoxColumn Header="国内非課税" Binding="{Binding IsDomesticTaxExempt, Mode=TwoWay}" Width="100" />
+                                        <DataGridCheckBoxColumn Header="外国非課税" Binding="{Binding IsForeignTaxExempt, Mode=TwoWay}" Width="100" />
+                                        <DataGridTextColumn Header="メモ" Binding="{Binding Memo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </TabItem>
+                    </TabControl>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="銘柄別年間ランキング" Style="{StaticResource SectionTitleStyle}" />
+                    <DataGrid ItemsSource="{Binding AnnualRankingRows}" Height="430" FrozenColumnCount="3">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Binding="{Binding Rank}" Width="50" />
+                            <DataGridTextColumn Header="銘柄" Binding="{Binding Ticker}" Width="90" />
+                            <DataGridTextColumn Header="銘柄名" Binding="{Binding StockName}" Width="190" />
+                            <DataGridTextColumn Header="年間税引前" Binding="{Binding Gross}" Width="145" />
+                            <DataGridTextColumn Header="年間税引後" Binding="{Binding Net}" Width="145" />
+                            <DataGridTextColumn Header="構成比" Binding="{Binding CompositionRate}" Width="100" />
+                            <DataGridTextColumn Header="配当回数" Binding="{Binding PaymentCount}" Width="95" />
+                            <DataGridTextColumn Header="実績" Binding="{Binding Actual}" Width="140" />
+                            <DataGridTextColumn Header="今後予定" Binding="{Binding Upcoming}" Width="140" />
+                            <DataGridTextColumn Header="データ品質" Binding="{Binding DataQuality}" Width="180" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="配当偏り分析" Style="{StaticResource SectionTitleStyle}" />
+            <WrapPanel Margin="0,0,0,24">
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel><TextBlock Text="最大配当月" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding MaximumMonth}" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel><TextBlock Text="最小配当月" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding MinimumMonth}" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel><TextBlock Text="月平均" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding MonthlyAverage}" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel><TextBlock Text="月中央値" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding MonthlyMedian}" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel><TextBlock Text="無配当月数" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding ZeroDividendMonthCount}" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+                </Border>
+                <Border Style="{StaticResource MetricCardStyle}" Width="242">
+                    <StackPanel><TextBlock Text="上位2か月集中率" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding TopTwoConcentration}" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}" /></StackPanel>
+                </Border>
+            </WrapPanel>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

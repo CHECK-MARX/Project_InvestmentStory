@@ -2,13 +2,12 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendMonthlyPlanChartControl : FrameworkElement
+public sealed class DividendMonthlyPlanChartControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendMonthlyPlanChartControl),
@@ -20,12 +19,6 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
     private double _chartWidth;
     private double _slotWidth;
 
-    public DividendMonthlyPlanChartControl()
-    {
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => ToolTip = null;
-    }
-
     public IEnumerable? Items
     {
         get => (IEnumerable?)GetValue(ItemsProperty);
@@ -35,6 +28,7 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         _rows = Items?.OfType<DividendPlanMonthlyRowViewModel>().OrderBy(x => x.Month).ToList()
                 ?? new List<DividendPlanMonthlyRowViewModel>();
         if (_rows.Count == 0 || ActualWidth < 320 || ActualHeight < 180)
@@ -76,9 +70,12 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
             DrawText(dc, FormatAxis(cumulativeMax * tick / 4m), 10, _left + _chartWidth + 8, y - 7, secondary);
         }
 
-        var targetY = ValueY(_rows.Max(x => x.TargetValue), monthlyMax, _top, chartHeight);
-        dc.DrawLine(new Pen(target, 1.1) { DashStyle = DashStyles.Dash },
-            new Point(_left, targetY), new Point(_left + _chartWidth, targetY));
+        if (IsSeriesVisible("plan:target"))
+        {
+            var targetY = ValueY(_rows.Max(x => x.TargetValue), monthlyMax, _top, chartHeight);
+            dc.DrawLine(new Pen(target, 1.1) { DashStyle = DashStyles.Dash },
+                new Point(_left, targetY), new Point(_left + _chartWidth, targetY));
+        }
 
         var cumulativePoints = new List<Point>();
         foreach (var (row, index) in _rows.Select((row, index) => (row, index)))
@@ -87,15 +84,22 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
             var barWidth = Math.Clamp(_slotWidth * 0.56d, 9d, 38d);
             var x = centerX - barWidth / 2d;
             var y = _top + chartHeight;
-            y = DrawStack(dc, current, x, y, barWidth, chartHeight, monthlyMax, row.CurrentValue);
-            y = DrawStack(dc, add, x, y, barWidth, chartHeight, monthlyMax, row.ExistingAdditionalValue);
-            DrawStack(dc, newly, x, y, barWidth, chartHeight, monthlyMax, row.NewPurchaseValue);
+            var opacity = InteractionOpacity(null, row.Month, null);
+            if (IsSeriesVisible("plan:current"))
+                y = DrawStack(dc, current, x, y, barWidth, chartHeight, monthlyMax, row.CurrentValue,
+                    row, "plan:current", opacity);
+            if (IsSeriesVisible("plan:add"))
+                y = DrawStack(dc, add, x, y, barWidth, chartHeight, monthlyMax, row.ExistingAdditionalValue,
+                    row, "plan:add", opacity);
+            if (IsSeriesVisible("plan:new"))
+                DrawStack(dc, newly, x, y, barWidth, chartHeight, monthlyMax, row.NewPurchaseValue,
+                    row, "plan:new", opacity);
             DrawText(dc, $"{row.Month}月", 11, centerX - 13, _top + chartHeight + 10, secondary);
             cumulativePoints.Add(new Point(centerX,
                 ValueY(row.PlannedCumulativeValue, cumulativeMax, _top, chartHeight)));
         }
 
-        if (cumulativePoints.Count > 1)
+        if (cumulativePoints.Count > 1 && IsSeriesVisible("plan:cumulative"))
         {
             var geometry = new StreamGeometry();
             using (var context = geometry.Open())
@@ -109,17 +113,23 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
             {
                 dc.DrawEllipse(cumulative, new Pen(Brush("SurfaceBackgroundBrush", Brushes.Navy), 1.2), point, 3.5, 3.5);
             }
+            foreach (var (point, index) in cumulativePoints.Select((point, index) => (point, index)))
+                AddHitTarget(new Rect(point.X - 10, point.Y - 10, 20, 20), _rows[index].ToolTipText,
+                    month: _rows[index].Month, seriesKey: "plan:cumulative");
         }
     }
 
-    private static double DrawStack(
+    private double DrawStack(
         DrawingContext dc, Brush brush, double x, double y, double width,
-        double chartHeight, decimal max, decimal value)
+        double chartHeight, decimal max, decimal value, DividendPlanMonthlyRowViewModel row,
+        string seriesKey, double opacity)
     {
         if (value <= 0m) return y;
         var height = Math.Max(2d, (double)(value / max) * chartHeight);
         var nextY = y - height;
-        dc.DrawRoundedRectangle(brush, null, new Rect(x, nextY, width, height), 2, 2);
+        dc.DrawRoundedRectangle(WithOpacity(brush, opacity), null, new Rect(x, nextY, width, height), 2, 2);
+        AddHitTarget(new Rect(x, nextY, width, height), row.ToolTipText,
+            month: row.Month, seriesKey: seriesKey);
         return nextY;
     }
 
@@ -128,28 +138,25 @@ public sealed class DividendMonthlyPlanChartControl : FrameworkElement
     {
         var values = new[]
         {
-            ("現在保有", current, false), ("買い増し", add, false), ("新規購入", newly, false),
-            ("年間累計", cumulative, true), ("月目標", target, true)
+            ("現在保有", current, false, "plan:current"), ("買い増し", add, false, "plan:add"),
+            ("新規購入", newly, false, "plan:new"), ("年間累計", cumulative, true, "plan:cumulative"),
+            ("月目標", target, true, "plan:target")
         };
         var x = 4d;
-        foreach (var (label, brush, line) in values)
+        foreach (var (label, brush, line, seriesKey) in values)
         {
+            var legendBrush = WithOpacity(brush, IsSeriesVisible(seriesKey) ? 1d : .22d);
             if (line)
-                dc.DrawLine(new Pen(brush, 2) { DashStyle = label == "月目標" ? DashStyles.Dash : DashStyles.Solid },
+                dc.DrawLine(new Pen(legendBrush, 2) { DashStyle = label == "月目標" ? DashStyles.Dash : DashStyles.Solid },
                     new Point(x, 17), new Point(x + 16, 17));
             else
-                dc.DrawRoundedRectangle(brush, null, new Rect(x, 10, 14, 14), 3, 3);
+                dc.DrawRoundedRectangle(legendBrush, null, new Rect(x, 10, 14, 14), 3, 3);
             DrawText(dc, label, 11, x + 20, 8, text);
-            x += label.Length * 12 + 42;
+            var itemWidth = label.Length * 12 + 42;
+            AddHitTarget(new Rect(x, 4, itemWidth, 28), $"{label}の表示を切り替えます。",
+                seriesKey: seriesKey, isLegend: true);
+            x += itemWidth;
         }
-    }
-
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        if (_rows.Count == 0 || _slotWidth <= 0d) return;
-        var point = e.GetPosition(this);
-        var index = (int)((point.X - _left) / _slotWidth);
-        ToolTip = index >= 0 && index < _rows.Count ? _rows[index].ToolTipText : null;
     }
 
     private static double ValueY(decimal value, decimal max, double top, double height) =>

@@ -2,29 +2,20 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendCompositionDonutControl : FrameworkElement
+public sealed class DividendCompositionDonutControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendCompositionDonutControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnItemsChanged));
 
-    private readonly Brush[] _palette =
-    {
-        Brushes.DeepSkyBlue, Brushes.MediumPurple, Brushes.MediumSeaGreen,
-        Brushes.Orange, Brushes.CornflowerBlue, Brushes.SlateGray
-    };
-    private IReadOnlyList<Segment> _segments = Array.Empty<Segment>();
     private Point _center;
     private double _outerRadius;
     private double _innerRadius;
-
-    public DividendCompositionDonutControl() => MouseMove += OnMouseMove;
 
     public IEnumerable? Items
     {
@@ -35,12 +26,12 @@ public sealed class DividendCompositionDonutControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         var source = Items?.OfType<DividendPlanCompositionRowViewModel>().OrderByDescending(x => x.Value).ToList()
                      ?? new List<DividendPlanCompositionRowViewModel>();
         if (source.Count == 0 || source.Sum(x => x.Value) <= 0m)
         {
             DrawText(dc, "配当構成データがありません。", 14, 16, 20, Brush("SecondaryTextBrush", Brushes.Gray));
-            _segments = Array.Empty<Segment>();
             return;
         }
 
@@ -55,44 +46,43 @@ public sealed class DividendCompositionDonutControl : FrameworkElement
         _outerRadius = Math.Max(36d, Math.Min(ActualHeight * 0.39, ActualWidth * 0.2));
         _innerRadius = _outerRadius * 0.58;
         var start = -90d;
-        var segments = new List<Segment>();
         for (var index = 0; index < top.Count; index++)
         {
-            var sweep = (double)(top[index].Value / total) * 360d;
-            var brush = _palette[index % _palette.Length];
-            dc.DrawGeometry(brush, null, RingSlice(_center, _outerRadius, _innerRadius, start, sweep));
-            segments.Add(new Segment(start, sweep, top[index]));
+            var row = top[index];
+            var sweep = (double)(row.Value / total) * 360d;
+            var seriesKey = $"ticker:{row.Ticker}";
+            var geometry = RingSlice(_center, _outerRadius, _innerRadius, start, sweep);
+            if (IsSeriesVisible(seriesKey))
+            {
+                var brush = DividendChartColorRegistry.SecurityBrush(row.Ticker,
+                    opacityMultiplier: InteractionOpacity(row.Ticker, null, null));
+                dc.DrawGeometry(brush, null, geometry);
+            }
+            AddGeometryHitTarget(geometry, ToolTipFor(row), row.Ticker, seriesKey: seriesKey);
             start += sweep;
         }
-        _segments = segments;
 
         DrawText(dc, "年間配当", 12, _center.X - 30, _center.Y - 16, Brush("SecondaryTextBrush", Brushes.Gray));
         DrawText(dc, $"{total:N0}円", 16, _center.X - 36, _center.Y + 3, Brush("PrimaryTextBrush", Brushes.White));
         var legendX = _outerRadius * 2 + 34d;
         for (var index = 0; index < top.Count; index++)
         {
+            var row = top[index];
             var y = 15d + index * 34d;
-            dc.DrawRoundedRectangle(_palette[index % _palette.Length], null, new Rect(legendX, y + 2, 13, 13), 3, 3);
-            DrawText(dc, $"{top[index].Ticker}  {top[index].Amount}  {top[index].Rate}", 12, legendX + 20, y, Brush("PrimaryTextBrush", Brushes.White));
+            var seriesKey = $"ticker:{row.Ticker}";
+            var legendBrush = DividendChartColorRegistry.SecurityBrush(row.Ticker,
+                opacityMultiplier: IsSeriesVisible(seriesKey) ? 1d : .22d);
+            dc.DrawRoundedRectangle(legendBrush, null, new Rect(legendX, y + 2, 13, 13), 3, 3);
+            DrawText(dc, $"{row.Ticker}  {row.Amount}  {row.Rate}", 12, legendX + 20, y,
+                Brush("PrimaryTextBrush", Brushes.White));
+            AddHitTarget(new Rect(legendX, y - 2, Math.Max(120d, ActualWidth - legendX), 26),
+                $"{row.Ticker}の表示を切り替えます。", row.Ticker, seriesKey: seriesKey, isLegend: true);
         }
     }
 
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        var point = e.GetPosition(this);
-        var dx = point.X - _center.X;
-        var dy = point.Y - _center.Y;
-        var radius = Math.Sqrt(dx * dx + dy * dy);
-        if (radius < _innerRadius || radius > _outerRadius)
-        {
-            ToolTip = null;
-            return;
-        }
-        var angle = Math.Atan2(dy, dx) * 180d / Math.PI;
-        if (angle < -90d) angle += 360d;
-        var segment = _segments.FirstOrDefault(x => angle >= x.Start && angle <= x.Start + x.Sweep);
-        ToolTip = segment?.Row is null ? null : $"{segment.Row.Ticker} {segment.Row.Name}\n年間配当 {segment.Row.Amount}\n構成比 {segment.Row.Rate}";
-    }
+    private static string ToolTipFor(DividendPlanCompositionRowViewModel row) =>
+        $"銘柄 {row.Ticker} {row.Name}\n購入後年間配当 {row.Amount}\n購入後構成比 {row.Rate}\n" +
+        $"現在構成比 {row.CurrentRate}\n構成比変化 {row.RateChange}";
 
     private static Geometry RingSlice(Point center, double outer, double inner, double startDegrees, double sweepDegrees)
     {
@@ -122,5 +112,4 @@ public sealed class DividendCompositionDonutControl : FrameworkElement
         control.InvalidateVisual();
     }
     private void CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => InvalidateVisual();
-    private sealed record Segment(double Start, double Sweep, DividendPlanCompositionRowViewModel Row);
 }

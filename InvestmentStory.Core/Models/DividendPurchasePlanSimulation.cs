@@ -53,6 +53,8 @@ public sealed class DividendPurchasePlanEvent
     public string EligibilityStatus { get; init; } = DividendPlanEligibility.Missing;
     public string DataQuality { get; init; } = DividendPlanDataQuality.Missing;
     public string Source { get; init; } = string.Empty;
+    public DividendScheduleStatus ScheduleStatus =>
+        DividendScheduleStatusResolver.FromPlan(EligibilityStatus, DataQuality);
 }
 
 public sealed class DividendPurchasePlanHolding

@@ -289,6 +289,44 @@ public sealed class UiStyleRegressionTests
         Assert.Contains("<views:DividendPurchasePlanView DataContext=\"{Binding}\" />", xaml);
     }
 
+    [Fact]
+    public void DividendsView_UsesRequestedDashboardSectionOrder()
+    {
+        var xaml = ReadRepoFile("InvestmentStory.App", "Views", "DividendsView.xaml");
+
+        AssertOrdered(
+            xaml,
+            "年間サマリー",
+            "月別配当（銘柄別・実績／予定）",
+            "年間累計（実績・実績＋予定・目標）",
+            "月別サマリー",
+            "配当実績・予定一覧",
+            "銘柄別年間ランキング",
+            "配当偏り分析");
+        Assert.Contains("DividendMonthlyStackedChartControl", xaml);
+        Assert.Contains("DividendAnnualCumulativeChartControl", xaml);
+        Assert.Contains("ItemsSource=\"{Binding YearOptions}\"", xaml);
+    }
+
+    [Fact]
+    public void DividendsView_ShowsRequestedSummaryMetricsAndDataQuality()
+    {
+        var xaml = ReadRepoFile("InvestmentStory.App", "Views", "DividendsView.xaml");
+
+        Assert.Contains("今年入金済み配当", xaml);
+        Assert.Contains("今後入金予定", xaml);
+        Assert.Contains("年末見込み", xaml);
+        Assert.Contains("年間目標", xaml);
+        Assert.Contains("達成率", xaml);
+        Assert.Contains("あと必要額", xaml);
+        Assert.Contains("税引前合計", xaml);
+        Assert.Contains("外国税合計", xaml);
+        Assert.Contains("国内税合計", xaml);
+        Assert.Contains("未照合件数", xaml);
+        Assert.Contains("Binding=\"{Binding DataQuality}\"", xaml);
+        Assert.Contains("Binding=\"{Binding Status}\"", xaml);
+    }
+
     private static string ReadRepoFile(params string[] relativeParts)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

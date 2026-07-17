@@ -45,6 +45,15 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         Assert.Equal(5.76m, result.Summary.YieldOnCostRate, 4);
         Assert.Equal(3.6m, result.Summary.PostAddPortfolioYieldRate, 4);
         Assert.Equal(27.7778m, result.Summary.AdditionalInvestmentPaybackYears, 4);
+        Assert.Equal(
+            result.Summary.CurrentTargetYearNetDividendJpy + result.Summary.TargetYearDividendIncreaseJpy,
+            result.Summary.PlannedTargetYearNetDividendJpy);
+        Assert.Equal(
+            result.Months.Sum(month => month.CurrentNetDividendJpy),
+            result.Summary.CurrentTargetYearNetDividendJpy);
+        Assert.Equal(
+            result.Months.Sum(month => month.AdditionalNetDividendJpy),
+            result.Summary.TargetYearDividendIncreaseJpy);
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows.Input;
+using InvestmentStory.App.Controls;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
@@ -196,6 +197,7 @@ public sealed class SimulationViewModel : ObservableObject
     public ObservableCollection<DividendPlanCompositionRowViewModel> DividendCompositionRows { get; } = new();
     public ObservableCollection<DividendPlanStockMonthlyRowViewModel> DividendStockMonthlyRows { get; } = new();
     public ObservableCollection<DividendCalendarMonthViewModel> DividendCalendarMonths { get; } = new();
+    public DividendChartInteractionState DividendChartInteraction { get; } = new();
     public ObservableCollection<DisplayOptionViewModel> PassiveIncomeDisplayModes { get; } = new()
     {
         new(DividendPurchasePlanDisplayUnits.AllAccounts, "全口座"),
@@ -3448,6 +3450,7 @@ public sealed class DividendPlanMonthlyRowViewModel
 {
     public DividendPlanMonthlyRowViewModel(DividendPurchasePlanMonthlyResult row)
     {
+        Events = row.Events;
         Year = row.Year;
         Month = row.Month;
         CurrentValue = row.CurrentNetDividendJpy;
@@ -3479,6 +3482,7 @@ public sealed class DividendPlanMonthlyRowViewModel
 
     public int Year { get; }
     public int Month { get; }
+    public IReadOnlyList<DividendPurchasePlanEvent> Events { get; }
     public decimal CurrentValue { get; }
     public decimal ExistingAdditionalValue { get; }
     public decimal NewPurchaseValue { get; }
@@ -3569,6 +3573,7 @@ public sealed class DividendPlanStockMonthlyRowViewModel
     {
         Ticker = ticker;
         Name = name;
+        Events = events;
         CurrentValues = BuildValues(events, x => x.CurrentNetDividendJpy);
         ExistingAdditionalValues = BuildValues(events.Where(x => !x.IsNewStock).ToList(), x => x.AdditionalNetDividendJpy);
         NewPurchaseValues = BuildValues(events.Where(x => x.IsNewStock).ToList(), x => x.AdditionalNetDividendJpy);
@@ -3576,7 +3581,7 @@ public sealed class DividendPlanStockMonthlyRowViewModel
         PlannedValues = Enumerable.Range(0, 12)
             .Select(index => CurrentValues[index] + ExistingAdditionalValues[index] + NewPurchaseValues[index])
             .ToArray();
-        Statuses = Enumerable.Range(1, 12)
+        ScheduleStatuses = Enumerable.Range(1, 12)
             .Select(month => ResolveStatus(events.Where(x => x.Month == month).ToList()))
             .ToArray();
         TotalValue = PlannedValues.Sum();
@@ -3584,12 +3589,13 @@ public sealed class DividendPlanStockMonthlyRowViewModel
 
     public string Ticker { get; }
     public string Name { get; }
+    public IReadOnlyList<DividendPurchasePlanEvent> Events { get; }
     public IReadOnlyList<decimal> CurrentValues { get; }
     public IReadOnlyList<decimal> ExistingAdditionalValues { get; }
     public IReadOnlyList<decimal> NewPurchaseValues { get; }
     public IReadOnlyList<decimal> PlannedValues { get; }
     public IReadOnlyList<decimal> MissedValues { get; }
-    public IReadOnlyList<string> Statuses { get; }
+    public IReadOnlyList<DividendScheduleStatus?> ScheduleStatuses { get; }
     public decimal TotalValue { get; }
 
     public string ToolTipForMonth(int month)
@@ -3599,7 +3605,8 @@ public sealed class DividendPlanStockMonthlyRowViewModel
                $"現在 {Formatters.Jpy(CurrentValues[index])}\n" +
                $"買い増し {Formatters.Jpy(ExistingAdditionalValues[index])}\n" +
                $"新規購入 {Formatters.Jpy(NewPurchaseValues[index])}\n" +
-               $"受取不可 {Formatters.Jpy(MissedValues[index])}\n{Statuses[index]}";
+               $"受取不可 {Formatters.Jpy(MissedValues[index])}\n" +
+               StatusDetails(month, ScheduleStatuses[index]);
     }
 
     private static IReadOnlyList<decimal> BuildValues(
@@ -3609,13 +3616,32 @@ public sealed class DividendPlanStockMonthlyRowViewModel
             .Select(month => events.Where(x => x.Month == month).Sum(selector))
             .ToArray();
 
-    private static string ResolveStatus(IReadOnlyList<DividendPurchasePlanEvent> events)
+    private string StatusDetails(int month, DividendScheduleStatus? status)
     {
-        if (events.Count == 0) return "予定なし";
-        if (events.Any(x => x.EligibilityStatus == DividendPlanEligibility.Missing)) return "情報未取得";
-        if (events.Any(x => x.EligibilityStatus == DividendPlanEligibility.Ineligible)) return "購入が間に合わない";
-        if (events.Any(x => x.EligibilityStatus == DividendPlanEligibility.Estimated)) return "推定";
-        return "受取見込み";
+        if (status is null) return "予定なし";
+        var monthEvents = Events.Where(x => x.Month == month).OrderBy(x => x.PaymentDate).ToList();
+        var statusName = status switch
+        {
+            DividendScheduleStatus.Paid => "入金済み",
+            DividendScheduleStatus.Expected => "入金予定",
+            DividendScheduleStatus.Estimated => "推定",
+            DividendScheduleStatus.MissedEligibility => "権利取得不可",
+            DividendScheduleStatus.NotAvailable => "未取得",
+            DividendScheduleStatus.OverdueUnmatched => "期限超過・未照合",
+            _ => status.ToString()
+        };
+        var details = monthEvents.Select(x =>
+            $"{x.PaymentDate:yyyy/MM/dd} {x.Broker}/{x.AccountType} {x.DataQuality} {x.Source}");
+        return $"状態 {statusName}\n{string.Join("\n", details)}";
+    }
+
+    private static DividendScheduleStatus? ResolveStatus(IReadOnlyList<DividendPurchasePlanEvent> events)
+    {
+        if (events.Count == 0) return null;
+        if (events.Any(x => x.ScheduleStatus == DividendScheduleStatus.NotAvailable)) return DividendScheduleStatus.NotAvailable;
+        if (events.Any(x => x.ScheduleStatus == DividendScheduleStatus.MissedEligibility)) return DividendScheduleStatus.MissedEligibility;
+        if (events.Any(x => x.ScheduleStatus == DividendScheduleStatus.Estimated)) return DividendScheduleStatus.Estimated;
+        return DividendScheduleStatus.Expected;
     }
 }
 

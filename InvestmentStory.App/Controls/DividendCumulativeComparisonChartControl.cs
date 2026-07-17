@@ -2,13 +2,12 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
+public sealed class DividendCumulativeComparisonChartControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendCumulativeComparisonChartControl),
@@ -17,12 +16,6 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
     private IReadOnlyList<DividendPlanMonthlyRowViewModel> _rows = Array.Empty<DividendPlanMonthlyRowViewModel>();
     private double _left;
     private double _slot;
-
-    public DividendCumulativeComparisonChartControl()
-    {
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => ToolTip = null;
-    }
 
     public IEnumerable? Items
     {
@@ -33,6 +26,7 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         _rows = Items?.OfType<DividendPlanMonthlyRowViewModel>().OrderBy(x => x.Month).ToList()
                 ?? new List<DividendPlanMonthlyRowViewModel>();
         if (_rows.Count == 0 || ActualWidth < 260 || ActualHeight < 160)
@@ -56,12 +50,18 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
         _slot = width / Math.Max(1, _rows.Count - 1);
         var max = Math.Max(1m, _rows.Max(x => Math.Max(x.CurrentCumulativeValue, x.PlannedCumulativeValue)) * 1.08m);
 
-        dc.DrawLine(new Pen(current, 2.2), new Point(8, 16), new Point(28, 16));
+        var currentLegend = WithOpacity(current, IsSeriesVisible("comparison:current") ? 1d : .22d);
+        dc.DrawLine(new Pen(currentLegend, 2.2), new Point(8, 16), new Point(28, 16));
         DrawText(dc, isUnchanged ? "現在＝購入後" : "現在", 11, 34, 8, text);
+        AddHitTarget(new Rect(4, 4, 84, 24), "現在累計の表示を切り替えます。",
+            seriesKey: "comparison:current", isLegend: true);
         if (!isUnchanged)
         {
-            dc.DrawLine(new Pen(planned, 2.6), new Point(90, 16), new Point(110, 16));
+            var plannedLegend = WithOpacity(planned, IsSeriesVisible("comparison:planned") ? 1d : .22d);
+            dc.DrawLine(new Pen(plannedLegend, 2.6), new Point(90, 16), new Point(110, 16));
             DrawText(dc, "購入後", 11, 116, 8, text);
+            AddHitTarget(new Rect(88, 4, 94, 24), "購入後累計の表示を切り替えます。",
+                seriesKey: "comparison:planned", isLegend: true);
         }
         else
         {
@@ -85,34 +85,29 @@ public sealed class DividendCumulativeComparisonChartControl : FrameworkElement
             DrawText(dc, $"{row.Month}月", 10, x - 12, top + height + 8, secondary);
         }
 
-        if (isUnchanged)
+        if (isUnchanged && IsSeriesVisible("comparison:current"))
         {
             DrawArea(dc, currentPoints, top + height, Color.FromArgb(32, 56, 189, 248));
             DrawLine(dc, currentPoints, new Pen(current, 2.6));
             foreach (var point in currentPoints)
                 dc.DrawEllipse(current, null, point, 3.2, 3.2);
         }
-        else
+        else if (!isUnchanged)
         {
-            DrawArea(dc, plannedPoints, top + height, Color.FromArgb(40, 167, 139, 250));
-            DrawLine(dc, currentPoints, new Pen(current, 2.1));
-            DrawLine(dc, plannedPoints, new Pen(planned, 2.8));
-            foreach (var point in plannedPoints)
-                dc.DrawEllipse(planned, null, point, 3.2, 3.2);
+            if (IsSeriesVisible("comparison:planned"))
+            {
+                DrawArea(dc, plannedPoints, top + height, Color.FromArgb(40, 167, 139, 250));
+                DrawLine(dc, plannedPoints, new Pen(planned, 2.8));
+                foreach (var point in plannedPoints) dc.DrawEllipse(planned, null, point, 3.2, 3.2);
+            }
+            if (IsSeriesVisible("comparison:current")) DrawLine(dc, currentPoints, new Pen(current, 2.1));
         }
-    }
-
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        if (_rows.Count == 0 || _slot <= 0d) return;
-        var index = (int)Math.Round((e.GetPosition(this).X - _left) / _slot);
-        if (index < 0 || index >= _rows.Count)
+        foreach (var (row, index) in _rows.Select((row, index) => (row, index)))
         {
-            ToolTip = null;
-            return;
+            var x = _left + _slot * index;
+            AddHitTarget(new Rect(x - Math.Max(8d, _slot / 2d), top, Math.Max(16d, _slot), height),
+                row.ToolTipText, month: row.Month, seriesKey: "comparison:month");
         }
-        var row = _rows[index];
-        ToolTip = row.ToolTipText;
     }
 
     private static void DrawLine(DrawingContext dc, IReadOnlyList<Point> points, Pen pen)

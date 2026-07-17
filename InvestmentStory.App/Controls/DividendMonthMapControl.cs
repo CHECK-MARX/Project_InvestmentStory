@@ -2,13 +2,13 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
+using InvestmentStory.Core.Models;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendMonthMapControl : FrameworkElement
+public sealed class DividendMonthMapControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendMonthMapControl),
@@ -20,12 +20,6 @@ public sealed class DividendMonthMapControl : FrameworkElement
     private double _cellWidth;
     private double _cellHeight;
 
-    public DividendMonthMapControl()
-    {
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => ToolTip = null;
-    }
-
     public IEnumerable? Items
     {
         get => (IEnumerable?)GetValue(ItemsProperty);
@@ -35,6 +29,7 @@ public sealed class DividendMonthMapControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         _rows = Items?.OfType<DividendPlanStockMonthlyRowViewModel>()
                     .Where(x => x.TotalValue > 0m).OrderByDescending(x => x.TotalValue).Take(12).ToList()
                 ?? new List<DividendPlanStockMonthlyRowViewModel>();
@@ -45,15 +40,16 @@ public sealed class DividendMonthMapControl : FrameworkElement
         }
 
         _left = Math.Clamp(ActualWidth * 0.18d, 78d, 150d);
-        _top = 32d;
+        _top = 56d;
         _cellWidth = Math.Max(22d, (ActualWidth - _left - 10d) / 12d);
         _cellHeight = Math.Max(22d, (ActualHeight - _top - 8d) / _rows.Count);
         var text = Brush("PrimaryTextBrush", Brushes.White);
         var secondary = Brush("SecondaryTextBrush", Brushes.Gray);
         var line = Brush("BorderBrush", Brushes.DimGray);
 
+        DrawStatusLegend(dc, text);
         for (var month = 1; month <= 12; month++)
-            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 8, secondary);
+            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 34, secondary);
 
         foreach (var (row, rowIndex) in _rows.Select((row, index) => (row, index)))
         {
@@ -63,32 +59,40 @@ public sealed class DividendMonthMapControl : FrameworkElement
                 new Point(_left + _cellWidth * 12, y + _cellHeight / 2d));
             for (var monthIndex = 0; monthIndex < 12; monthIndex++)
             {
-                if (row.PlannedValues[monthIndex] <= 0m && row.MissedValues[monthIndex] <= 0m) continue;
-                var brush = StatusBrush(row.Statuses[monthIndex]);
+                var status = row.ScheduleStatuses[monthIndex];
+                if (status is null) continue;
+                var seriesKey = $"status:{status}";
+                if (!IsSeriesVisible(seriesKey)) continue;
+                var opacity = InteractionOpacity(row.Ticker, monthIndex + 1, status);
+                var brush = DividendChartColorRegistry.StatusBrush(status.Value, opacity);
+                var visual = DividendChartColorRegistry.ForStatus(status.Value);
                 var center = new Point(_left + monthIndex * _cellWidth + _cellWidth / 2d, y + _cellHeight / 2d);
                 var radius = row.PlannedValues[monthIndex] > 0m ? 6d : 4d;
-                dc.DrawEllipse(brush, new Pen(Brush("SurfaceBackgroundBrush", Brushes.Navy), 1), center, radius, radius);
+                var pen = new Pen(new SolidColorBrush(visual.Color), 1.2);
+                if (visual.DashPattern is not null) pen.DashStyle = new DashStyle(visual.DashPattern, 0);
+                dc.DrawEllipse(brush, pen, center, radius, radius);
+                AddHitTarget(new Rect(center.X - 10, center.Y - 10, 20, 20),
+                    row.ToolTipForMonth(monthIndex + 1), row.Ticker, monthIndex + 1, status, seriesKey);
             }
         }
     }
 
-    private Brush StatusBrush(string status) => status switch
+    private void DrawStatusLegend(DrawingContext dc, Brush text)
     {
-        "受取見込み" => Brush("AccentBlueBrush", Brushes.DeepSkyBlue),
-        "推定" => Brush("WarningBrush", Brushes.Orange),
-        "購入が間に合わない" => Brush("MutedTextBrush", Brushes.Gray),
-        _ => Brush("LossBrush", Brushes.IndianRed)
-    };
-
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        if (_rows.Count == 0 || _cellWidth <= 0d || _cellHeight <= 0d) return;
-        var point = e.GetPosition(this);
-        var month = (int)((point.X - _left) / _cellWidth) + 1;
-        var row = (int)((point.Y - _top) / _cellHeight);
-        ToolTip = month is >= 1 and <= 12 && row >= 0 && row < _rows.Count
-            ? _rows[row].ToolTipForMonth(month)
-            : null;
+        var x = 4d;
+        foreach (var visual in DividendChartColorRegistry.Legend)
+        {
+            var seriesKey = $"status:{visual.Status}";
+            var center = new Point(x + 5, 9);
+            dc.DrawEllipse(DividendChartColorRegistry.StatusBrush(visual.Status,
+                IsSeriesVisible(seriesKey) ? 1d : .2d), null, center, 5, 5);
+            DrawText(dc, visual.DisplayName, 9, x + 14, 2, text);
+            var width = 18 + Math.Max(45, visual.DisplayName.Length * 10);
+            AddHitTarget(new Rect(x, 0, width, 20), $"{visual.DisplayName}の表示を切り替えます。",
+                status: visual.Status, seriesKey: seriesKey, isLegend: true);
+            x += width + 5;
+            if (x > ActualWidth - 100) break;
+        }
     }
 
     private Brush Brush(string key, Brush fallback) => TryFindResource(key) as Brush ?? fallback;

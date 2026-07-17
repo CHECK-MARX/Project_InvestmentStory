@@ -164,7 +164,8 @@
             <StackPanel>
                 <TextBlock Text="月別配当比較（積み上げ・累計・月目標）" Style="{StaticResource SectionTitleStyle}" />
                 <TextBlock Text="青: 現在保有 / 紫: 買い増し / オレンジ: 新規購入 / シアン: 年間累計 / 白点線: 月目標" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,10" />
-                <controls:DividendMonthlyPlanChartControl Height="430" Items="{Binding DividendPlanMonthlyRows}" />
+                <controls:DividendMonthlyPlanChartControl Height="430" Items="{Binding DividendPlanMonthlyRows}"
+                                                          InteractionState="{Binding DividendChartInteraction}" />
             </StackPanel>
         </Border>
 
@@ -173,7 +174,8 @@
             <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
                 <StackPanel>
                     <TextBlock Text="年間累計配当（現在 / 購入後）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/>
-                    <controls:DividendCumulativeComparisonChartControl Height="300" Items="{Binding DividendPlanMonthlyRows}" />
+                    <controls:DividendCumulativeComparisonChartControl Height="300" Items="{Binding DividendPlanMonthlyRows}"
+                                                                       InteractionState="{Binding DividendChartInteraction}" />
                 </StackPanel>
             </Border>
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
@@ -240,7 +242,8 @@
             <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
                 <StackPanel>
                     <TextBlock Text="配当増加ランキング" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,10"/>
-                    <controls:DividendIncreaseRankingChartControl Items="{Binding DividendIncreaseRankingRows}">
+                    <controls:DividendIncreaseRankingChartControl Items="{Binding DividendIncreaseRankingRows}"
+                                                                  InteractionState="{Binding DividendChartInteraction}">
                         <controls:DividendIncreaseRankingChartControl.Style>
                             <Style TargetType="{x:Type controls:DividendIncreaseRankingChartControl}">
                                 <Setter Property="Height" Value="250" />
@@ -268,7 +271,8 @@
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
                 <StackPanel>
                     <TextBlock Text="購入後の年間配当構成比" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/>
-                    <controls:DividendCompositionDonutControl Height="300" Items="{Binding DividendCompositionRows}" />
+                    <controls:DividendCompositionDonutControl Height="300" Items="{Binding DividendCompositionRows}"
+                                                              InteractionState="{Binding DividendChartInteraction}" />
                     <DataGrid ItemsSource="{Binding DividendCompositionRows}" AutoGenerateColumns="False" IsReadOnly="True" Height="168" Margin="0,8,0,0">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="銘柄" Binding="{Binding Ticker}" Width="*"/>
@@ -284,12 +288,13 @@
         <Grid Margin="0,0,0,16">
             <Grid.ColumnDefinitions><ColumnDefinition Width="1.4*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
-                <StackPanel><TextBlock Text="配当ウォーターフォール" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendWaterfallChartControl Height="300" CurrentValue="{Binding PassiveIncomeCurrentAnnualValue}" Items="{Binding DividendIncreaseRankingRows}" /></StackPanel>
+                <StackPanel><TextBlock Text="配当ウォーターフォール" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendWaterfallChartControl Height="300" CurrentValue="{Binding PassiveIncomeCurrentAnnualValue}" Items="{Binding DividendIncreaseRankingRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
             </Border>
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
                 <StackPanel>
                     <TextBlock Text="追加投資ランキング" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/>
-                    <controls:DividendInvestmentRankingChartControl Items="{Binding DividendInvestmentRankingRows}">
+                    <controls:DividendInvestmentRankingChartControl Items="{Binding DividendInvestmentRankingRows}"
+                                                                    InteractionState="{Binding DividendChartInteraction}">
                         <controls:DividendInvestmentRankingChartControl.Style>
                             <Style TargetType="{x:Type controls:DividendInvestmentRankingChartControl}">
                                 <Setter Property="Height" Value="300" />
@@ -304,15 +309,28 @@
         <Grid Margin="0,0,0,16">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,8,0">
-                <StackPanel><TextBlock Text="月別配当ヒートマップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendHeatmapControl Height="330" Items="{Binding DividendStockMonthlyRows}" /></StackPanel>
+                <StackPanel><TextBlock Text="月別配当ヒートマップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendHeatmapControl Height="330" Items="{Binding DividendStockMonthlyRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
             </Border>
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
-                <StackPanel><TextBlock Text="配当月マップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><TextBlock Text="青: 受取見込み / オレンジ: 推定 / グレー: 間に合わない / 赤: 未取得" Style="{StaticResource SubtleTextStyle}"/><controls:DividendMonthMapControl Height="305" Items="{Binding DividendStockMonthlyRows}" /></StackPanel>
+                <StackPanel><TextBlock Text="配当月マップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><TextBlock Text="凡例クリックで状態を表示・非表示 / 点クリックで関連グラフを選択" Style="{StaticResource SubtleTextStyle}"/><controls:DividendMonthMapControl Height="305" Items="{Binding DividendStockMonthlyRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
             </Border>
         </Grid>
 
         <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,16">
-            <StackPanel><TextBlock Text="月別配当構成（銘柄別）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendMonthlyCompositionChartControl Height="360" Items="{Binding DividendStockMonthlyRows}" /></StackPanel>
+            <StackPanel><TextBlock Text="月別配当構成（銘柄別）" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendMonthlyCompositionChartControl Height="360" Items="{Binding DividendStockMonthlyRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource MetricCardStyle}" Padding="14" Margin="0,0,0,16">
+            <DockPanel>
+                <Button Content="選択解除" Command="{Binding DividendChartInteraction.ClearCommand}"
+                        DockPanel.Dock="Right" Style="{StaticResource SecondaryButtonStyle}"
+                        Width="96" Height="34" />
+                <StackPanel>
+                    <TextBlock Text="グラフ選択内容" Style="{StaticResource SubtleTextStyle}" />
+                    <TextBlock Text="{Binding DividendChartInteraction.DetailText}"
+                               Foreground="{DynamicResource PrimaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </DockPanel>
         </Border>
 
         <Border Style="{StaticResource MetricCardStyle}">

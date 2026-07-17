@@ -2,32 +2,21 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
+using InvestmentStory.Core.Models;
 
 namespace InvestmentStory.App.Controls;
 
-public sealed class DividendMonthlyCompositionChartControl : FrameworkElement
+public sealed class DividendMonthlyCompositionChartControl : InteractiveDividendChartControl
 {
     public static readonly DependencyProperty ItemsProperty = DependencyProperty.Register(
         nameof(Items), typeof(IEnumerable), typeof(DividendMonthlyCompositionChartControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnItemsChanged));
 
-    private readonly Brush[] _palette =
-    {
-        Brushes.DeepSkyBlue, Brushes.MediumPurple, Brushes.Orange,
-        Brushes.MediumSeaGreen, Brushes.CornflowerBlue, Brushes.SlateGray
-    };
     private IReadOnlyList<DividendPlanStockMonthlyRowViewModel> _rows = Array.Empty<DividendPlanStockMonthlyRowViewModel>();
     private double _left;
     private double _slot;
-
-    public DividendMonthlyCompositionChartControl()
-    {
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => ToolTip = null;
-    }
 
     public IEnumerable? Items
     {
@@ -38,6 +27,7 @@ public sealed class DividendMonthlyCompositionChartControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
+        BeginInteractiveRender();
         var source = Items?.OfType<DividendPlanStockMonthlyRowViewModel>()
             .Where(x => x.TotalValue > 0m).OrderByDescending(x => x.TotalValue).ToList()
             ?? new List<DividendPlanStockMonthlyRowViewModel>();
@@ -47,7 +37,8 @@ public sealed class DividendMonthlyCompositionChartControl : FrameworkElement
             return;
         }
 
-        _rows = source.Take(6).ToList();
+        _rows = source.Take(5).ToList();
+        var otherRows = source.Skip(5).ToList();
         var text = Brush("PrimaryTextBrush", Brushes.White);
         var secondary = Brush("SecondaryTextBrush", Brushes.Gray);
         var grid = Brush("BorderBrush", Brushes.DimGray);
@@ -61,11 +52,27 @@ public sealed class DividendMonthlyCompositionChartControl : FrameworkElement
         var max = Math.Max(1m, monthlyTotals.Max() * 1.1m);
 
         var legendX = 4d;
-        for (var index = 0; index < _rows.Count; index++)
+        foreach (var row in _rows)
         {
-            dc.DrawRoundedRectangle(_palette[index], null, new Rect(legendX, 10, 12, 12), 2, 2);
-            DrawText(dc, _rows[index].Ticker, 10, legendX + 16, 7, text);
-            legendX += Math.Max(58d, _rows[index].Ticker.Length * 10d + 30d);
+            var seriesKey = $"ticker:{row.Ticker}";
+            var legendBrush = DividendChartColorRegistry.SecurityBrush(row.Ticker,
+                opacityMultiplier: IsSeriesVisible(seriesKey) ? 1d : .22d);
+            dc.DrawRoundedRectangle(legendBrush, null, new Rect(legendX, 10, 12, 12), 2, 2);
+            DrawText(dc, row.Ticker, 10, legendX + 16, 7, text);
+            var legendWidth = Math.Max(58d, row.Ticker.Length * 10d + 30d);
+            AddHitTarget(new Rect(legendX, 4, legendWidth, 26), $"{row.Ticker}の表示を切り替えます。",
+                row.Ticker, seriesKey: seriesKey, isLegend: true);
+            legendX += legendWidth;
+        }
+        if (otherRows.Count > 0)
+        {
+            var seriesKey = "ticker:OTHER";
+            var legendBrush = DividendChartColorRegistry.SecurityBrush("OTHER",
+                opacityMultiplier: IsSeriesVisible(seriesKey) ? 1d : .22d);
+            dc.DrawRoundedRectangle(legendBrush, null, new Rect(legendX, 10, 12, 12), 2, 2);
+            DrawText(dc, "その他", 10, legendX + 16, 7, text);
+            AddHitTarget(new Rect(legendX, 4, 72, 26), "その他の銘柄の表示を切り替えます。",
+                seriesKey: seriesKey, isLegend: true);
         }
 
         for (var tick = 0; tick <= 4; tick++)
@@ -82,37 +89,38 @@ public sealed class DividendMonthlyCompositionChartControl : FrameworkElement
             var y = top + height;
             for (var rowIndex = 0; rowIndex < _rows.Count; rowIndex++)
             {
-                var value = _rows[rowIndex].PlannedValues[monthIndex];
+                var row = _rows[rowIndex];
+                var seriesKey = $"ticker:{row.Ticker}";
+                if (!IsSeriesVisible(seriesKey)) continue;
+                var value = row.PlannedValues[monthIndex];
                 if (value <= 0m) continue;
                 var segmentHeight = Math.Max(2d, (double)(value / max) * height);
                 y -= segmentHeight;
-                dc.DrawRoundedRectangle(_palette[rowIndex], null, new Rect(x, y, barWidth, segmentHeight), 2, 2);
+                var rect = new Rect(x, y, barWidth, segmentHeight);
+                var status = row.ScheduleStatuses[monthIndex];
+                var opacity = InteractionOpacity(row.Ticker, monthIndex + 1, status);
+                var brush = DividendChartColorRegistry.SecurityBrush(row.Ticker,
+                    status ?? DividendScheduleStatus.Expected, opacity);
+                dc.DrawRoundedRectangle(brush, null, rect, 2, 2);
+                AddHitTarget(rect, row.ToolTipForMonth(monthIndex + 1), row.Ticker, monthIndex + 1,
+                    status, seriesKey);
             }
-            var other = source.Skip(6).Sum(row => row.PlannedValues[monthIndex]);
-            if (other > 0m)
+            var other = otherRows.Sum(row => row.PlannedValues[monthIndex]);
+            if (other > 0m && IsSeriesVisible("ticker:OTHER"))
             {
                 var segmentHeight = Math.Max(2d, (double)(other / max) * height);
                 y -= segmentHeight;
-                dc.DrawRoundedRectangle(_palette[5], null, new Rect(x, y, barWidth, segmentHeight), 2, 2);
+                var rect = new Rect(x, y, barWidth, segmentHeight);
+                dc.DrawRoundedRectangle(DividendChartColorRegistry.SecurityBrush("OTHER",
+                    opacityMultiplier: InteractionOpacity(null, monthIndex + 1, null)), null, rect, 2, 2);
+                var details = string.Join("\n", otherRows.Where(row => row.PlannedValues[monthIndex] > 0m)
+                    .OrderByDescending(row => row.PlannedValues[monthIndex])
+                    .Select(row => $"{row.Ticker} {row.PlannedValues[monthIndex]:N0}円"));
+                AddHitTarget(rect, $"{monthIndex + 1}月 その他 {other:N0}円\n{details}",
+                    month: monthIndex + 1, seriesKey: "ticker:OTHER");
             }
             DrawText(dc, $"{monthIndex + 1}月", 10, x - 2, top + height + 9, secondary);
         }
-    }
-
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        if (_rows.Count == 0 || _slot <= 0d) return;
-        var month = (int)((e.GetPosition(this).X - _left) / _slot) + 1;
-        if (month is < 1 or > 12)
-        {
-            ToolTip = null;
-            return;
-        }
-        var details = _rows.Where(x => x.PlannedValues[month - 1] > 0m)
-            .OrderByDescending(x => x.PlannedValues[month - 1])
-            .Select(x => $"{x.Ticker}: {x.PlannedValues[month - 1]:N0}円");
-        var total = _rows.Sum(x => x.PlannedValues[month - 1]);
-        ToolTip = $"{month}月 合計 {total:N0}円\n{string.Join("\n", details)}";
     }
 
     private static string FormatAxis(decimal value) => value >= 10_000m ? $"{value / 10_000m:N0}万" : $"{value:N0}";

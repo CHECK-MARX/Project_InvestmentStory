@@ -90,7 +90,8 @@ public sealed class MainViewModel : ObservableObject
             DeleteDividend,
             UpdateDividendSchedules,
             _repository.GetTaxProfiles,
-            _repository.SaveTaxProfile);
+            _repository.SaveTaxProfile,
+            _repository.GetGoal);
         PassiveIncome = new PassiveIncomeViewModel(SaveGoal);
         Simulation = new SimulationViewModel(
             _calculator,
@@ -299,7 +300,7 @@ public sealed class MainViewModel : ObservableObject
 
         Dashboard.Update(summary, _snapshots, portfolioSnapshots);
         StockList.Update(_snapshots, dividends);
-        Dividends.Update(positions, dividends);
+        Dividends.Update(positions, dividends, goal, DateTime.Today);
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         Simulation.UpdateMutualFundPortfolio(positions, _repository.GetAllBrokerTrades());
