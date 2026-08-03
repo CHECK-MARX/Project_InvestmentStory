@@ -64,13 +64,25 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
                 var seriesKey = $"status:{status}";
                 if (!IsSeriesVisible(seriesKey)) continue;
                 var opacity = InteractionOpacity(row.Ticker, monthIndex + 1, status);
+                // The row label already identifies the security. The marker color represents the
+                // schedule status so it must match the status legend for every individual month.
                 var brush = DividendChartColorRegistry.StatusBrush(status.Value, opacity);
                 var visual = DividendChartColorRegistry.ForStatus(status.Value);
                 var center = new Point(_left + monthIndex * _cellWidth + _cellWidth / 2d, y + _cellHeight / 2d);
                 var radius = row.PlannedValues[monthIndex] > 0m ? 6d : 4d;
-                var pen = new Pen(new SolidColorBrush(visual.Color), 1.2);
+                var pen = new Pen(DividendChartColorRegistry.StatusBrush(status.Value, opacity), 1.2);
                 if (visual.DashPattern is not null) pen.DashStyle = new DashStyle(visual.DashPattern, 0);
                 dc.DrawEllipse(brush, pen, center, radius, radius);
+                if (IsInteractionSelected(row.Ticker, monthIndex + 1, status) ||
+                    IsInteractionHovered(row.Ticker, monthIndex + 1, status))
+                {
+                    dc.DrawEllipse(
+                        null,
+                        new Pen(Brush("AccentBlueBrush", Brushes.White), 2.4),
+                        center,
+                        radius + 3,
+                        radius + 3);
+                }
                 AddHitTarget(new Rect(center.X - 10, center.Y - 10, 20, 20),
                     row.ToolTipForMonth(monthIndex + 1), row.Ticker, monthIndex + 1, status, seriesKey);
             }

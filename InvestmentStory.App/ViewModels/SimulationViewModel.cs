@@ -39,6 +39,8 @@ public sealed class SimulationViewModel : ObservableObject
     private string _passiveIncomePlanName = "Default";
     private string _passiveIncomeDisplayMode = DividendGrowthDisplayModes.AggregateBySecurity;
     private int _dividendPlanTargetYear = DateTime.Today.Year;
+    private string _dividendPlanTargetYearText = DateTime.Today.Year.ToString();
+    private string _dividendPlanTargetYearValidationMessage = string.Empty;
     private DateTime _dividendPlanPurchaseDate = DateTime.Today;
     private int _activeDividendPurchasePlanId;
     private DateTime _activeDividendPurchasePlanCreatedAt = DateTime.Now;
@@ -155,12 +157,15 @@ public sealed class SimulationViewModel : ObservableObject
             ? 1_200_000m
             : settings.DividendSimulationTargetAnnualDividendJpy;
         _passiveIncomeProjectionYears = settings.DividendSimulationProjectionYears <= 0 ? 10 : settings.DividendSimulationProjectionYears;
-        _dividendPlanTargetYear = settings.DividendSimulationTargetYear is >= 2000 and <= 2200
-            ? settings.DividendSimulationTargetYear
-            : DateTime.Today.Year;
-        _dividendPlanPurchaseDate = DateTime.TryParse(settings.DividendSimulationPlannedPurchaseDate, out var savedPurchaseDate)
-            ? savedPurchaseDate.Date
-            : DateTime.Today;
+        _dividendPlanTargetYear = DividendPurchasePlanDatePolicy.NormalizeYear(
+            settings.DividendSimulationTargetYear, DateTime.Today);
+        _dividendPlanPurchaseDate = DividendPurchasePlanDatePolicy.NormalizePurchaseDate(
+            DateTime.TryParse(settings.DividendSimulationPlannedPurchaseDate, out var savedPurchaseDate)
+                ? savedPurchaseDate
+                : DateTime.Today,
+            _dividendPlanTargetYear,
+            DateTime.Today);
+        _dividendPlanTargetYearText = _dividendPlanTargetYear.ToString();
 
         RestoreDividendPurchasePlanHeader(_loadDividendPurchasePlan(), settings);
 
@@ -312,14 +317,18 @@ public sealed class SimulationViewModel : ObservableObject
         get => _dividendPlanTargetYear;
         set
         {
-            var normalized = Math.Clamp(value, 2000, 2200);
+            var normalized = DividendPurchasePlanDatePolicy.NormalizeYear(value, DateTime.Today);
             if (!SetProperty(ref _dividendPlanTargetYear, normalized))
             {
+                SynchronizeDividendPlanTargetYearText();
                 return;
             }
 
-            var day = Math.Min(DividendPlanPurchaseDate.Day, DateTime.DaysInMonth(normalized, DividendPlanPurchaseDate.Month));
-            _dividendPlanPurchaseDate = new DateTime(normalized, DividendPlanPurchaseDate.Month, day);
+            _dividendPlanPurchaseDate = DividendPurchasePlanDatePolicy.NormalizePurchaseDate(
+                DividendPlanPurchaseDate,
+                normalized,
+                DateTime.Today);
+            SynchronizeDividendPlanTargetYearText();
             OnPropertyChanged(nameof(DividendPlanPurchaseDate));
             RaiseDividendPlanYearLabelsChanged();
             if (!_suppressDividendAutoUpdates)
@@ -330,19 +339,61 @@ public sealed class SimulationViewModel : ObservableObject
         }
     }
 
+    public string DividendPlanTargetYearText
+    {
+        get => _dividendPlanTargetYearText;
+        set
+        {
+            if (!SetProperty(ref _dividendPlanTargetYearText, value))
+            {
+                return;
+            }
+
+            var trimmed = value.Trim();
+            if (trimmed.Length < 4)
+            {
+                DividendPlanTargetYearValidationMessage = string.Empty;
+                return;
+            }
+
+            if (int.TryParse(trimmed, out var year) &&
+                DividendPurchasePlanDatePolicy.IsSupportedYear(year, DateTime.Today))
+            {
+                DividendPlanTargetYearValidationMessage = string.Empty;
+                DividendPlanTargetYear = year;
+                return;
+            }
+
+            DividendPlanTargetYearValidationMessage =
+                $"{DateTime.Today.Year}～{DateTime.Today.Year + DividendPurchasePlanDatePolicy.PlanningHorizonYears}年を入力してください。";
+        }
+    }
+
+    public string DividendPlanTargetYearValidationMessage
+    {
+        get => _dividendPlanTargetYearValidationMessage;
+        private set => SetProperty(ref _dividendPlanTargetYearValidationMessage, value);
+    }
+
     public DateTime DividendPlanPurchaseDate
     {
         get => _dividendPlanPurchaseDate;
         set
         {
-            if (!SetProperty(ref _dividendPlanPurchaseDate, value.Date))
+            var normalizedYear = DividendPurchasePlanDatePolicy.NormalizeYear(value.Year, DateTime.Today);
+            var normalizedDate = DividendPurchasePlanDatePolicy.NormalizePurchaseDate(
+                value,
+                normalizedYear,
+                DateTime.Today);
+            if (!SetProperty(ref _dividendPlanPurchaseDate, normalizedDate))
             {
                 return;
             }
 
-            if (_dividendPlanTargetYear != value.Year)
+            if (_dividendPlanTargetYear != normalizedYear)
             {
-                _dividendPlanTargetYear = value.Year;
+                _dividendPlanTargetYear = normalizedYear;
+                SynchronizeDividendPlanTargetYearText();
                 OnPropertyChanged(nameof(DividendPlanTargetYear));
                 RaiseDividendPlanYearLabelsChanged();
             }
@@ -1494,10 +1545,31 @@ public sealed class SimulationViewModel : ObservableObject
             _passiveIncomePlanName = string.IsNullOrWhiteSpace(plan.Name) ? "Default" : plan.Name;
             _passiveIncomeDisplayMode = NormalizeDividendPlanDisplayUnit(plan.DisplayUnit);
             _targetAnnualPassiveIncome = Math.Max(0m, plan.TargetAnnualNetDividendJpy);
-            _dividendPlanTargetYear = plan.TargetYear is >= 2000 and <= 2200 ? plan.TargetYear : DateTime.Today.Year;
-            _dividendPlanPurchaseDate = plan.PlannedPurchaseDate == default ? DateTime.Today : plan.PlannedPurchaseDate.Date;
+            var normalizedTargetYear = DividendPurchasePlanDatePolicy.NormalizeYear(plan.TargetYear, DateTime.Today);
+            var normalizedPurchaseDate = DividendPurchasePlanDatePolicy.NormalizePurchaseDate(
+                plan.PlannedPurchaseDate,
+                normalizedTargetYear,
+                DateTime.Today);
+            var repairedInvalidDate = normalizedTargetYear != plan.TargetYear ||
+                                      normalizedPurchaseDate != plan.PlannedPurchaseDate.Date;
+            _dividendPlanTargetYear = normalizedTargetYear;
+            _dividendPlanPurchaseDate = normalizedPurchaseDate;
+            _dividendPlanTargetYearText = normalizedTargetYear.ToString();
+            _dividendPlanTargetYearValidationMessage = string.Empty;
             _savedDividendPlanItems = plan.Items.OrderBy(item => item.ItemOrder).Select(ToGrowthPlanItem).ToList();
-            DividendPlanSaveStatus = $"計画『{_passiveIncomePlanName}』を読み込みました。{plan.UpdatedAt:yyyy/MM/dd HH:mm}";
+            if (repairedInvalidDate)
+            {
+                plan.TargetYear = normalizedTargetYear;
+                plan.PlannedPurchaseDate = normalizedPurchaseDate;
+                plan.UpdatedAt = DateTime.Now;
+                _activeDividendPurchasePlanId = _saveDividendPurchasePlan(plan);
+                DividendPlanSaveStatus =
+                    $"保存計画の対象年を{normalizedTargetYear}年へ補正しました。{plan.UpdatedAt:yyyy/MM/dd HH:mm}";
+            }
+            else
+            {
+                DividendPlanSaveStatus = $"計画『{_passiveIncomePlanName}』を読み込みました。{plan.UpdatedAt:yyyy/MM/dd HH:mm}";
+            }
             HasUnsavedDividendPlanChanges = false;
             RaiseDividendPlanHeaderPropertiesChanged();
         }
@@ -1649,8 +1721,22 @@ public sealed class SimulationViewModel : ObservableObject
         OnPropertyChanged(nameof(PassiveIncomeDisplayMode));
         OnPropertyChanged(nameof(TargetAnnualPassiveIncome));
         OnPropertyChanged(nameof(DividendPlanTargetYear));
+        OnPropertyChanged(nameof(DividendPlanTargetYearText));
+        OnPropertyChanged(nameof(DividendPlanTargetYearValidationMessage));
         OnPropertyChanged(nameof(DividendPlanPurchaseDate));
         RaiseDividendPlanYearLabelsChanged();
+    }
+
+    private void SynchronizeDividendPlanTargetYearText()
+    {
+        var normalizedText = _dividendPlanTargetYear.ToString();
+        if (_dividendPlanTargetYearText != normalizedText)
+        {
+            _dividendPlanTargetYearText = normalizedText;
+            OnPropertyChanged(nameof(DividendPlanTargetYearText));
+        }
+
+        DividendPlanTargetYearValidationMessage = string.Empty;
     }
 
     private static DividendGrowthPlanItem ApplyPlanOverride(

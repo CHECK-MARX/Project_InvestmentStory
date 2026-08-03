@@ -3,6 +3,8 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
@@ -57,12 +59,27 @@ public sealed class ScenarioComparisonChartControl : FrameworkElement
     private int _panEndIndex;
     private readonly Stopwatch _animationClock = new();
     private double _animationProgress = 1d;
+    private readonly ToolTip _interactiveToolTip;
 
     public ScenarioComparisonChartControl()
     {
         Focusable = true;
         Cursor = Cursors.Cross;
-        Unloaded += (_, _) => StopAnimation();
+        _interactiveToolTip = new ToolTip
+        {
+            Placement = PlacementMode.MousePoint,
+            PlacementTarget = this,
+            StaysOpen = true
+        };
+        ToolTip = _interactiveToolTip;
+        ToolTipService.SetInitialShowDelay(this, 0);
+        ToolTipService.SetBetweenShowDelay(this, 0);
+        ToolTipService.SetShowDuration(this, 60_000);
+        Unloaded += (_, _) =>
+        {
+            StopAnimation();
+            CloseInteractiveToolTip();
+        };
     }
 
     public IEnumerable? Series
@@ -181,7 +198,7 @@ public sealed class ScenarioComparisonChartControl : FrameworkElement
             var shift = (int)Math.Round((_panOrigin.X - point.X) / _plotRect.Width * range);
             SetViewport(_panStartIndex + shift, _panEndIndex + shift, totalCount);
             _hoverSourceIndex = null;
-            ToolTip = null;
+            CloseInteractiveToolTip();
             InvalidateVisual();
             return;
         }
@@ -195,19 +212,19 @@ public sealed class ScenarioComparisonChartControl : FrameworkElement
             if (achievementHit is not null)
             {
                 _hoverSourceIndex = achievementHit.PointIndex;
-                ToolTip = BuildAchievementToolTip(achievementHit.Series, achievementHit.PointIndex);
+                ShowInteractiveToolTip(BuildAchievementToolTip(achievementHit.Series, achievementHit.PointIndex));
                 InvalidateVisual();
                 return;
             }
 
             var relative = Math.Clamp((point.X - _plotRect.Left) / Math.Max(1d, _plotRect.Width), 0d, 1d);
             _hoverSourceIndex = start + (int)Math.Round(relative * Math.Max(0, end - start));
-            ToolTip = BuildToolTip(_hoverSourceIndex.Value);
+            ShowInteractiveToolTip(BuildToolTip(_hoverSourceIndex.Value));
         }
         else
         {
             _hoverSourceIndex = null;
-            ToolTip = null;
+            CloseInteractiveToolTip();
         }
 
         InvalidateVisual();
@@ -219,9 +236,20 @@ public sealed class ScenarioComparisonChartControl : FrameworkElement
         if (!_isPanning)
         {
             _hoverSourceIndex = null;
-            ToolTip = null;
+            CloseInteractiveToolTip();
             InvalidateVisual();
         }
+    }
+
+    private void ShowInteractiveToolTip(string text)
+    {
+        _interactiveToolTip.Content = text;
+        _interactiveToolTip.IsOpen = true;
+    }
+
+    private void CloseInteractiveToolTip()
+    {
+        _interactiveToolTip.IsOpen = false;
     }
 
     protected override void OnMouseDown(MouseButtonEventArgs e)

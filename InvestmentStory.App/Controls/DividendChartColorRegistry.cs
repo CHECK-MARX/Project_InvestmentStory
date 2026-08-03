@@ -12,6 +12,8 @@ public sealed record DividendStatusVisual(
 
 public static class DividendChartColorRegistry
 {
+    public static Color HeatmapBaseColor { get; } = Color.FromRgb(14, 165, 233);
+
     private static readonly Color[] SecurityColors =
     {
         Color.FromRgb(14, 165, 233), Color.FromRgb(167, 139, 250),
@@ -80,9 +82,7 @@ public static class DividendChartColorRegistry
             return new SolidColorBrush(Color.FromArgb(28, 100, 116, 139));
 
         var ratio = maximum <= 0m ? 0d : Math.Clamp((double)(amount / maximum), 0d, 1d);
-        var baseColor = status is null
-            ? Color.FromRgb(56, 189, 248)
-            : ForStatus(status.Value).Color;
+        var baseColor = HeatmapBaseColor;
         return new SolidColorBrush(Color.FromArgb(
             (byte)(60d + 190d * Math.Sqrt(ratio)), baseColor.R, baseColor.G, baseColor.B));
     }

@@ -1315,8 +1315,13 @@ public sealed class InvestmentStoryRepository
         DateTime updatedAt)
     {
         command.Parameters.AddWithValue("$name", string.IsNullOrWhiteSpace(plan.Name) ? "Default" : plan.Name.Trim());
-        command.Parameters.AddWithValue("$targetYear", Math.Clamp(plan.TargetYear, 2000, 2200));
-        command.Parameters.AddWithValue("$purchaseDate", ToDateText(plan.PlannedPurchaseDate));
+        var targetYear = DividendPurchasePlanDatePolicy.NormalizeYear(plan.TargetYear, DateTime.Today);
+        var purchaseDate = DividendPurchasePlanDatePolicy.NormalizePurchaseDate(
+            plan.PlannedPurchaseDate,
+            targetYear,
+            DateTime.Today);
+        command.Parameters.AddWithValue("$targetYear", targetYear);
+        command.Parameters.AddWithValue("$purchaseDate", ToDateText(purchaseDate));
         command.Parameters.AddWithValue("$displayUnit", plan.DisplayUnit ?? DividendPurchasePlanDisplayUnits.AllAccounts);
         command.Parameters.AddWithValue("$targetDividend", Math.Max(0m, plan.TargetAnnualNetDividendJpy));
         command.Parameters.AddWithValue("$updatedAt", ToDateTimeText(updatedAt));

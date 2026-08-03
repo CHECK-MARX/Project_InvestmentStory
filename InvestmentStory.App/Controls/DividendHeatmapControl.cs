@@ -78,6 +78,16 @@ public sealed class DividendHeatmapControl : InteractiveDividendChartControl
                 if (status is not null && DividendChartColorRegistry.ForStatus(status.Value).DashPattern is { } dash)
                     pen.DashStyle = new DashStyle(dash, 0);
                 dc.DrawRoundedRectangle(fill, pen, rect, 3, 3);
+                if (IsInteractionSelected(row.Ticker, monthIndex + 1, status) ||
+                    IsInteractionHovered(row.Ticker, monthIndex + 1, status))
+                {
+                    dc.DrawRoundedRectangle(
+                        null,
+                        new Pen(Brush("AccentBlueBrush", Brushes.White), 2.4),
+                        rect,
+                        3,
+                        3);
+                }
                 AddHitTarget(rect, row.ToolTipForMonth(monthIndex + 1), row.Ticker,
                     monthIndex + 1, status, seriesKey);
             }
@@ -87,7 +97,7 @@ public sealed class DividendHeatmapControl : InteractiveDividendChartControl
     private void DrawScaleLegend(DrawingContext dc, decimal max, Brush secondary)
     {
         DrawText(dc, "金額", 9, 4, 2, secondary);
-        var color = DividendChartColorRegistry.ForStatus(DividendScheduleStatus.Expected).Color;
+        var color = DividendChartColorRegistry.HeatmapBaseColor;
         for (var index = 0; index < 5; index++)
         {
             dc.DrawRectangle(new SolidColorBrush(Color.FromArgb((byte)(35 + index * 48), color.R, color.G, color.B)),

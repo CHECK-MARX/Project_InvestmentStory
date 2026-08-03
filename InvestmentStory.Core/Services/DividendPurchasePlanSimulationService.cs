@@ -16,10 +16,11 @@ public sealed class DividendPurchasePlanSimulationService
         ArgumentNullException.ThrowIfNull(input);
         taxProfiles ??= Array.Empty<TaxProfile>();
 
-        var targetYear = input.TargetYear is >= 2000 and <= 2200 ? input.TargetYear : DateTime.Today.Year;
-        var purchaseDate = input.PlannedPurchaseDate == default
-            ? new DateTime(targetYear, 1, 1)
-            : input.PlannedPurchaseDate.Date;
+        var targetYear = DividendPurchasePlanDatePolicy.NormalizeYear(input.TargetYear, DateTime.Today);
+        var purchaseDate = DividendPurchasePlanDatePolicy.NormalizePurchaseDate(
+            input.PlannedPurchaseDate == default ? new DateTime(targetYear, 1, 1) : input.PlannedPurchaseDate,
+            targetYear,
+            DateTime.Today);
         var target = Math.Max(0m, input.TargetAnnualNetDividendJpy);
         var allEvents = new List<DividendPurchasePlanEvent>();
         var holdings = new List<DividendPurchasePlanHolding>();

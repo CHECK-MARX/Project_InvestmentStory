@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.Core.Models;
@@ -13,18 +15,32 @@ public abstract class InteractiveDividendChartControl : FrameworkElement
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, OnInteractionStateChanged));
 
     private readonly List<ChartHitTarget> _hitTargets = new();
+    private readonly ToolTip _interactiveToolTip;
+    private ChartHitTarget? _hoveredTarget;
     protected Point? HoverPosition { get; private set; }
 
     protected InteractiveDividendChartControl()
     {
+        _interactiveToolTip = new ToolTip
+        {
+            Placement = PlacementMode.MousePoint,
+            PlacementTarget = this,
+            StaysOpen = true,
+            IsOpen = false
+        };
+        ToolTip = _interactiveToolTip;
+        ToolTipService.SetInitialShowDelay(this, 0);
+        ToolTipService.SetShowDuration(this, 60_000);
         Focusable = true;
         MouseMove += HandleMouseMove;
         MouseLeave += (_, _) =>
         {
-            ToolTip = null;
+            _interactiveToolTip.IsOpen = false;
+            _hoveredTarget = null;
             HoverPosition = null;
             InvalidateVisual();
         };
+        Unloaded += (_, _) => _interactiveToolTip.IsOpen = false;
         MouseLeftButtonDown += HandleMouseClick;
         KeyDown += (_, args) =>
         {
@@ -63,6 +79,10 @@ public abstract class InteractiveDividendChartControl : FrameworkElement
 
     protected double InteractionOpacity(string? ticker, int? month, DividendScheduleStatus? status) =>
         InteractionState?.OpacityFor(ticker, month, status) ?? 1d;
+    protected bool IsInteractionSelected(string? ticker, int? month, DividendScheduleStatus? status) =>
+        InteractionState?.IsSelected(ticker, month, status) ?? false;
+    protected bool IsInteractionHovered(string? ticker, int? month, DividendScheduleStatus? status) =>
+        Matches(_hoveredTarget, ticker, month, status);
     protected bool IsSeriesVisible(string seriesKey) => InteractionState?.IsSeriesVisible(seriesKey) ?? true;
 
     protected static Brush WithOpacity(Brush source, double opacity)
@@ -76,7 +96,16 @@ public abstract class InteractiveDividendChartControl : FrameworkElement
     {
         HoverPosition = args.GetPosition(this);
         var hit = FindHit(HoverPosition.Value);
-        ToolTip = hit?.Tooltip;
+        _hoveredTarget = hit;
+        if (hit is null)
+        {
+            _interactiveToolTip.IsOpen = false;
+        }
+        else
+        {
+            _interactiveToolTip.Content = hit.Tooltip;
+            _interactiveToolTip.IsOpen = true;
+        }
         Cursor = hit is null ? Cursors.Arrow : Cursors.Hand;
         InvalidateVisual();
     }
@@ -99,6 +128,16 @@ public abstract class InteractiveDividendChartControl : FrameworkElement
 
     private ChartHitTarget? FindHit(Point point) => _hitTargets.LastOrDefault(x =>
         x.Bounds.Contains(point) && (x.Geometry is null || x.Geometry.FillContains(point)));
+
+    private static bool Matches(
+        ChartHitTarget? target,
+        string? ticker,
+        int? month,
+        DividendScheduleStatus? status) =>
+        target is not null &&
+        (string.IsNullOrWhiteSpace(ticker) || string.Equals(target.Ticker, ticker, StringComparison.OrdinalIgnoreCase)) &&
+        (month is null || target.Month == month) &&
+        (status is null || target.Status == status);
 
     private static void OnInteractionStateChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs args)
     {

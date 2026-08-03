@@ -97,6 +97,58 @@ public sealed class DividendPurchasePlanViewModelTests
         Assert.Equal("2031年の年間配当見込み", viewModel.NextYearDividendLabel);
     }
 
+    [Fact]
+    public void TargetYearText_DoesNotCommitPartialInput()
+    {
+        var viewModel = CreateViewModel(() => null, _ => 1);
+        var originalYear = viewModel.DividendPlanTargetYear;
+
+        viewModel.DividendPlanTargetYearText = "2";
+        viewModel.DividendPlanTargetYearText = "20";
+        viewModel.DividendPlanTargetYearText = "200";
+
+        Assert.Equal(originalYear, viewModel.DividendPlanTargetYear);
+        Assert.Equal("200", viewModel.DividendPlanTargetYearText);
+        Assert.Equal(string.Empty, viewModel.DividendPlanTargetYearValidationMessage);
+    }
+
+    [Fact]
+    public void TargetYearText_CommitsAValidFourDigitYearAndSynchronizesPurchaseDate()
+    {
+        var viewModel = CreateViewModel(() => null, _ => 1);
+        var targetYear = DateTime.Today.Year + 1;
+
+        viewModel.DividendPlanTargetYearText = targetYear.ToString();
+
+        Assert.Equal(targetYear, viewModel.DividendPlanTargetYear);
+        Assert.Equal(targetYear, viewModel.DividendPlanPurchaseDate.Year);
+        Assert.Equal(string.Empty, viewModel.DividendPlanTargetYearValidationMessage);
+    }
+
+    [Fact]
+    public void RestoredPlan_WithYear2000_IsRepairedAndPersistedWithoutChangingPlanItems()
+    {
+        var stored = CreateStoredPlan();
+        stored.TargetYear = 2000;
+        stored.PlannedPurchaseDate = new DateTime(2000, 7, 14);
+        DividendPurchasePlan? repaired = null;
+
+        var viewModel = CreateViewModel(() => stored, plan =>
+        {
+            repaired = plan;
+            return plan.Id;
+        });
+
+        Assert.Equal(DateTime.Today.Year, viewModel.DividendPlanTargetYear);
+        Assert.Equal(new DateTime(DateTime.Today.Year, 7, 14), viewModel.DividendPlanPurchaseDate);
+        Assert.Equal(DateTime.Today.Year.ToString(), viewModel.DividendPlanTargetYearText);
+        Assert.Contains("補正しました", viewModel.DividendPlanSaveStatus);
+        Assert.NotNull(repaired);
+        Assert.Equal(DateTime.Today.Year, repaired.TargetYear);
+        Assert.Equal(new DateTime(DateTime.Today.Year, 7, 14), repaired.PlannedPurchaseDate);
+        Assert.Single(repaired.Items);
+    }
+
     private static SimulationViewModel CreateViewModel(
         Func<DividendPurchasePlan?> loadPlan,
         Func<DividendPurchasePlan, int> savePlan) =>

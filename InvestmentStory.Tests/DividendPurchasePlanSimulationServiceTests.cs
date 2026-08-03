@@ -96,6 +96,24 @@ public sealed class DividendPurchasePlanSimulationServiceTests
     }
 
     [Fact]
+    public void InvalidLegacyYear_IsNormalizedBeforeBuildingAllMonthlyOutputs()
+    {
+        var item = CreateUsNisaItem(plannedShares: 10m);
+        var result = _service.Simulate(new DividendPurchasePlanInput
+        {
+            TargetYear = 2000,
+            PlannedPurchaseDate = new DateTime(2000, 7, 14),
+            TargetAnnualNetDividendJpy = 1_200_000m,
+            PlanItems = new[] { item },
+            DividendPayments = QuarterlyHistory(item.StockId, item.Ticker)
+        });
+
+        Assert.Equal(12, result.Months.Count);
+        Assert.All(result.Months, month => Assert.Equal(DateTime.Today.Year, month.Year));
+        Assert.Equal(Enumerable.Range(1, 12), result.Months.Select(month => month.Month));
+    }
+
+    [Fact]
     public void CompositionRows_CompareCurrentAndPostPurchaseSharesFromTheSameResult()
     {
         var item = CreateUsNisaItem(plannedShares: 10m);

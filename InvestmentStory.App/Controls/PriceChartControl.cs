@@ -2,6 +2,8 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using InvestmentStory.App.ViewModels;
@@ -51,6 +53,22 @@ public sealed class PriceChartControl : FrameworkElement
     private Rect _renderedPriceRect;
     private double _renderedStep;
     private bool _hasRenderedChart;
+    private readonly ToolTip _interactiveToolTip;
+
+    public PriceChartControl()
+    {
+        _interactiveToolTip = new ToolTip
+        {
+            Placement = PlacementMode.MousePoint,
+            PlacementTarget = this,
+            StaysOpen = true
+        };
+        ToolTip = _interactiveToolTip;
+        ToolTipService.SetInitialShowDelay(this, 0);
+        ToolTipService.SetBetweenShowDelay(this, 0);
+        ToolTipService.SetShowDuration(this, 60_000);
+        Unloaded += (_, _) => CloseInteractiveToolTip();
+    }
 
     public IEnumerable? Points
     {
@@ -193,14 +211,14 @@ public sealed class PriceChartControl : FrameworkElement
         base.OnMouseMove(e);
         if (!_hasRenderedChart || _renderedPoints.Count == 0 || _renderedStep <= 0d)
         {
-            ToolTip = null;
+            CloseInteractiveToolTip();
             return;
         }
 
         var point = e.GetPosition(this);
         if (point.X < _renderedPriceRect.Left || point.X > _renderedPriceRect.Right)
         {
-            ToolTip = null;
+            CloseInteractiveToolTip();
             return;
         }
 
@@ -209,13 +227,24 @@ public sealed class PriceChartControl : FrameworkElement
             0,
             _renderedPoints.Count - 1);
         var chartPoint = _renderedPoints[index];
-        ToolTip = BuildToolTipText(chartPoint);
+        ShowInteractiveToolTip(BuildToolTipText(chartPoint));
     }
 
     protected override void OnMouseLeave(MouseEventArgs e)
     {
         base.OnMouseLeave(e);
-        ToolTip = null;
+        CloseInteractiveToolTip();
+    }
+
+    private void ShowInteractiveToolTip(string text)
+    {
+        _interactiveToolTip.Content = text;
+        _interactiveToolTip.IsOpen = true;
+    }
+
+    private void CloseInteractiveToolTip()
+    {
+        _interactiveToolTip.IsOpen = false;
     }
 
     private static void OnPointsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)

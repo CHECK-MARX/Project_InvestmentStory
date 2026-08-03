@@ -51,6 +51,16 @@ public sealed class DividendChartInteractionState : INotifyPropertyChanged
     public IReadOnlyCollection<string> HiddenSeries => _hiddenSeries;
     public bool IsSeriesVisible(string seriesKey) => !_hiddenSeries.Contains(seriesKey);
 
+    public bool IsSelected(string? ticker, int? month, DividendScheduleStatus? status)
+    {
+        if (!HasSelection) return false;
+        if (!string.IsNullOrWhiteSpace(_selectedTicker) &&
+            !string.Equals(_selectedTicker, ticker, StringComparison.OrdinalIgnoreCase)) return false;
+        if (_selectedMonth is not null && _selectedMonth != month) return false;
+        if (_selectedStatus is not null && _selectedStatus != status) return false;
+        return true;
+    }
+
     public double OpacityFor(string? ticker, int? month, DividendScheduleStatus? status)
     {
         if (!HasSelection) return 1d;

@@ -1,4 +1,5 @@
 using InvestmentStory.App.Controls;
+using InvestmentStory.App.ViewModels;
 using InvestmentStory.Core.Models;
 using System.Windows.Media;
 
@@ -53,6 +54,18 @@ public sealed class DividendChartInteractionTests
     }
 
     [Fact]
+    public void Heatmap_UsesAmountIntensityInsteadOfTurningEveryEstimatedCellOrange()
+    {
+        var acquired = DividendChartColorRegistry.HeatmapBrush(
+            50m, 100m, DividendScheduleStatus.Paid).Color;
+        var estimated = DividendChartColorRegistry.HeatmapBrush(
+            50m, 100m, DividendScheduleStatus.Estimated).Color;
+
+        Assert.Equal(acquired, estimated);
+        Assert.True(acquired.B > acquired.R);
+    }
+
+    [Fact]
     public void Tooltip_OmitsMissingValuesButKeepsActualZero()
     {
         var text = new DividendChartTooltipModel
@@ -94,6 +107,18 @@ public sealed class DividendChartInteractionTests
 
         Assert.False(state.HasSelection);
         Assert.Equal(1d, state.OpacityFor("JNJ", 9, DividendScheduleStatus.Estimated));
+    }
+
+    [Fact]
+    public void SharedSelection_IdentifiesTheSelectedTickerMonthAndStatus()
+    {
+        var state = new DividendChartInteractionState();
+
+        state.Select("KO", 6, DividendScheduleStatus.Expected, "selected");
+
+        Assert.True(state.IsSelected("KO", 6, DividendScheduleStatus.Expected));
+        Assert.False(state.IsSelected("KO", 9, DividendScheduleStatus.Expected));
+        Assert.False(state.IsSelected("JNJ", 6, DividendScheduleStatus.Expected));
     }
 
     [Fact]
@@ -148,6 +173,70 @@ public sealed class DividendChartInteractionTests
         Assert.DoesNotContain("Contains(\"推定\")", source);
         Assert.DoesNotContain("Contains(\"受取\")", source);
         Assert.DoesNotContain("Contains(\"未取得\")", source);
+    }
+
+    [Fact]
+    public void MonthMap_UsesStatusColorForEveryMonthlyMarker()
+    {
+        var source = ReadRepoFile("InvestmentStory.App", "Controls", "DividendMonthMapControl.cs");
+
+        Assert.Contains("StatusBrush(status.Value, opacity)", source);
+        Assert.DoesNotContain("SecurityBrush(row.Ticker", source);
+        Assert.Contains("ForStatus(status.Value)", source);
+        Assert.Contains("DashStyle", source);
+    }
+
+    [Fact]
+    public void MonthMap_PreservesDifferentStatusesForDifferentMonthsOfTheSameSecurity()
+    {
+        var row = new DividendPlanStockMonthlyRowViewModel(
+            "TEST",
+            "Test Security",
+            new[]
+            {
+                new DividendPurchasePlanEvent
+                {
+                    Ticker = "TEST",
+                    Name = "Test Security",
+                    Month = 3,
+                    PaymentDate = new DateTime(2026, 3, 20),
+                    CurrentNetDividendJpy = 1_000m,
+                    EligibilityStatus = DividendPlanEligibility.Eligible,
+                    DataQuality = DividendPlanDataQuality.Acquired
+                },
+                new DividendPurchasePlanEvent
+                {
+                    Ticker = "TEST",
+                    Name = "Test Security",
+                    Month = 6,
+                    PaymentDate = new DateTime(2026, 6, 20),
+                    CurrentNetDividendJpy = 1_000m,
+                    EligibilityStatus = DividendPlanEligibility.Estimated,
+                    DataQuality = DividendPlanDataQuality.Estimated
+                }
+            });
+
+        Assert.Equal(DividendScheduleStatus.Expected, row.ScheduleStatuses[2]);
+        Assert.Equal(DividendScheduleStatus.Estimated, row.ScheduleStatuses[5]);
+        Assert.Null(row.ScheduleStatuses[0]);
+    }
+
+    [Fact]
+    public void InteractiveCharts_ExplicitlyOpenAndClosePersistentTooltips()
+    {
+        foreach (var file in new[]
+                 {
+                     "InteractiveDividendChartControl.cs",
+                     "PriceChartControl.cs",
+                     "ScenarioComparisonChartControl.cs"
+                 })
+        {
+            var source = ReadRepoFile("InvestmentStory.App", "Controls", file);
+
+            Assert.Contains("IsOpen = true", source);
+            Assert.Contains("IsOpen = false", source);
+            Assert.Contains("PlacementMode.MousePoint", source);
+        }
     }
 
     private static int CountOccurrences(string value, string fragment) =>

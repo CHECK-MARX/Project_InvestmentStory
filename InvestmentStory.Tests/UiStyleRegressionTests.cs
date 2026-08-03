@@ -26,6 +26,17 @@ public sealed class UiStyleRegressionTests
     }
 
     [Fact]
+    public void DatePickerTextBox_UsesThemeResourcesForReadableInput()
+    {
+        var xaml = ReadRepoFile("InvestmentStory.App", "Styles", "InputStyles.xaml");
+
+        Assert.Contains("primitives:DatePickerTextBox", xaml);
+        Assert.Contains("Background\" Value=\"{DynamicResource SurfaceBackgroundBrush}\"", xaml);
+        Assert.Contains("Foreground\" Value=\"{DynamicResource PrimaryTextBrush}\"", xaml);
+        Assert.Contains("CaretBrush\" Value=\"{DynamicResource AccentBlueBrush}\"", xaml);
+    }
+
+    [Fact]
     public void SidebarToolTips_AreEnabledOnlyWhenCollapsed()
     {
         var xaml = ReadRepoFile("InvestmentStory.App", "MainWindow.xaml");
