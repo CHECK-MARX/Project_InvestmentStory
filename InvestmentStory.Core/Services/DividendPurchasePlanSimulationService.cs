@@ -153,7 +153,8 @@ public sealed class DividendPurchasePlanSimulationService
             }
 
             var schedule = ResolveSchedule(component, targetYear, payments);
-            var tax = CalculateTax(component, component.CurrentShares, component.AnnualDividendPerShare, false, taxProfiles);
+            var annualDividendPerShare = ResolveAnnualDividendPerShare(component);
+            var tax = CalculateTax(component, component.CurrentShares, annualDividendPerShare, false, taxProfiles);
             currentAnnualNet += tax.NetAmountJpy;
             if (schedule.Events.Count == 0)
             {
@@ -162,40 +163,38 @@ public sealed class DividendPurchasePlanSimulationService
 
             foreach (var scheduleEvent in schedule.Events)
             {
-                var eventTax = CalculateTax(
-                    component,
-                    component.CurrentShares,
-                    component.AnnualDividendPerShare / schedule.Events.Count,
-                    false,
-                    taxProfiles);
+                var perShare = scheduleEvent.AmountPerShare > 0m
+                    ? scheduleEvent.AmountPerShare
+                    : annualDividendPerShare / schedule.Events.Count;
+                var eventTax = CalculateTax(component, component.CurrentShares, perShare, false, taxProfiles);
+                var currentNet = scheduleEvent.IsPaid && scheduleEvent.ActualNetDividendJpy is > 0m
+                    ? scheduleEvent.ActualNetDividendJpy.Value
+                    : eventTax.NetAmountJpy;
                 currentEvents.Add(ToEvent(
                     item,
                     scheduleEvent,
-                    eventTax.NetAmountJpy,
+                    currentNet,
                     0m,
                     0m,
-                    true,
-                    schedule.DataQuality,
-                    schedule.Source));
+                    true));
             }
         }
 
         var plannedShares = Math.Max(0m, item.PlannedAdditionalShares);
         var plannedSchedule = ResolveSchedule(item, targetYear, payments);
         var plannedEvents = new List<DividendPurchasePlanEvent>();
-        var fullPlannedTax = CalculateTax(item, plannedShares, item.AnnualDividendPerShare, true, taxProfiles);
+        var plannedAnnualDividendPerShare = ResolveAnnualDividendPerShare(item);
+        var fullPlannedTax = CalculateTax(item, plannedShares, plannedAnnualDividendPerShare, true, taxProfiles);
         var eligibleAdded = 0m;
         var missedAdded = 0m;
-        if (plannedShares > 0m && plannedSchedule.Events.Count > 0 && item.AnnualDividendPerShare > 0m)
+        if (plannedShares > 0m && plannedSchedule.Events.Count > 0 && plannedAnnualDividendPerShare > 0m)
         {
             foreach (var scheduleEvent in plannedSchedule.Events)
             {
-                var eventTax = CalculateTax(
-                    item,
-                    plannedShares,
-                    item.AnnualDividendPerShare / plannedSchedule.Events.Count,
-                    true,
-                    taxProfiles);
+                var perShare = scheduleEvent.AmountPerShare > 0m
+                    ? scheduleEvent.AmountPerShare
+                    : plannedAnnualDividendPerShare / plannedSchedule.Events.Count;
+                var eventTax = CalculateTax(item, plannedShares, perShare, true, taxProfiles);
                 var eligible = scheduleEvent.LastRightsDate is not null && purchaseDate <= scheduleEvent.LastRightsDate.Value.Date;
                 var receive = eligible ? eventTax.NetAmountJpy : 0m;
                 var missed = eligible ? 0m : eventTax.NetAmountJpy;
@@ -207,9 +206,7 @@ public sealed class DividendPurchasePlanSimulationService
                     0m,
                     receive,
                     missed,
-                    eligible,
-                    plannedSchedule.DataQuality,
-                    plannedSchedule.Source));
+                    eligible));
             }
         }
 
@@ -240,7 +237,7 @@ public sealed class DividendPurchasePlanSimulationService
                 PostAddShares = Math.Max(0m, item.CurrentShares) + plannedShares,
                 CurrentPrice = Math.Max(0m, item.CurrentPrice),
                 PlannedPurchaseAmountJpy = RoundYen(plannedInvestment),
-                AnnualDividendPerShare = Math.Max(0m, item.AnnualDividendPerShare),
+                AnnualDividendPerShare = plannedAnnualDividendPerShare,
                 CurrentAnnualNetDividendJpy = RoundYen(currentAnnualNet),
                 TargetYearCurrentNetDividendJpy = RoundYen(currentTargetYearNet),
                 TargetYearAdditionalNetDividendJpy = RoundYen(eligibleAdded),
@@ -275,12 +272,83 @@ public sealed class DividendPurchasePlanSimulationService
             .Where(x => x.PaymentDate != default)
             .OrderByDescending(x => x.PaymentDate)
             .ToList();
+        var events = new List<ScheduleEvent>();
+
+        // Broker CSV payments are the source of truth for paid dividends. Keep the
+        // actual amount and payment date instead of redistributing an annual value.
+        foreach (var payment in history
+                     .Where(x => x.PaymentDate.Year == targetYear && DividendConstants.IsVisibleActual(x.DividendStatus))
+                     .OrderBy(x => x.PaymentDate))
+        {
+            var exDate = ValidDate(payment.ExDividendDate);
+            var recordDate = ValidDate(payment.RecordDate);
+            DateTime? lastRightsDate = exDate is not null ? PreviousBusinessDay(exDate.Value) : null;
+            events.Add(new ScheduleEvent(
+                payment.PaymentDate.Date,
+                ValidDate(payment.DeclaredDate),
+                lastRightsDate,
+                exDate,
+                recordDate,
+                Math.Max(0m, payment.DividendPerShare),
+                DividendPlanDataQuality.Acquired,
+                string.IsNullOrWhiteSpace(payment.Source) ? "証券会社CSV入金実績" : payment.Source,
+                true,
+                ResolveActualNetDividendJpy(payment)));
+        }
+
+        // Public calendar data is exact only when the provider published the date.
+        // A missing payment date is estimated, while the published ex/record date is retained.
+        foreach (var calendar in item.DividendEvents
+                     .Where(x => EventYear(x) == targetYear)
+                     .OrderBy(x => x.PaymentDate ?? x.ExDividendDate ?? x.RecordDate ?? x.DeclarationDate))
+        {
+            var exDate = calendar.ExDividendDate?.Date;
+            var recordDate = calendar.RecordDate?.Date;
+            var paymentDate = calendar.PaymentDate?.Date;
+            var eventQuality = calendar.IsConfirmed && paymentDate is not null
+                ? DividendPlanDataQuality.Acquired
+                : DividendPlanDataQuality.Estimated;
+            if (paymentDate is null)
+            {
+                var anchor = recordDate ?? exDate ?? calendar.DeclarationDate?.Date;
+                if (anchor is null)
+                {
+                    continue;
+                }
+                paymentDate = NextBusinessDay(anchor.Value.AddDays(IsJpy(item.Currency) ? 60 : 14));
+            }
+
+            var lastRightsDate = exDate is not null
+                ? PreviousBusinessDay(exDate.Value)
+                : EstimateLastRightsDate(paymentDate.Value, item.Currency);
+            events.Add(new ScheduleEvent(
+                paymentDate.Value,
+                calendar.DeclarationDate?.Date,
+                lastRightsDate,
+                exDate,
+                recordDate,
+                Math.Max(0m, calendar.AmountPerShare),
+                eventQuality,
+                string.IsNullOrWhiteSpace(calendar.Source) ? "公開配当カレンダー" : calendar.Source,
+                false,
+                null));
+        }
+
         var configuredMonths = ParseMonths(item.DividendMonths);
         var historyMonths = history.Select(x => x.PaymentDate.Month).Distinct().Order().ToList();
+        var calendarMonths = item.DividendEvents
+            .Select(x => x.PaymentDate ?? x.ExDividendDate ?? x.RecordDate)
+            .Where(x => x is not null)
+            .Select(x => x!.Value.Month)
+            .Distinct()
+            .Order()
+            .ToList();
         var months = configuredMonths.Count > 0
             ? configuredMonths
             : historyMonths.Count > 0
                 ? historyMonths
+                : calendarMonths.Count > 0
+                    ? calendarMonths
                 : FrequencyToMonths(item.DividendFrequency);
 
         if (months.Count == 0 && item.DividendPaymentDate is not null)
@@ -288,63 +356,70 @@ public sealed class DividendPurchasePlanSimulationService
             months = new[] { item.DividendPaymentDate.Value.Month };
         }
 
-        if (months.Count == 0)
+        if (months.Count == 0 && events.Count == 0)
         {
             return new ScheduleResolution(Array.Empty<ScheduleEvent>(), DividendPlanDataQuality.Missing, "配当情報未取得");
         }
 
-        var events = new List<ScheduleEvent>();
-        var authoritativeDateCount = 0;
+        // Fill only months for which no actual or published target-year event exists.
+        // These rows remain estimates and are never presented as confirmed dates.
         foreach (var month in months)
         {
+            if (events.Any(x => x.PaymentDate.Month == month))
+            {
+                continue;
+            }
             var historical = history.FirstOrDefault(x => x.PaymentDate.Month == month);
             var paymentDate = historical is not null
                 ? SafeDate(targetYear, month, historical.PaymentDate.Day)
                 : item.DividendPaymentDate is not null && item.DividendPaymentDate.Value.Month == month
                     ? SafeDate(targetYear, month, item.DividendPaymentDate.Value.Day)
                     : SafeDate(targetYear, month, 20);
+            DateTime? declarationDate = null;
+            DateTime? recordDate = null;
             DateTime? exDividendDate = null;
-            DateTime? lastRightsDate = null;
-            if (historical?.ExDividendDate is not null && historical.ExDividendDate != DateTime.MinValue)
+            if (historical is not null)
             {
-                exDividendDate = SafeDate(targetYear, historical.ExDividendDate.Month, historical.ExDividendDate.Day);
-                lastRightsDate = PreviousBusinessDay(exDividendDate.Value);
-                authoritativeDateCount++;
-            }
-            else if (historical?.RecordDate is not null && historical.RecordDate != DateTime.MinValue)
-            {
-                lastRightsDate = SafeDate(targetYear, historical.RecordDate.Month, historical.RecordDate.Day);
-                authoritativeDateCount++;
+                declarationDate = ProjectDate(historical.DeclaredDate, targetYear);
+                recordDate = ProjectDate(historical.RecordDate, targetYear);
+                exDividendDate = ProjectDate(historical.ExDividendDate, targetYear);
             }
             else if (item.ExDividendDate is not null && item.ExDividendDate.Value.Month == month)
             {
                 exDividendDate = SafeDate(targetYear, month, item.ExDividendDate.Value.Day);
-                lastRightsDate = PreviousBusinessDay(exDividendDate.Value);
-                authoritativeDateCount++;
             }
             else if (item.DividendRecordDate is not null && item.DividendRecordDate.Value.Month == month)
             {
-                lastRightsDate = SafeDate(targetYear, month, item.DividendRecordDate.Value.Day);
-                authoritativeDateCount++;
-            }
-            else
-            {
-                lastRightsDate = PreviousBusinessDay(paymentDate.AddDays(IsJpy(item.Currency) ? -75 : -21));
+                recordDate = SafeDate(targetYear, month, item.DividendRecordDate.Value.Day);
             }
 
-            events.Add(new ScheduleEvent(paymentDate, lastRightsDate, exDividendDate));
+            var lastRightsDate = exDividendDate is not null
+                ? PreviousBusinessDay(exDividendDate.Value)
+                : EstimateLastRightsDate(paymentDate, item.Currency);
+            events.Add(new ScheduleEvent(
+                paymentDate,
+                declarationDate,
+                lastRightsDate,
+                exDividendDate,
+                recordDate,
+                Math.Max(0m, historical?.DividendPerShare ?? 0m),
+                DividendPlanDataQuality.Estimated,
+                historical is not null ? "過去の配当実績から推定" : "配当月・頻度から推定",
+                false,
+                null));
         }
 
-        var allDatesAuthoritative = events.Count > 0 && authoritativeDateCount == events.Count;
-        var source = allDatesAuthoritative
-            ? "取得済み配当日程"
-            : history.Count > 0
-                ? "過去の配当実績から推定"
-                : "配当月・頻度から推定";
+        var merged = MergeScheduleEvents(events);
+        var quality = merged.Any(x => x.DataQuality == DividendPlanDataQuality.Acquired)
+            ? DividendPlanDataQuality.Acquired
+            : merged.Count > 0
+                ? DividendPlanDataQuality.Estimated
+                : DividendPlanDataQuality.Missing;
+        var sources = merged.Select(x => x.Source).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
         return new ScheduleResolution(
-            events.OrderBy(x => x.PaymentDate).ToList(),
-            allDatesAuthoritative ? DividendPlanDataQuality.Acquired : DividendPlanDataQuality.Estimated,
-            source);
+            merged,
+            quality,
+            sources.Count == 0 ? "配当情報未取得" : string.Join(" / ", sources));
     }
 
     private DividendTaxCalculation CalculateTax(
@@ -399,9 +474,7 @@ public sealed class DividendPurchasePlanSimulationService
         decimal current,
         decimal added,
         decimal missed,
-        bool eligible,
-        string dataQuality,
-        string source) =>
+        bool eligible) =>
         new()
         {
             StockId = item.StockId,
@@ -412,22 +485,28 @@ public sealed class DividendPurchasePlanSimulationService
             AccountType = item.AccountType,
             Month = schedule.PaymentDate.Month,
             PaymentDate = schedule.PaymentDate,
+            DeclarationDate = schedule.DeclarationDate,
             LastRightsDate = schedule.LastRightsDate,
             ExDividendDate = schedule.ExDividendDate,
+            RecordDate = schedule.RecordDate,
             CurrentNetDividendJpy = RoundYen(current),
             AdditionalNetDividendJpy = RoundYen(added),
             MissedNetDividendJpy = RoundYen(missed),
+            IsPaid = schedule.IsPaid,
+            IsOverdueUnmatched = !schedule.IsPaid &&
+                                 schedule.DataQuality == DividendPlanDataQuality.Acquired &&
+                                 schedule.PaymentDate.Date < DateTime.Today,
             IsNewStock = item.IsNewStock,
             IsEligible = eligible,
-            EligibilityStatus = string.Equals(dataQuality, DividendPlanDataQuality.Missing, StringComparison.Ordinal)
+            EligibilityStatus = string.Equals(schedule.DataQuality, DividendPlanDataQuality.Missing, StringComparison.Ordinal)
                 ? DividendPlanEligibility.Missing
                 : eligible
-                    ? string.Equals(dataQuality, DividendPlanDataQuality.Acquired, StringComparison.Ordinal)
+                    ? string.Equals(schedule.DataQuality, DividendPlanDataQuality.Acquired, StringComparison.Ordinal)
                         ? DividendPlanEligibility.Eligible
                         : DividendPlanEligibility.Estimated
                     : DividendPlanEligibility.Ineligible,
-            DataQuality = dataQuality,
-            Source = source
+            DataQuality = schedule.DataQuality,
+            Source = schedule.Source
         };
 
     private static IReadOnlyList<DividendPurchasePlanEvent> MergeEvents(IEnumerable<DividendPurchasePlanEvent> events) =>
@@ -446,18 +525,26 @@ public sealed class DividendPurchasePlanSimulationService
                     AccountType = first.AccountType,
                     Month = first.Month,
                     PaymentDate = first.PaymentDate,
-                    LastRightsDate = first.LastRightsDate,
-                    ExDividendDate = first.ExDividendDate,
+                    DeclarationDate = group.Select(x => x.DeclarationDate).FirstOrDefault(x => x is not null),
+                    LastRightsDate = group.Select(x => x.LastRightsDate).FirstOrDefault(x => x is not null),
+                    ExDividendDate = group.Select(x => x.ExDividendDate).FirstOrDefault(x => x is not null),
+                    RecordDate = group.Select(x => x.RecordDate).FirstOrDefault(x => x is not null),
                     CurrentNetDividendJpy = RoundYen(group.Sum(x => x.CurrentNetDividendJpy)),
                     AdditionalNetDividendJpy = RoundYen(group.Sum(x => x.AdditionalNetDividendJpy)),
                     MissedNetDividendJpy = RoundYen(group.Sum(x => x.MissedNetDividendJpy)),
+                    IsPaid = group.Any(x => x.IsPaid),
+                    IsOverdueUnmatched = group.Any(x => x.IsOverdueUnmatched),
                     IsNewStock = first.IsNewStock,
                     IsEligible = group.Any(x => x.IsEligible),
                     EligibilityStatus = group.Any(x => x.EligibilityStatus == DividendPlanEligibility.Eligible)
                         ? DividendPlanEligibility.Eligible
                         : first.EligibilityStatus,
-                    DataQuality = first.DataQuality,
-                    Source = first.Source
+                    DataQuality = group.Any(x => x.DataQuality == DividendPlanDataQuality.Acquired)
+                        ? DividendPlanDataQuality.Acquired
+                        : group.Any(x => x.DataQuality == DividendPlanDataQuality.Estimated)
+                            ? DividendPlanDataQuality.Estimated
+                            : DividendPlanDataQuality.Missing,
+                    Source = string.Join(" / ", group.Select(x => x.Source).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
                 };
             })
             .ToList();
@@ -560,6 +647,118 @@ public sealed class DividendPurchasePlanSimulationService
         NetAmountJpy = left.NetAmountJpy + right.NetAmountJpy
     };
 
+    private static decimal ResolveAnnualDividendPerShare(DividendGrowthPlanItem item)
+    {
+        var configured = Math.Max(0m, item.AnnualDividendPerShare);
+        var datedEvents = item.DividendEvents
+            .Where(x => x.AmountPerShare > 0m)
+            .Select(x => new
+            {
+                Event = x,
+                Date = x.PaymentDate ?? x.ExDividendDate ?? x.RecordDate ?? x.DeclarationDate
+            })
+            .Where(x => x.Date is not null)
+            .ToList();
+        if (datedEvents.Count < 2)
+        {
+            return configured;
+        }
+
+        var latest = datedEvents.Max(x => x.Date!.Value.Date);
+        var trailing = datedEvents
+            .Where(x => x.Date!.Value.Date > latest.AddDays(-370) && x.Date.Value.Date <= latest)
+            .GroupBy(x => x.Event.EventKey, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.OrderByDescending(y => y.Event.AcquiredAt).First().Event.AmountPerShare)
+            .Sum();
+        if (trailing <= 0m)
+        {
+            return configured;
+        }
+
+        // Prefer a complete trailing calendar when the quote's annual value is
+        // clearly inconsistent (for example, a price was stored as a dividend).
+        return configured <= 0m || configured > trailing * 1.5m || configured < trailing * 0.5m
+            ? trailing
+            : configured;
+    }
+
+    private static IReadOnlyList<ScheduleEvent> MergeScheduleEvents(IEnumerable<ScheduleEvent> source)
+    {
+        var merged = new List<ScheduleEvent>();
+        foreach (var candidate in source
+                     .OrderByDescending(ScheduleRank)
+                     .ThenBy(x => x.PaymentDate))
+        {
+            var index = merged.FindIndex(existing => SameScheduleEvent(existing, candidate));
+            if (index < 0)
+            {
+                merged.Add(candidate);
+                continue;
+            }
+
+            var preferred = ScheduleRank(candidate) > ScheduleRank(merged[index]) ? candidate : merged[index];
+            var fallback = ReferenceEquals(preferred, candidate) ? merged[index] : candidate;
+            merged[index] = preferred with
+            {
+                DeclarationDate = preferred.DeclarationDate ?? fallback.DeclarationDate,
+                LastRightsDate = preferred.LastRightsDate ?? fallback.LastRightsDate,
+                ExDividendDate = preferred.ExDividendDate ?? fallback.ExDividendDate,
+                RecordDate = preferred.RecordDate ?? fallback.RecordDate,
+                AmountPerShare = preferred.AmountPerShare > 0m ? preferred.AmountPerShare : fallback.AmountPerShare,
+                ActualNetDividendJpy = preferred.ActualNetDividendJpy ?? fallback.ActualNetDividendJpy,
+                Source = string.Join(" / ", new[] { preferred.Source, fallback.Source }
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct())
+            };
+        }
+
+        return merged.OrderBy(x => x.PaymentDate).ToList();
+    }
+
+    private static bool SameScheduleEvent(ScheduleEvent left, ScheduleEvent right)
+    {
+        if (left.ExDividendDate is not null && right.ExDividendDate is not null &&
+            left.ExDividendDate.Value.Date == right.ExDividendDate.Value.Date)
+        {
+            return true;
+        }
+        if (left.PaymentDate.Date == right.PaymentDate.Date)
+        {
+            return true;
+        }
+        return left.IsPaid != right.IsPaid &&
+               left.PaymentDate.Year == right.PaymentDate.Year &&
+               left.PaymentDate.Month == right.PaymentDate.Month &&
+               Math.Abs((left.PaymentDate - right.PaymentDate).TotalDays) <= 7;
+    }
+
+    private static int ScheduleRank(ScheduleEvent item) => item.IsPaid
+        ? 3
+        : item.DataQuality == DividendPlanDataQuality.Acquired
+            ? 2
+            : item.DataQuality == DividendPlanDataQuality.Estimated
+                ? 1
+                : 0;
+
+    private static int? EventYear(DividendCalendarEvent item) =>
+        (item.PaymentDate ?? item.ExDividendDate ?? item.RecordDate ?? item.DeclarationDate)?.Year;
+
+    private static DateTime? ValidDate(DateTime value) => value == default || value == DateTime.MinValue ? null : value.Date;
+
+    private static DateTime? ProjectDate(DateTime value, int year) =>
+        ValidDate(value) is { } date ? SafeDate(year, date.Month, date.Day) : null;
+
+    private static decimal ResolveActualNetDividendJpy(DividendPayment payment)
+    {
+        if (payment.NetAmountJpy > 0m) return payment.NetAmountJpy;
+        if (payment.JpyAmount > 0m) return payment.JpyAmount;
+        if (payment.NetAmount <= 0m) return 0m;
+        return payment.NetAmount * (IsJpy(payment.Currency) ? 1m : Math.Max(1m, payment.ExchangeRate));
+    }
+
+    private static DateTime EstimateLastRightsDate(DateTime paymentDate, string currency) =>
+        PreviousBusinessDay(paymentDate.AddDays(IsJpy(currency) ? -75 : -21));
+
     private static IReadOnlyList<int> ParseMonths(string value) =>
         string.IsNullOrWhiteSpace(value)
             ? Array.Empty<int>()
@@ -593,13 +792,33 @@ public sealed class DividendPurchasePlanSimulationService
         return value;
     }
 
+    private static DateTime NextBusinessDay(DateTime date)
+    {
+        var value = date;
+        while (value.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+        {
+            value = value.AddDays(1);
+        }
+        return value;
+    }
+
     private static string NormalizeCurrency(string value) =>
         string.IsNullOrWhiteSpace(value) ? "JPY" : value.Trim().ToUpperInvariant() is "YEN" ? "JPY" : value.Trim().ToUpperInvariant();
     private static bool IsJpy(string value) => string.Equals(NormalizeCurrency(value), "JPY", StringComparison.OrdinalIgnoreCase);
     private static decimal ExchangeRate(string currency, decimal value) => IsJpy(currency) ? 1m : value <= 0m ? 1m : value;
     private static decimal RoundYen(decimal value) => Math.Round(value, 0, MidpointRounding.AwayFromZero);
 
-    private sealed record ScheduleEvent(DateTime PaymentDate, DateTime? LastRightsDate, DateTime? ExDividendDate);
+    private sealed record ScheduleEvent(
+        DateTime PaymentDate,
+        DateTime? DeclarationDate,
+        DateTime? LastRightsDate,
+        DateTime? ExDividendDate,
+        DateTime? RecordDate,
+        decimal AmountPerShare,
+        string DataQuality,
+        string Source,
+        bool IsPaid,
+        decimal? ActualNetDividendJpy);
     private sealed record ScheduleResolution(IReadOnlyList<ScheduleEvent> Events, string DataQuality, string Source);
     private sealed record HoldingBuildResult(DividendPurchasePlanHolding Holding, IReadOnlyList<DividendPurchasePlanEvent> Events);
 }

@@ -17,6 +17,7 @@ public sealed class DatabaseInitializer
         connection.Open();
         Execute(connection, "PRAGMA foreign_keys = ON;");
         BackupBeforeDividendPurchasePlanMigrationIfNeeded(connection, databasePath);
+        BackupBeforeDividendCalendarMigrationIfNeeded(connection, databasePath);
         CreateTables(connection);
         BackupBeforeSecurityMigrationIfNeeded(connection, databasePath);
         DropCsvIdempotencyIndexesBeforeMigration(connection);
@@ -188,6 +189,31 @@ public sealed class DatabaseInitializer
                 Memo TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
             );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS DividendCalendarEvents (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                EventKey TEXT NOT NULL,
+                DeclarationDate TEXT NOT NULL DEFAULT '',
+                ExDividendDate TEXT NOT NULL DEFAULT '',
+                RecordDate TEXT NOT NULL DEFAULT '',
+                PaymentDate TEXT NOT NULL DEFAULT '',
+                AmountPerShare REAL NOT NULL DEFAULT 0,
+                Currency TEXT NOT NULL DEFAULT '',
+                Source TEXT NOT NULL DEFAULT '',
+                DataQuality TEXT NOT NULL DEFAULT 'Missing',
+                AcquiredAt TEXT NOT NULL DEFAULT '',
+                IsConfirmed INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(StockId, EventKey),
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            """);
+
+        Execute(connection, """
+            CREATE INDEX IF NOT EXISTS IX_DividendCalendarEvents_StockDate
+            ON DividendCalendarEvents(StockId, PaymentDate, ExDividendDate);
             """);
 
         Execute(connection, """
@@ -392,6 +418,16 @@ public sealed class DatabaseInitializer
              !TableExists(connection, "DividendPurchasePlanItems")))
         {
             BackupDatabase(databasePath, "before_dividend_purchase_plan");
+        }
+    }
+
+    private static void BackupBeforeDividendCalendarMigrationIfNeeded(
+        SqliteConnection connection,
+        string databasePath)
+    {
+        if (TableExists(connection, "Stocks") && !TableExists(connection, "DividendCalendarEvents"))
+        {
+            BackupDatabase(databasePath, "before_dividend_calendar");
         }
     }
 

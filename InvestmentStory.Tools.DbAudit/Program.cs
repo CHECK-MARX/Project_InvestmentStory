@@ -21,7 +21,8 @@ if (shouldRefreshDividendSchedules)
         repository.GetPositions(),
         repository.GetDividendPayments(),
         repository.GetTaxProfiles(),
-        DateTime.Today);
+        DateTime.Today,
+        repository.GetDividendCalendarEvents());
 
     foreach (var schedule in scheduleResult.Schedules)
     {

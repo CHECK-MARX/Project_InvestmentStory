@@ -210,6 +210,45 @@ public sealed class DividendTaxAndScheduleTests
     }
 
     [Fact]
+    public void ScheduleService_PrefersConfirmedPublicCalendarDateAndAmount()
+    {
+        var service = new DividendScheduleService();
+        var position = CreatePosition(currentShares: 20m, annualDividendPerShare: 5.24m, currentPrice: 267m, stockId: 4);
+        var calendar = new[]
+        {
+            new DividendCalendarEvent
+            {
+                StockId = 4,
+                DeclarationDate = new DateTime(2026, 4, 15),
+                ExDividendDate = new DateTime(2026, 5, 22),
+                RecordDate = new DateTime(2026, 5, 23),
+                PaymentDate = new DateTime(2026, 6, 10),
+                AmountPerShare = 1.45m,
+                Currency = "USD",
+                Source = "Nasdaq",
+                DataQuality = DividendPlanDataQuality.Acquired,
+                IsConfirmed = true,
+                AcquiredAt = new DateTime(2026, 4, 16)
+            }
+        };
+
+        var result = service.BuildSchedules(
+            new[] { position },
+            Array.Empty<DividendPayment>(),
+            UsProfiles(),
+            new DateTime(2026, 5, 1),
+            calendar);
+
+        var june = Assert.Single(result.Schedules, x => x.PaymentDate.Month == 6);
+        Assert.Equal(new DateTime(2026, 6, 10), june.PaymentDate);
+        Assert.Equal(1.45m, june.DividendPerShare);
+        Assert.Equal(DividendConstants.Confirmed, june.DividendStatus);
+        Assert.StartsWith(DividendConstants.SourcePublicCalendar, june.Source);
+        Assert.Contains("権利落ち日 2026/05/22", june.Memo);
+        Assert.Contains("支払日 2026/06/10", june.Memo);
+    }
+
+    [Fact]
     public void ReconciliationService_CsvActualReplacesMatchingSchedule()
     {
         var existing = new[]

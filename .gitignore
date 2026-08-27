@@ -14,12 +14,31 @@ TestResults/
 
 # Local database and private imports
 *.db
+*.db-journal
 *.db-shm
 *.db-wal
-csv/*.csv
+*.db.backup*
+*.sqlite
+*.sqlite3
+*.sqlite.backup*
+csv/
+*.csv
+!SampleData/Csv/
+!SampleData/Csv/**
+user_messages/
+
+# Local settings, credentials, and certificates
+.env
+.env.*
+appsettings.Local.json
+appsettings.local.json
+*.secrets.json
+*.pfx
+*.p12
+*.pem
+*.key
 
 # Logs and temp files
 *.log
 *.tmp
 *.bak
-

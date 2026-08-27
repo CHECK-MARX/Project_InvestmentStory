@@ -280,6 +280,120 @@ public sealed class InvestmentStoryRepository
         return dividends;
     }
 
+    public IReadOnlyList<DividendCalendarEvent> GetDividendCalendarEvents()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, StockId, EventKey, DeclarationDate, ExDividendDate, RecordDate,
+                   PaymentDate, AmountPerShare, Currency, Source, DataQuality, AcquiredAt, IsConfirmed
+            FROM DividendCalendarEvents
+            ORDER BY COALESCE(NULLIF(PaymentDate, ''), NULLIF(ExDividendDate, ''), NULLIF(RecordDate, ''), DeclarationDate), Id;
+            """;
+
+        using var reader = command.ExecuteReader();
+        var events = new List<DividendCalendarEvent>();
+        while (reader.Read())
+        {
+            events.Add(new DividendCalendarEvent
+            {
+                Id = reader.GetInt32(0),
+                StockId = reader.GetInt32(1),
+                EventKey = GetString(reader, 2),
+                DeclarationDate = GetNullableDate(reader, 3),
+                ExDividendDate = GetNullableDate(reader, 4),
+                RecordDate = GetNullableDate(reader, 5),
+                PaymentDate = GetNullableDate(reader, 6),
+                AmountPerShare = GetDecimalOrZero(reader, 7),
+                Currency = GetString(reader, 8),
+                Source = GetString(reader, 9),
+                DataQuality = GetStringOrDefault(reader, 10, DividendPlanDataQuality.Missing),
+                AcquiredAt = GetDateTimeOrDefault(reader, 11, DateTime.MinValue),
+                IsConfirmed = GetInt32OrZero(reader, 12) == 1
+            });
+        }
+
+        return events;
+    }
+
+    public int SaveDividendCalendarEvents(int stockId, IEnumerable<DividendCalendarEvent> events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        if (stockId <= 0)
+        {
+            return 0;
+        }
+
+        var rows = events
+            .Where(item => item is not null)
+            .Select(item =>
+            {
+                item.StockId = stockId;
+                item.EventKey = string.IsNullOrWhiteSpace(item.EventKey)
+                    ? DividendCalendarEvent.CreateEventKey(
+                        item.DeclarationDate,
+                        item.ExDividendDate,
+                        item.RecordDate,
+                        item.PaymentDate,
+                        item.AmountPerShare,
+                        item.Currency)
+                    : item.EventKey;
+                return item;
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.EventKey))
+            .GroupBy(item => item.EventKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Last())
+            .ToList();
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var saved = 0;
+        foreach (var item in rows)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO DividendCalendarEvents (
+                    StockId, EventKey, DeclarationDate, ExDividendDate, RecordDate, PaymentDate,
+                    AmountPerShare, Currency, Source, DataQuality, AcquiredAt, IsConfirmed)
+                VALUES (
+                    $stockId, $eventKey, $declarationDate, $exDividendDate, $recordDate, $paymentDate,
+                    $amountPerShare, $currency, $source, $dataQuality, $acquiredAt, $isConfirmed)
+                ON CONFLICT(StockId, EventKey) DO UPDATE SET
+                    DeclarationDate = CASE WHEN excluded.DeclarationDate <> '' THEN excluded.DeclarationDate ELSE DividendCalendarEvents.DeclarationDate END,
+                    ExDividendDate = CASE WHEN excluded.ExDividendDate <> '' THEN excluded.ExDividendDate ELSE DividendCalendarEvents.ExDividendDate END,
+                    RecordDate = CASE WHEN excluded.RecordDate <> '' THEN excluded.RecordDate ELSE DividendCalendarEvents.RecordDate END,
+                    PaymentDate = CASE WHEN excluded.PaymentDate <> '' THEN excluded.PaymentDate ELSE DividendCalendarEvents.PaymentDate END,
+                    AmountPerShare = CASE WHEN excluded.AmountPerShare > 0 THEN excluded.AmountPerShare ELSE DividendCalendarEvents.AmountPerShare END,
+                    Currency = CASE WHEN excluded.Currency <> '' THEN excluded.Currency ELSE DividendCalendarEvents.Currency END,
+                    Source = CASE WHEN excluded.Source <> '' THEN excluded.Source ELSE DividendCalendarEvents.Source END,
+                    DataQuality = CASE WHEN excluded.IsConfirmed = 1 THEN excluded.DataQuality ELSE DividendCalendarEvents.DataQuality END,
+                    AcquiredAt = CASE WHEN excluded.AcquiredAt <> '' THEN excluded.AcquiredAt ELSE DividendCalendarEvents.AcquiredAt END,
+                    IsConfirmed = MAX(DividendCalendarEvents.IsConfirmed, excluded.IsConfirmed);
+                """;
+            command.Parameters.AddWithValue("$stockId", stockId);
+            command.Parameters.AddWithValue("$eventKey", item.EventKey);
+            command.Parameters.AddWithValue("$declarationDate", ToOptionalDateText(item.DeclarationDate));
+            command.Parameters.AddWithValue("$exDividendDate", ToOptionalDateText(item.ExDividendDate));
+            command.Parameters.AddWithValue("$recordDate", ToOptionalDateText(item.RecordDate));
+            command.Parameters.AddWithValue("$paymentDate", ToOptionalDateText(item.PaymentDate));
+            command.Parameters.AddWithValue("$amountPerShare", item.AmountPerShare);
+            command.Parameters.AddWithValue("$currency", NormalizeCurrency(item.Currency));
+            command.Parameters.AddWithValue("$source", item.Source ?? string.Empty);
+            command.Parameters.AddWithValue("$dataQuality", item.DataQuality ?? DividendPlanDataQuality.Missing);
+            command.Parameters.AddWithValue("$acquiredAt", item.AcquiredAt == default ? ToDateTimeText(DateTime.Now) : ToDateTimeText(item.AcquiredAt));
+            command.Parameters.AddWithValue("$isConfirmed", item.IsConfirmed ? 1 : 0);
+            saved += command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return saved;
+    }
+
     public int SaveDividendPayment(DividendPayment dividend)
     {
         ArgumentNullException.ThrowIfNull(dividend);
@@ -2169,6 +2283,17 @@ public sealed class InvestmentStoryRepository
 
     private static string ToOptionalDateText(DateTime date) =>
         date == default || date == DateTime.MinValue ? string.Empty : ToDateText(date);
+
+    private static string ToOptionalDateText(DateTime? date) =>
+        date.HasValue && date.Value != default && date.Value != DateTime.MinValue
+            ? ToDateText(date.Value)
+            : string.Empty;
+
+    private static DateTime? GetNullableDate(SqliteDataReader reader, int ordinal)
+    {
+        var value = GetString(reader, ordinal);
+        return DateTime.TryParse(value, out var date) ? date.Date : null;
+    }
 
     private static string ToDateTimeText(DateTime date) => date.ToString("yyyy-MM-dd HH:mm:ss");
 

@@ -43,18 +43,25 @@ public sealed class DividendPurchasePlanEvent
     public string AccountType { get; init; } = AccountTypes.Unknown;
     public int Month { get; init; }
     public DateTime PaymentDate { get; init; }
+    public DateTime? DeclarationDate { get; init; }
     public DateTime? LastRightsDate { get; init; }
     public DateTime? ExDividendDate { get; init; }
+    public DateTime? RecordDate { get; init; }
     public decimal CurrentNetDividendJpy { get; init; }
     public decimal AdditionalNetDividendJpy { get; init; }
     public decimal MissedNetDividendJpy { get; init; }
+    public bool IsPaid { get; init; }
+    public bool IsOverdueUnmatched { get; init; }
     public bool IsNewStock { get; init; }
     public bool IsEligible { get; init; }
     public string EligibilityStatus { get; init; } = DividendPlanEligibility.Missing;
     public string DataQuality { get; init; } = DividendPlanDataQuality.Missing;
     public string Source { get; init; } = string.Empty;
-    public DividendScheduleStatus ScheduleStatus =>
-        DividendScheduleStatusResolver.FromPlan(EligibilityStatus, DataQuality);
+    public DividendScheduleStatus ScheduleStatus => IsPaid
+        ? DividendScheduleStatus.Paid
+        : IsOverdueUnmatched
+            ? DividendScheduleStatus.OverdueUnmatched
+            : DividendScheduleStatusResolver.FromPlan(EligibilityStatus, DataQuality);
 }
 
 public sealed class DividendPurchasePlanHolding

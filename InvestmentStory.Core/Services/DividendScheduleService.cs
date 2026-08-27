@@ -10,7 +10,8 @@ public sealed class DividendScheduleService
         IEnumerable<StockPosition> positions,
         IEnumerable<DividendPayment> existingPayments,
         IEnumerable<TaxProfile> taxProfiles,
-        DateTime asOf)
+        DateTime asOf,
+        IEnumerable<DividendCalendarEvent>? calendarEvents = null)
     {
         ArgumentNullException.ThrowIfNull(positions);
         ArgumentNullException.ThrowIfNull(existingPayments);
@@ -20,6 +21,7 @@ public sealed class DividendScheduleService
             .Where(x => !string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
             .ToList();
         var profiles = taxProfiles.ToList();
+        var calendar = calendarEvents?.ToList() ?? new List<DividendCalendarEvent>();
         var schedules = new List<DividendPayment>();
         var generatedKeys = new HashSet<ScheduleKey>();
         var created = 0;
@@ -29,7 +31,13 @@ public sealed class DividendScheduleService
         foreach (var position in positions.Where(IsScheduleTarget))
         {
             var actualHistory = GetActualHistory(position, existing, asOf);
-            var months = ResolveDividendMonths(position, actualHistory, existing);
+            var positionCalendar = calendar
+                .Where(x => x.StockId == position.Stock.Id)
+                .Where(x => x.PaymentDate?.Year == asOf.Year)
+                .OrderByDescending(x => x.IsConfirmed)
+                .ThenByDescending(x => x.AcquiredAt)
+                .ToList();
+            var months = ResolveDividendMonths(position, actualHistory, existing, positionCalendar);
             if (months.Count == 0)
             {
                 continue;
@@ -44,22 +52,38 @@ public sealed class DividendScheduleService
 
             foreach (var month in months)
             {
-                var paymentDate = ResolvePaymentDate(actualHistory, existing, position.Stock.Id, paymentYear, month);
+                var calendarEvent = ResolveCalendarEvent(positionCalendar, paymentYear, month);
+                var paymentDate = ResolvePaymentDate(
+                    actualHistory,
+                    existing,
+                    position.Stock.Id,
+                    paymentYear,
+                    month,
+                    calendarEvent);
                 if (HasActualPaymentForMonth(position.Stock.Id, existing, paymentDate.Year, paymentDate.Month))
                 {
                     continue;
                 }
 
-                var perPaymentDividend = ResolveDividendPerShare(position, reliableActuals, month, months.Count);
+                var perPaymentDividend = ResolveDividendPerShare(
+                    position,
+                    reliableActuals,
+                    month,
+                    months.Count,
+                    calendarEvent);
                 if (perPaymentDividend <= 0m)
                 {
                     continue;
                 }
 
-                var status = paymentDate.Date < asOf.Date ? DividendConstants.PaymentDue : DividendConstants.Estimated;
+                var hasConfirmedCalendar = calendarEvent?.IsConfirmed == true;
+                var status = paymentDate.Date < asOf.Date
+                    ? DividendConstants.PaymentDue
+                    : hasConfirmedCalendar ? DividendConstants.Confirmed : DividendConstants.Estimated;
                 var existingSchedule = existing
                     .Where(x => x.StockId == position.Stock.Id)
                     .Where(IsGeneratedSchedule)
+                    .OrderBy(x => Math.Abs((x.PaymentDate.Date - paymentDate.Date).TotalDays))
                     .FirstOrDefault(x => x.PaymentDate.Year == paymentDate.Year && x.PaymentDate.Month == paymentDate.Month);
 
                 var schedule = existingSchedule ?? new DividendPayment();
@@ -82,10 +106,12 @@ public sealed class DividendScheduleService
                 schedule.FiscalYear = paymentDate.Year;
                 schedule.FiscalQuarter = $"Q{((paymentDate.Month - 1) / 3) + 1}";
                 schedule.DividendStatus = status;
-                schedule.Source = actualHistory.Count > 0
-                    ? DividendConstants.SourceEstimatedFromHistory
-                    : DividendConstants.SourceEstimatedFromAnnualDividend;
-                schedule.SourcePriority = 20;
+                schedule.Source = hasConfirmedCalendar
+                    ? $"{DividendConstants.SourcePublicCalendar}:{calendarEvent!.Source}"
+                    : actualHistory.Count > 0
+                        ? DividendConstants.SourceEstimatedFromHistory
+                        : DividendConstants.SourceEstimatedFromAnnualDividend;
+                schedule.SourcePriority = hasConfirmedCalendar ? 70 : 20;
                 schedule.Quantity = position.CurrentHolding.CurrentShares;
                 schedule.DividendPerShare = perPaymentDividend;
                 schedule.GrossAmount = calculation.GrossAmount;
@@ -116,9 +142,11 @@ public sealed class DividendScheduleService
                 schedule.IsForeignStock = !IsJpy(position.Stock.Currency);
                 schedule.TaxProfileId = profile.Id == 0 ? null : profile.Id;
                 schedule.UpdatedAt = DateTime.Now;
-                schedule.Memo = actualHistory.Count > 0
-                    ? "過去の配当実績から推定した配当予定です。実際の入金額は証券会社CSVを正とします。"
-                    : "年間配当情報から推定した配当予定です。実際の入金額は証券会社CSVを正とします。";
+                schedule.Memo = hasConfirmedCalendar
+                    ? BuildCalendarMemo(calendarEvent!)
+                    : actualHistory.Count > 0
+                        ? "過去の配当実績から推定した配当予定です。実際の入金額は証券会社CSVを正とします。"
+                        : "年間配当情報から推定した配当予定です。実際の入金額は証券会社CSVを正とします。";
 
                 if (schedule.Id == 0)
                 {
@@ -193,18 +221,24 @@ public sealed class DividendScheduleService
     private static IReadOnlyList<int> ResolveDividendMonths(
         StockPosition position,
         IReadOnlyList<DividendPayment> actualHistory,
-        IReadOnlyList<DividendPayment> existing)
+        IReadOnlyList<DividendPayment> existing,
+        IReadOnlyList<DividendCalendarEvent> calendarEvents)
     {
+        var publishedMonths = calendarEvents
+            .Where(x => x.PaymentDate.HasValue)
+            .Select(x => x.PaymentDate!.Value.Month)
+            .Distinct()
+            .ToList();
         var configuredMonths = ParseMonths(position.CurrentHolding.DividendMonths);
         if (configuredMonths.Count > 0)
         {
-            return configuredMonths;
+            return publishedMonths.Concat(configuredMonths).Distinct().Order().ToList();
         }
 
         var frequencyMonths = FrequencyToMonths(position.CurrentHolding.DividendFrequency);
         if (frequencyMonths.Count > 0)
         {
-            return frequencyMonths;
+            return publishedMonths.Concat(frequencyMonths).Distinct().Order().ToList();
         }
 
         var historyMonths = actualHistory
@@ -214,13 +248,14 @@ public sealed class DividendScheduleService
             .ToList();
         if (historyMonths.Count > 0)
         {
-            return historyMonths;
+            return publishedMonths.Concat(historyMonths).Distinct().Order().ToList();
         }
 
-        return existing
+        return publishedMonths.Concat(existing
             .Where(x => x.StockId == position.Stock.Id)
             .Where(IsGeneratedSchedule)
             .Select(x => x.PaymentDate.Month)
+            .Distinct())
             .Distinct()
             .Order()
             .ToList();
@@ -231,8 +266,14 @@ public sealed class DividendScheduleService
         IReadOnlyList<DividendPayment> existing,
         int stockId,
         int year,
-        int month)
+        int month,
+        DividendCalendarEvent? calendarEvent)
     {
+        if (calendarEvent?.PaymentDate is DateTime publishedPaymentDate)
+        {
+            return publishedPaymentDate.Date;
+        }
+
         var sameMonthDay = actualHistory
             .Where(x => x.PaymentDate.Month == month)
             .OrderByDescending(x => x.PaymentDate)
@@ -273,8 +314,14 @@ public sealed class DividendScheduleService
         StockPosition position,
         IReadOnlyList<DividendPayment> reliableActuals,
         int month,
-        int paymentCount)
+        int paymentCount,
+        DividendCalendarEvent? calendarEvent)
     {
+        if (calendarEvent?.AmountPerShare > 0m)
+        {
+            return calendarEvent.AmountPerShare;
+        }
+
         var sameMonthActual = reliableActuals
             .Where(x => x.PaymentDate.Month == month)
             .OrderByDescending(x => x.PaymentDate)
@@ -370,7 +417,27 @@ public sealed class DividendScheduleService
     private static bool IsGeneratedSchedule(DividendPayment payment) =>
         DividendConstants.IsUnconfirmed(payment.DividendStatus) &&
         (string.Equals(payment.Source, DividendConstants.SourceEstimatedFromHistory, StringComparison.OrdinalIgnoreCase) ||
-         string.Equals(payment.Source, DividendConstants.SourceEstimatedFromAnnualDividend, StringComparison.OrdinalIgnoreCase));
+         string.Equals(payment.Source, DividendConstants.SourceEstimatedFromAnnualDividend, StringComparison.OrdinalIgnoreCase) ||
+         (payment.Source ?? string.Empty).StartsWith(DividendConstants.SourcePublicCalendar, StringComparison.OrdinalIgnoreCase));
+
+    private static DividendCalendarEvent? ResolveCalendarEvent(
+        IReadOnlyList<DividendCalendarEvent> events,
+        int year,
+        int month) =>
+        events
+            .Where(x => x.PaymentDate?.Year == year && x.PaymentDate?.Month == month)
+            .OrderByDescending(x => x.IsConfirmed)
+            .ThenByDescending(x => x.AcquiredAt)
+            .FirstOrDefault();
+
+    private static string BuildCalendarMemo(DividendCalendarEvent item)
+    {
+        static string DateText(DateTime? value) => value?.ToString("yyyy/MM/dd") ?? "未公表";
+
+        return $"公開配当カレンダーで確認した日程です。公表日 {DateText(item.DeclarationDate)} / " +
+               $"権利落ち日 {DateText(item.ExDividendDate)} / 基準日 {DateText(item.RecordDate)} / " +
+               $"支払日 {DateText(item.PaymentDate)} / 取得元 {item.Source}。";
+    }
 
     private static TaxProfile ResolveTaxProfile(StockPosition position, IReadOnlyList<TaxProfile> taxProfiles, string accountType)
     {

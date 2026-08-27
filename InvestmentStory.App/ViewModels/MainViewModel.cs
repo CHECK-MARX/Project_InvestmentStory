@@ -34,6 +34,7 @@ public sealed class MainViewModel : ObservableObject
     private string _currentTitle = "ダッシュボード";
     private bool _isSidebarCollapsed;
     private bool _isSampleMode;
+    private bool _startupDividendVerificationStarted;
 
     private static readonly IReadOnlyDictionary<string, (decimal Price, decimal AnnualDividend)> SampleQuotes =
         new Dictionary<string, (decimal Price, decimal AnnualDividend)>(StringComparer.OrdinalIgnoreCase)
@@ -304,7 +305,11 @@ public sealed class MainViewModel : ObservableObject
         PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
         Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
         Simulation.UpdateMutualFundPortfolio(positions, _repository.GetAllBrokerTrades());
-        Simulation.UpdateDividendPortfolio(positions, _repository.GetTaxProfiles(), dividends);
+        Simulation.UpdateDividendPortfolio(
+            positions,
+            _repository.GetTaxProfiles(),
+            dividends,
+            _repository.GetDividendCalendarEvents());
         BrokerIntegration.Update(positions, _repository.GetSettings());
 
         var detailSnapshots = ResolveDetailSnapshots();
@@ -895,6 +900,7 @@ public sealed class MainViewModel : ObservableObject
 
         var settings = BuildLiveMarketDataSettings(_repository.GetSettings());
         var updated = 0;
+        var calendarEventsSaved = 0;
         var failed = 0;
         var latestPriceAt = DateTime.MinValue;
         var sources = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -921,6 +927,10 @@ public sealed class MainViewModel : ObservableObject
                 continue;
             }
 
+            calendarEventsSaved += _repository.SaveDividendCalendarEvents(
+                position.Stock.Id,
+                result.Quote.DividendEvents);
+
             if (ApplyMarketQuote(position, result.Quote))
             {
                 _repository.SavePosition(position);
@@ -941,7 +951,84 @@ public sealed class MainViewModel : ObservableObject
         var errorText = errors.Count == 0 ? string.Empty : $" 失敗例: {string.Join(" / ", errors)}";
         var latestText = latestPriceAt == DateTime.MinValue ? string.Empty : $" 最終株価取得: {latestPriceAt:yyyy/MM/dd HH:mm}";
         var sourceText = sources.Count == 0 ? string.Empty : $" 取得元: {string.Join(", ", sources.Take(3))}";
-        StockList.Message = $"API更新を実行しました。更新 {updated}件、失敗 {failed}件。{latestText}{sourceText}{errorText}";
+        StockList.Message = $"API更新を実行しました。銘柄更新 {updated}件、配当日程 {calendarEventsSaved}件、失敗 {failed}件。{latestText}{sourceText}{errorText}";
+    }
+
+    public async Task VerifyDividendSchedulesOnStartupAsync()
+    {
+        if (_startupDividendVerificationStarted || IsSampleMode)
+        {
+            return;
+        }
+
+        _startupDividendVerificationStarted = true;
+        try
+        {
+            var dividendPayments = _repository.GetDividendPayments();
+            var stocksWithActualDividends = dividendPayments
+                .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
+                .Select(x => x.StockId)
+                .ToHashSet();
+            var positions = _repository.GetPositions()
+                .Where(IsMarketDataRefreshTarget)
+                .Where(x => IsDividendScheduleRefreshTarget(x, stocksWithActualDividends))
+                .ToList();
+            var existingEvents = _repository.GetDividendCalendarEvents();
+            var freshAfter = DateTime.Now.AddHours(-12);
+            var targets = positions
+                .Where(position => !existingEvents.Any(item =>
+                    item.StockId == position.Stock.Id &&
+                    item.AcquiredAt >= freshAfter))
+                .ToList();
+            if (targets.Count == 0)
+            {
+                return;
+            }
+
+            var settings = BuildLiveMarketDataSettings(_repository.GetSettings());
+            var saved = 0;
+            var failed = 0;
+            foreach (var position in targets)
+            {
+                var symbol = ResolveMarketDataSymbol(position);
+                if (string.IsNullOrWhiteSpace(symbol))
+                {
+                    failed++;
+                    continue;
+                }
+
+                var result = await Task.Run(() => _marketDataService.GetQuote(symbol, settings));
+                SaveApiFetchLogs(result.Logs);
+                if (!result.IsSuccess || result.Quote is null)
+                {
+                    failed++;
+                    continue;
+                }
+
+                var eventCount = _repository.SaveDividendCalendarEvents(
+                    position.Stock.Id,
+                    result.Quote.DividendEvents);
+                if (eventCount == 0)
+                {
+                    failed++;
+                    continue;
+                }
+
+                saved += eventCount;
+            }
+
+            if (saved > 0)
+            {
+                PersistDividendSchedules();
+                LoadData();
+            }
+
+            StockList.Message = $"起動時に配当日程を確認しました。保存 {saved}件、未取得 {failed}件。公開済み日程は確定、未公表日程は推定として表示します。";
+        }
+        catch (Exception exception)
+        {
+            StockList.Message = $"起動時の配当日程確認を完了できませんでした。前回保存値を維持します。{exception.Message}";
+        }
     }
 
     private void RefreshSampleMarketData(IReadOnlyList<StockPosition> targets)
@@ -1021,6 +1108,28 @@ public sealed class MainViewModel : ObservableObject
         var ticker = position.Stock.Ticker.Trim();
         return !string.IsNullOrWhiteSpace(ticker) &&
                !ticker.StartsWith("FUND:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDividendScheduleRefreshTarget(
+        StockPosition position,
+        IReadOnlySet<int> stocksWithActualDividends)
+    {
+        if (position.CurrentHolding.AnnualDividendPerShare > 0m ||
+            stocksWithActualDividends.Contains(position.Stock.Id))
+        {
+            return true;
+        }
+
+        var status = position.CurrentHolding.DividendStatus ?? string.Empty;
+        if (status.Contains("配当あり", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var frequency = position.CurrentHolding.DividendFrequency ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(frequency) &&
+               !frequency.Contains("なし", StringComparison.Ordinal) &&
+               !frequency.Contains("未入力", StringComparison.Ordinal);
     }
 
     private static string ResolveMarketDataSymbol(StockPosition position)
@@ -1114,11 +1223,18 @@ public sealed class MainViewModel : ObservableObject
 
     private void UpdateDividendSchedules()
     {
+        PersistDividendSchedules();
+        LoadData();
+    }
+
+    private void PersistDividendSchedules()
+    {
         var result = _dividendScheduleService.BuildSchedules(
             _repository.GetPositions(),
             _repository.GetDividendPayments(),
             _repository.GetTaxProfiles(),
-            DateTime.Today);
+            DateTime.Today,
+            _repository.GetDividendCalendarEvents());
 
         foreach (var schedule in result.Schedules)
         {
@@ -1130,7 +1246,6 @@ public sealed class MainViewModel : ObservableObject
             _repository.DeleteDividendPayment(obsoleteScheduleId);
         }
 
-        LoadData();
     }
 
     private void SaveGoal(IncomeGoal goal)

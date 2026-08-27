@@ -198,11 +198,28 @@ public sealed class DividendChartInteractionTests
                 {
                     Ticker = "TEST",
                     Name = "Test Security",
+                    Month = 1,
+                    PaymentDate = new DateTime(2026, 1, 20),
+                    CurrentNetDividendJpy = 1_000m,
+                    IsPaid = true,
+                    EligibilityStatus = DividendPlanEligibility.Eligible,
+                    DataQuality = DividendPlanDataQuality.Acquired,
+                    Source = "Broker CSV"
+                },
+                new DividendPurchasePlanEvent
+                {
+                    Ticker = "TEST",
+                    Name = "Test Security",
                     Month = 3,
+                    DeclarationDate = new DateTime(2026, 2, 1),
+                    LastRightsDate = new DateTime(2026, 2, 26),
+                    ExDividendDate = new DateTime(2026, 2, 27),
+                    RecordDate = new DateTime(2026, 3, 2),
                     PaymentDate = new DateTime(2026, 3, 20),
                     CurrentNetDividendJpy = 1_000m,
                     EligibilityStatus = DividendPlanEligibility.Eligible,
-                    DataQuality = DividendPlanDataQuality.Acquired
+                    DataQuality = DividendPlanDataQuality.Acquired,
+                    Source = "Public dividend calendar"
                 },
                 new DividendPurchasePlanEvent
                 {
@@ -212,13 +229,36 @@ public sealed class DividendChartInteractionTests
                     PaymentDate = new DateTime(2026, 6, 20),
                     CurrentNetDividendJpy = 1_000m,
                     EligibilityStatus = DividendPlanEligibility.Estimated,
-                    DataQuality = DividendPlanDataQuality.Estimated
+                    DataQuality = DividendPlanDataQuality.Estimated,
+                    Source = "Historical estimate"
+                },
+                new DividendPurchasePlanEvent
+                {
+                    Ticker = "TEST",
+                    Name = "Test Security",
+                    Month = 9,
+                    PaymentDate = new DateTime(2026, 9, 20),
+                    CurrentNetDividendJpy = 1_000m,
+                    IsOverdueUnmatched = true,
+                    EligibilityStatus = DividendPlanEligibility.Eligible,
+                    DataQuality = DividendPlanDataQuality.Acquired,
+                    Source = "Public dividend calendar"
                 }
             });
 
+        Assert.Equal(DividendScheduleStatus.Paid, row.ScheduleStatuses[0]);
         Assert.Equal(DividendScheduleStatus.Expected, row.ScheduleStatuses[2]);
         Assert.Equal(DividendScheduleStatus.Estimated, row.ScheduleStatuses[5]);
-        Assert.Null(row.ScheduleStatuses[0]);
+        Assert.Equal(DividendScheduleStatus.OverdueUnmatched, row.ScheduleStatuses[8]);
+        Assert.Null(row.ScheduleStatuses[1]);
+
+        var tooltip = row.ToolTipForMonth(3);
+        Assert.Contains("配当公表日 2026/02/01", tooltip);
+        Assert.Contains("権利付き最終日 2026/02/26", tooltip);
+        Assert.Contains("権利落ち日 2026/02/27", tooltip);
+        Assert.Contains("基準日 2026/03/02", tooltip);
+        Assert.Contains("支払日 2026/03/20", tooltip);
+        Assert.Contains("Public dividend calendar", tooltip);
     }
 
     [Fact]

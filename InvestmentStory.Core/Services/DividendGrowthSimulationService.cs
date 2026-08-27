@@ -11,13 +11,22 @@ public sealed class DividendGrowthSimulationService
 
     public IReadOnlyList<DividendGrowthPlanItem> CreateDefaultPlanItems(
         IEnumerable<StockPosition> positions,
-        string displayMode)
+        string displayMode,
+        IReadOnlyList<DividendCalendarEvent>? dividendEvents = null)
     {
         ArgumentNullException.ThrowIfNull(positions);
+        dividendEvents ??= Array.Empty<DividendCalendarEvent>();
+        var eventsByStock = dividendEvents
+            .GroupBy(item => item.StockId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<DividendCalendarEvent>)group.ToList());
 
         var items = positions
             .Where(position => !position.IsMutualFund && position.CurrentHolding.CurrentShares > 0m)
-            .Select(CreatePlanItem)
+            .Select(position => CreatePlanItem(
+                position,
+                eventsByStock.TryGetValue(position.Stock.Id, out var events)
+                    ? events
+                    : Array.Empty<DividendCalendarEvent>()))
             .Where(item => !string.IsNullOrWhiteSpace(item.PlanKey))
             .Where(IsCurrentDividendItem)
             .ToList();
@@ -102,7 +111,9 @@ public sealed class DividendGrowthSimulationService
         };
     }
 
-    private static DividendGrowthPlanItem CreatePlanItem(StockPosition position)
+    private static DividendGrowthPlanItem CreatePlanItem(
+        StockPosition position,
+        IReadOnlyList<DividendCalendarEvent> dividendEvents)
     {
         var stock = position.Stock;
         var holding = position.CurrentHolding;
@@ -140,7 +151,10 @@ public sealed class DividendGrowthSimulationService
                                     (NormalizeCurrency(stock.Currency) == "JPY" ? 1m : Math.Max(1m, exchangeRate)),
             DividendFrequency = holding.DividendFrequency,
             DividendMonths = holding.DividendMonths,
+            DividendEvents = dividendEvents,
             AnnualDividendSource = ResolveDividendSource(holding),
+            MarketDataSource = holding.CurrentPriceSource,
+            MarketDataAcquiredAt = holding.CurrentPriceAcquiredAt,
             PlannedAdditionalShares = 0m,
             PlannedBroker = stock.Broker,
             PlannedAccountType = accountType,
@@ -182,6 +196,12 @@ public sealed class DividendGrowthSimulationService
             DividendRecordDate = items.Select(item => item.DividendRecordDate).FirstOrDefault(value => value is not null),
             ExDividendDate = items.Select(item => item.ExDividendDate).FirstOrDefault(value => value is not null),
             DividendPaymentDate = items.Select(item => item.DividendPaymentDate).FirstOrDefault(value => value is not null),
+            DividendEvents = items
+                .SelectMany(item => item.DividendEvents)
+                .GroupBy(item => item.EventKey, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(item => item.AcquiredAt).First())
+                .OrderBy(item => item.PaymentDate ?? item.ExDividendDate ?? item.RecordDate ?? item.DeclarationDate)
+                .ToList(),
             AnnualDividendSource = items.Any(item => item.AnnualDividendPerShare > 0m)
                 ? FirstNonBlank(items.Select(item => item.AnnualDividendSource).ToArray())
                 : "配当情報未取得",

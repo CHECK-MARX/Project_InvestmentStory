@@ -28,6 +28,7 @@ public sealed class SimulationViewModel : ObservableObject
     private IReadOnlyList<BrokerTrade> _brokerTrades = Array.Empty<BrokerTrade>();
     private IReadOnlyList<TaxProfile> _taxProfiles = Array.Empty<TaxProfile>();
     private IReadOnlyList<DividendPayment> _dividendPayments = Array.Empty<DividendPayment>();
+    private IReadOnlyList<DividendCalendarEvent> _dividendCalendarEvents = Array.Empty<DividendCalendarEvent>();
     private SimulationScopeOptionViewModel? _selectedScope;
     private bool _suppressDividendAutoUpdates;
     private decimal _currentAnnualPassiveIncome;
@@ -981,11 +982,13 @@ public sealed class SimulationViewModel : ObservableObject
     public void UpdateDividendPortfolio(
         IReadOnlyList<StockPosition> positions,
         IReadOnlyList<TaxProfile> taxProfiles,
-        IReadOnlyList<DividendPayment>? dividendPayments = null)
+        IReadOnlyList<DividendPayment>? dividendPayments = null,
+        IReadOnlyList<DividendCalendarEvent>? dividendCalendarEvents = null)
     {
         _positions = positions;
         _taxProfiles = taxProfiles;
         _dividendPayments = dividendPayments ?? Array.Empty<DividendPayment>();
+        _dividendCalendarEvents = dividendCalendarEvents ?? Array.Empty<DividendCalendarEvent>();
         RebuildDividendPlanRows();
         RunPassiveIncomeSimulation(saveSettings: false);
     }
@@ -1164,7 +1167,8 @@ public sealed class SimulationViewModel : ObservableObject
                 DividendPurchasePlanDisplayUnits.Broker => DividendGrowthDisplayModes.AggregateByBroker,
                 DividendPurchasePlanDisplayUnits.Account => DividendGrowthDisplayModes.AggregateByAccount,
                 _ => DividendGrowthDisplayModes.AggregateBySecurity
-            });
+            },
+            _dividendCalendarEvents);
 
         DividendSimulationRows.Clear();
         foreach (var item in defaultRows)
@@ -3706,29 +3710,27 @@ public sealed class DividendPlanStockMonthlyRowViewModel
     {
         if (status is null) return "予定なし";
         var monthEvents = Events.Where(x => x.Month == month).OrderBy(x => x.PaymentDate).ToList();
-        var statusName = status switch
-        {
-            DividendScheduleStatus.Paid => "入金済み",
-            DividendScheduleStatus.Expected => "入金予定",
-            DividendScheduleStatus.Estimated => "推定",
-            DividendScheduleStatus.MissedEligibility => "権利取得不可",
-            DividendScheduleStatus.NotAvailable => "未取得",
-            DividendScheduleStatus.OverdueUnmatched => "期限超過・未照合",
-            _ => status.ToString()
-        };
-        var details = monthEvents.Select(x =>
-            $"{x.PaymentDate:yyyy/MM/dd} {x.Broker}/{x.AccountType} {x.DataQuality} {x.Source}");
-        return $"状態 {statusName}\n{string.Join("\n", details)}";
+        var details = monthEvents.Select(FormatEventDetails);
+        return $"代表状態 {DividendScheduleDisplay.Status(status.Value)}\n{string.Join("\n\n", details)}";
     }
 
     private static DividendScheduleStatus? ResolveStatus(IReadOnlyList<DividendPurchasePlanEvent> events)
     {
         if (events.Count == 0) return null;
-        if (events.Any(x => x.ScheduleStatus == DividendScheduleStatus.NotAvailable)) return DividendScheduleStatus.NotAvailable;
-        if (events.Any(x => x.ScheduleStatus == DividendScheduleStatus.MissedEligibility)) return DividendScheduleStatus.MissedEligibility;
-        if (events.Any(x => x.ScheduleStatus == DividendScheduleStatus.Estimated)) return DividendScheduleStatus.Estimated;
-        return DividendScheduleStatus.Expected;
+        return events
+            .Select(x => x.ScheduleStatus)
+            .OrderByDescending(DividendScheduleDisplay.Priority)
+            .First();
     }
+
+    private static string FormatEventDetails(DividendPurchasePlanEvent item) =>
+        $"{DividendScheduleDisplay.Status(item.ScheduleStatus)} / {item.Broker}/{item.AccountType}\n" +
+        $"配当公表日 {DividendScheduleDisplay.Date(item.DeclarationDate)} / " +
+        $"権利付き最終日 {DividendScheduleDisplay.Date(item.LastRightsDate)}\n" +
+        $"権利落ち日 {DividendScheduleDisplay.Date(item.ExDividendDate)} / " +
+        $"基準日 {DividendScheduleDisplay.Date(item.RecordDate)} / " +
+        $"支払日 {DividendScheduleDisplay.Date(item.PaymentDate)}\n" +
+        $"取得元 {item.Source} / 品質 {item.DataQuality}";
 }
 
 public sealed class DividendCalendarMonthViewModel
@@ -3752,13 +3754,8 @@ public sealed class DividendCalendarMonthViewModel
     public string ToolTipText { get; }
     public IReadOnlyList<DividendCalendarEventViewModel> Events { get; }
 
-    private static string Status(DividendPurchasePlanEvent item) => item.EligibilityStatus switch
-    {
-        DividendPlanEligibility.Eligible => "確定",
-        DividendPlanEligibility.Estimated => "見込み",
-        DividendPlanEligibility.Ineligible => "間に合わない",
-        _ => "未取得"
-    };
+    private static string Status(DividendPurchasePlanEvent item) =>
+        DividendScheduleDisplay.Status(item.ScheduleStatus);
 }
 
 public sealed class DividendCalendarEventViewModel
@@ -3773,10 +3770,16 @@ public sealed class DividendCalendarEventViewModel
         AdditionalDividend = Formatters.SignedJpy(item.AdditionalNetDividendJpy);
         PlannedDividend = Formatters.Jpy(item.CurrentNetDividendJpy + item.AdditionalNetDividendJpy);
         MissedDividend = Formatters.Jpy(item.MissedNetDividendJpy);
-        StatusDisplay = Status(item);
+        StatusDisplay = DividendScheduleDisplay.Status(item.ScheduleStatus);
         DataSource = item.Source;
-        DisplayText = $"{item.PaymentDate:MM/dd} {item.Ticker} {Status(item)} {Formatters.Jpy(item.CurrentNetDividendJpy + item.AdditionalNetDividendJpy)}";
-        ToolTipText = $"{item.Name}\n支払予定日 {item.PaymentDate:yyyy/MM/dd}\n権利付き最終日 {item.LastRightsDate:yyyy/MM/dd}\n{Status(item)} / {item.Source}";
+        DisplayText = $"{item.PaymentDate:MM/dd} {item.Ticker} {StatusDisplay} {Formatters.Jpy(item.CurrentNetDividendJpy + item.AdditionalNetDividendJpy)}";
+        ToolTipText = $"{item.Name}\n状態 {StatusDisplay}\n" +
+                      $"配当公表日 {DividendScheduleDisplay.Date(item.DeclarationDate)}\n" +
+                      $"権利付き最終日 {DividendScheduleDisplay.Date(item.LastRightsDate)}\n" +
+                      $"権利落ち日 {DividendScheduleDisplay.Date(item.ExDividendDate)}\n" +
+                      $"基準日 {DividendScheduleDisplay.Date(item.RecordDate)}\n" +
+                      $"支払日 {DividendScheduleDisplay.Date(item.PaymentDate)}\n" +
+                      $"取得元 {item.Source} / 品質 {item.DataQuality}";
     }
 
     public int StockId { get; }
@@ -3792,13 +3795,35 @@ public sealed class DividendCalendarEventViewModel
     public string DisplayText { get; }
     public string ToolTipText { get; }
 
-    private static string Status(DividendPurchasePlanEvent item) => item.EligibilityStatus switch
+}
+
+internal static class DividendScheduleDisplay
+{
+    public static int Priority(DividendScheduleStatus status) => status switch
     {
-        DividendPlanEligibility.Eligible => "受取確定",
-        DividendPlanEligibility.Estimated => "受取見込み",
-        DividendPlanEligibility.Ineligible => "購入が間に合わない",
-        _ => "情報未取得"
+        DividendScheduleStatus.Paid => 60,
+        DividendScheduleStatus.Expected => 50,
+        DividendScheduleStatus.Estimated => 40,
+        DividendScheduleStatus.OverdueUnmatched => 30,
+        DividendScheduleStatus.MissedEligibility => 20,
+        DividendScheduleStatus.NotAvailable => 10,
+        _ => 0
     };
+
+    public static string Status(DividendScheduleStatus status) => status switch
+    {
+        DividendScheduleStatus.Paid => "入金済み",
+        DividendScheduleStatus.Expected => "入金予定",
+        DividendScheduleStatus.Estimated => "推定",
+        DividendScheduleStatus.MissedEligibility => "権利取得不可",
+        DividendScheduleStatus.NotAvailable => "未取得",
+        DividendScheduleStatus.OverdueUnmatched => "期限超過・未照合",
+        _ => status.ToString()
+    };
+
+    public static string Date(DateTime? value) => value?.ToString("yyyy/MM/dd") ?? "未取得";
+
+    public static string Date(DateTime value) => value == default ? "未取得" : value.ToString("yyyy/MM/dd");
 }
 
 public sealed class DividendProjectionRowViewModel

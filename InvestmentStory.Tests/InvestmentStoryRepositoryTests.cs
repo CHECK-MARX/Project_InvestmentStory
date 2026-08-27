@@ -85,6 +85,69 @@ public sealed class InvestmentStoryRepositoryTests
     }
 
     [Fact]
+    public void SaveDividendCalendarEvents_RoundTripsDatesAndDoesNotDowngradeConfirmedData()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_dividend_calendar_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+            var stockId = repository.GetPositions().First().Stock.Id;
+            const string eventKey = "2026-02-27|1.25|USD";
+
+            var saved = repository.SaveDividendCalendarEvents(stockId, new[]
+            {
+                new DividendCalendarEvent
+                {
+                    EventKey = eventKey,
+                    DeclarationDate = new DateTime(2026, 2, 1),
+                    ExDividendDate = new DateTime(2026, 2, 27),
+                    RecordDate = new DateTime(2026, 3, 2),
+                    PaymentDate = new DateTime(2026, 3, 20),
+                    AmountPerShare = 1.25m,
+                    Currency = "USD",
+                    Source = "Nasdaq",
+                    DataQuality = DividendPlanDataQuality.Acquired,
+                    AcquiredAt = new DateTime(2026, 2, 2, 12, 30, 0),
+                    IsConfirmed = true
+                }
+            });
+
+            repository.SaveDividendCalendarEvents(stockId, new[]
+            {
+                new DividendCalendarEvent
+                {
+                    EventKey = eventKey,
+                    PaymentDate = new DateTime(2026, 3, 20),
+                    AmountPerShare = 1.25m,
+                    Currency = "USD",
+                    Source = "Historical estimate",
+                    DataQuality = DividendPlanDataQuality.Estimated,
+                    AcquiredAt = new DateTime(2026, 2, 3, 8, 0, 0),
+                    IsConfirmed = false
+                }
+            });
+
+            var item = Assert.Single(repository.GetDividendCalendarEvents(), x => x.StockId == stockId);
+            Assert.Equal(1, saved);
+            Assert.Equal(new DateTime(2026, 2, 1), item.DeclarationDate);
+            Assert.Equal(new DateTime(2026, 2, 27), item.ExDividendDate);
+            Assert.Equal(new DateTime(2026, 3, 2), item.RecordDate);
+            Assert.Equal(new DateTime(2026, 3, 20), item.PaymentDate);
+            Assert.Equal(1.25m, item.AmountPerShare);
+            Assert.Equal(DividendPlanDataQuality.Acquired, item.DataQuality);
+            Assert.True(item.IsConfirmed);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
     public void SavePosition_PersistsMutualFundHolding()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_fund_{Guid.NewGuid():N}.db");

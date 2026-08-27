@@ -11,7 +11,17 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = new MainViewModel();
+        Loaded += OnLoaded;
         Closing += OnClosing;
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= OnLoaded;
+        if (DataContext is MainViewModel mainViewModel)
+        {
+            await mainViewModel.VerifyDividendSchedulesOnStartupAsync();
+        }
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)

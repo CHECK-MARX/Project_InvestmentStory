@@ -19,8 +19,8 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         Assert.Equal(5_760m, holding.NextYearAdditionalNetDividendJpy);
         Assert.Equal(17_280m, holding.PostAddNextYearNetDividendJpy);
         Assert.Equal(14_400m, holding.TargetYearPlannedNetDividendJpy);
-        Assert.Equal(DividendPlanDataQuality.Acquired, holding.DataQuality);
-        Assert.Equal(DividendPlanEligibility.Eligible, holding.EligibilityStatus);
+        Assert.Equal(DividendPlanDataQuality.Estimated, holding.DataQuality);
+        Assert.Equal(DividendPlanEligibility.Estimated, holding.EligibilityStatus);
 
         Assert.Equal(1_440m, result.Months[8].ExistingAdditionalNetDividendJpy);
         Assert.Equal(1_440m, result.Months[11].ExistingAdditionalNetDividendJpy);
@@ -179,6 +179,39 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         Assert.Equal(4, result.Months.SelectMany(month => month.Events).Count(item => item.AdditionalNetDividendJpy > 0m));
     }
 
+    [Fact]
+    public void PublishedTargetYearCalendar_IsReportedAsAcquiredAndKeepsExactDates()
+    {
+        var calendar = new[] { 3, 6, 9, 12 }
+            .Select(month => new DividendCalendarEvent
+            {
+                EventKey = $"2026-{month:00}-01|1|USD",
+                DeclarationDate = new DateTime(2026, month, 1).AddDays(-35),
+                ExDividendDate = new DateTime(2026, month, 1),
+                RecordDate = new DateTime(2026, month, 2),
+                PaymentDate = new DateTime(2026, month, 20),
+                AmountPerShare = 1m,
+                Currency = "USD",
+                Source = "Nasdaq",
+                DataQuality = DividendPlanDataQuality.Acquired,
+                AcquiredAt = new DateTime(2026, 1, 1),
+                IsConfirmed = true
+            })
+            .ToList();
+        var item = CreateUsNisaItem(plannedShares: 10m, dividendEvents: calendar);
+
+        var result = Simulate(item, new DateTime(2026, 7, 14), Array.Empty<DividendPayment>());
+
+        var holding = Assert.Single(result.Holdings);
+        Assert.Equal(DividendPlanDataQuality.Acquired, holding.DataQuality);
+        Assert.Equal(DividendPlanEligibility.Eligible, holding.EligibilityStatus);
+        var september = Assert.Single(result.Months[8].Events);
+        Assert.Equal(new DateTime(2026, 9, 1), september.ExDividendDate);
+        Assert.Equal(new DateTime(2026, 9, 2), september.RecordDate);
+        Assert.Equal(new DateTime(2026, 9, 20), september.PaymentDate);
+        Assert.Equal("Nasdaq", september.Source);
+    }
+
     private DividendPurchasePlanResult Simulate(
         DividendGrowthPlanItem item,
         DateTime purchaseDate,
@@ -197,7 +230,8 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         decimal plannedShares,
         string frequency = "4",
         string months = "3,6,9,12",
-        bool isNewStock = false) => new()
+        bool isNewStock = false,
+        IReadOnlyList<DividendCalendarEvent>? dividendEvents = null) => new()
     {
         StockId = 77,
         PlanKey = isNewStock ? "New:TRMD" : "TRMD|SBI|NisaGrowth",
@@ -217,6 +251,7 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         CurrentMarketValueJpy = isNewStock ? 0m : 320_000m,
         DividendFrequency = frequency,
         DividendMonths = months,
+        DividendEvents = dividendEvents ?? Array.Empty<DividendCalendarEvent>(),
         PlannedAdditionalShares = plannedShares,
         PlannedBroker = "SBI",
         PlannedAccountType = AccountTypes.NisaGrowth,

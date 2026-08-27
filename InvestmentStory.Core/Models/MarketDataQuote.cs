@@ -18,6 +18,7 @@ public sealed class MarketDataQuote
     public DateTime? ExDividendDate { get; set; }
     public DateTime? DividendPaymentStartDate { get; set; }
     public string DividendInfoSource { get; set; } = string.Empty;
+    public IReadOnlyList<DividendCalendarEvent> DividendEvents { get; set; } = Array.Empty<DividendCalendarEvent>();
     public decimal? UsdJpyRate { get; set; }
     public DateTime? ExchangeRateAcquiredAt { get; set; }
     public string Source { get; set; } = string.Empty;

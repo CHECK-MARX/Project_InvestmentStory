@@ -48,6 +48,7 @@ public sealed class DividendGrowthPlanItem
     public DateTime? DividendRecordDate { get; init; }
     public DateTime? ExDividendDate { get; init; }
     public DateTime? DividendPaymentDate { get; init; }
+    public IReadOnlyList<DividendCalendarEvent> DividendEvents { get; init; } = Array.Empty<DividendCalendarEvent>();
     public string AnnualDividendSource { get; init; } = string.Empty;
     public string MarketDataSource { get; init; } = string.Empty;
     public DateTime? MarketDataAcquiredAt { get; init; }

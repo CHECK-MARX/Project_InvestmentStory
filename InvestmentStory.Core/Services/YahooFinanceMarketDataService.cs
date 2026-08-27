@@ -1,4 +1,5 @@
 using System.Net;
+using System.Globalization;
 using System.Text.Json;
 using InvestmentStory.Core.Models;
 
@@ -55,6 +56,7 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
             }
 
             ApplyDividendEvents(httpClient, resolvedSymbol, quote, logs);
+            ApplyNasdaqDividendCalendar(httpClient, resolvedSymbol, quote, logs);
 
             if (quote.Currency == "USD")
             {
@@ -246,6 +248,7 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
         decimal total = 0m;
         var paymentCount = 0;
         DateTime? latestDate = null;
+        var calendarEvents = new List<DividendCalendarEvent>();
         foreach (var dividend in dividends.EnumerateObject())
         {
             if (!dividend.Value.TryGetProperty("amount", out var amountProperty) ||
@@ -261,15 +264,181 @@ public sealed class YahooFinanceMarketDataService : IMarketDataService
                 dateProperty.ValueKind == JsonValueKind.Number &&
                 dateProperty.TryGetInt64(out var unixTime))
             {
-                var date = DateTimeOffset.FromUnixTimeSeconds(unixTime).LocalDateTime;
+                // Yahoo chart dividend event timestamps represent ex-dividend dates.
+                var date = DateTimeOffset.FromUnixTimeSeconds(unixTime).LocalDateTime.Date;
                 latestDate = latestDate is null || date > latestDate.Value ? date : latestDate;
+                calendarEvents.Add(new DividendCalendarEvent
+                {
+                    EventKey = DividendCalendarEvent.CreateEventKey(null, date, null, null, amount, quote.Currency),
+                    ExDividendDate = date,
+                    AmountPerShare = amount,
+                    Currency = quote.Currency,
+                    Source = ProviderName,
+                    DataQuality = DividendPlanDataQuality.Acquired,
+                    AcquiredAt = DateTime.Now,
+                    IsConfirmed = true
+                });
             }
         }
 
         quote.AnnualDividendPerShare = total;
         quote.DividendFrequency = paymentCount > 0 ? $"年{paymentCount}回" : "なし";
         quote.DividendInfoSource = ProviderName;
-        quote.DividendRecordDate = latestDate;
+        quote.ExDividendDate = latestDate;
+        quote.DividendEvents = MergeDividendEvents(quote.DividendEvents, calendarEvents);
+    }
+
+    private static void ApplyNasdaqDividendCalendar(
+        HttpClient httpClient,
+        string symbol,
+        MarketDataQuote quote,
+        List<ApiFetchLogEntry> logs)
+    {
+        if (LooksLikeJapaneseTicker(symbol) || symbol.Contains('^') || symbol.Contains('='))
+        {
+            return;
+        }
+
+        var displaySymbol = NormalizeTickerForApp(symbol).ToUpperInvariant();
+        var url = $"https://api.nasdaq.com/api/quote/{Uri.EscapeDataString(displaySymbol)}/dividends?assetclass=stocks";
+        try
+        {
+            using var response = httpClient.GetAsync(url).GetAwaiter().GetResult();
+            var content = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (!response.IsSuccessStatusCode)
+            {
+                logs.Add(CreateLog("NasdaqDividendCalendar", displaySymbol, response.StatusCode, false, content, string.Empty));
+                return;
+            }
+
+            using var document = JsonDocument.Parse(content);
+            if (!document.RootElement.TryGetProperty("data", out var data) ||
+                data.ValueKind != JsonValueKind.Object ||
+                !data.TryGetProperty("dividends", out var dividendData) ||
+                dividendData.ValueKind != JsonValueKind.Object ||
+                !dividendData.TryGetProperty("rows", out var rows) ||
+                rows.ValueKind != JsonValueKind.Array)
+            {
+                logs.Add(CreateLog("NasdaqDividendCalendar", displaySymbol, response.StatusCode, false,
+                    "Dividend calendar rows were not available.", "rows=0"));
+                return;
+            }
+
+            var acquiredAt = DateTime.Now;
+            var exactEvents = new List<DividendCalendarEvent>();
+            foreach (var row in rows.EnumerateArray())
+            {
+                var declarationDate = ParseMarketDate(GetString(row, "declarationDate"));
+                var exDividendDate = ParseMarketDate(GetString(row, "exOrEffDate"));
+                var recordDate = ParseMarketDate(GetString(row, "recordDate"));
+                var paymentDate = ParseMarketDate(GetString(row, "paymentDate"));
+                var amount = ParseMoney(GetString(row, "amount"));
+                var currency = FirstNonEmpty(GetString(row, "currency"), quote.Currency).ToUpperInvariant();
+                if (declarationDate is null && exDividendDate is null && recordDate is null && paymentDate is null)
+                {
+                    continue;
+                }
+
+                exactEvents.Add(new DividendCalendarEvent
+                {
+                    EventKey = DividendCalendarEvent.CreateEventKey(
+                        declarationDate, exDividendDate, recordDate, paymentDate, amount, currency),
+                    DeclarationDate = declarationDate,
+                    ExDividendDate = exDividendDate,
+                    RecordDate = recordDate,
+                    PaymentDate = paymentDate,
+                    AmountPerShare = amount,
+                    Currency = currency,
+                    Source = "Nasdaq",
+                    DataQuality = DividendPlanDataQuality.Acquired,
+                    AcquiredAt = acquiredAt,
+                    IsConfirmed = true
+                });
+            }
+
+            quote.DividendEvents = MergeDividendEvents(quote.DividendEvents, exactEvents);
+            var latest = exactEvents
+                .OrderByDescending(item => item.ExDividendDate ?? item.RecordDate ?? item.PaymentDate ?? item.DeclarationDate)
+                .FirstOrDefault();
+            if (latest is not null)
+            {
+                quote.DividendRecordDate = latest.RecordDate;
+                quote.ExDividendDate = latest.ExDividendDate;
+                quote.DividendPaymentStartDate = latest.PaymentDate;
+                quote.DividendInfoSource = FirstNonEmpty(quote.DividendInfoSource, "Nasdaq");
+            }
+
+            logs.Add(CreateLog("NasdaqDividendCalendar", displaySymbol, response.StatusCode, true, string.Empty,
+                $"rows={exactEvents.Count}"));
+        }
+        catch (Exception ex)
+        {
+            // This endpoint is a supplementary source. Quote acquisition must remain usable when unsupported.
+            logs.Add(CreateLog("NasdaqDividendCalendar", displaySymbol, null, false, ex.Message, string.Empty));
+        }
+    }
+
+    private static IReadOnlyList<DividendCalendarEvent> MergeDividendEvents(
+        IEnumerable<DividendCalendarEvent> existing,
+        IEnumerable<DividendCalendarEvent> incoming)
+    {
+        var merged = existing.Concat(incoming).ToList();
+        return merged
+            .GroupBy(item => new
+            {
+                Date = item.ExDividendDate ?? item.RecordDate ?? item.PaymentDate ?? item.DeclarationDate,
+                Amount = decimal.Round(item.AmountPerShare, 8),
+                Currency = item.Currency.ToUpperInvariant()
+            })
+            .Select(group =>
+            {
+                var preferred = group.OrderByDescending(item => item.Source.Equals("Nasdaq", StringComparison.OrdinalIgnoreCase)).First();
+                return new DividendCalendarEvent
+                {
+                    EventKey = DividendCalendarEvent.CreateEventKey(
+                        group.Select(item => item.DeclarationDate).FirstOrDefault(value => value.HasValue),
+                        group.Select(item => item.ExDividendDate).FirstOrDefault(value => value.HasValue),
+                        group.Select(item => item.RecordDate).FirstOrDefault(value => value.HasValue),
+                        group.Select(item => item.PaymentDate).FirstOrDefault(value => value.HasValue),
+                        preferred.AmountPerShare,
+                        preferred.Currency),
+                    DeclarationDate = group.Select(item => item.DeclarationDate).FirstOrDefault(value => value.HasValue),
+                    ExDividendDate = group.Select(item => item.ExDividendDate).FirstOrDefault(value => value.HasValue),
+                    RecordDate = group.Select(item => item.RecordDate).FirstOrDefault(value => value.HasValue),
+                    PaymentDate = group.Select(item => item.PaymentDate).FirstOrDefault(value => value.HasValue),
+                    AmountPerShare = preferred.AmountPerShare,
+                    Currency = preferred.Currency,
+                    Source = string.Join(" + ", group.Select(item => item.Source).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct()),
+                    DataQuality = preferred.DataQuality,
+                    AcquiredAt = group.Max(item => item.AcquiredAt),
+                    IsConfirmed = group.Any(item => item.IsConfirmed)
+                };
+            })
+            .OrderBy(item => item.PaymentDate ?? item.ExDividendDate ?? item.RecordDate ?? item.DeclarationDate)
+            .ToList();
+    }
+
+    private static DateTime? ParseMarketDate(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Equals("N/A", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return DateTime.TryParse(value, CultureInfo.GetCultureInfo("en-US"), DateTimeStyles.AllowWhiteSpaces, out var date)
+            ? date.Date
+            : null;
+    }
+
+    private static decimal ParseMoney(string value)
+    {
+        var normalized = new string((value ?? string.Empty)
+            .Where(character => char.IsDigit(character) || character is '.' or '-' or '+')
+            .ToArray());
+        return decimal.TryParse(normalized, NumberStyles.Number | NumberStyles.AllowLeadingSign,
+            CultureInfo.InvariantCulture, out var amount)
+            ? amount
+            : 0m;
     }
 
     private static string ResolveSymbol(string query)

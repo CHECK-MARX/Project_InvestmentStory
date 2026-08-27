@@ -16,6 +16,7 @@ public static class DividendConstants
     public const string SourceApi = "Api";
     public const string SourceEstimatedFromHistory = "EstimatedFromHistory";
     public const string SourceEstimatedFromAnnualDividend = "EstimatedFromAnnualDividend";
+    public const string SourcePublicCalendar = "PublicDividendCalendar";
     public const string SourceImportedFromBroker = "ImportedFromBroker";
 
     public const string AccountNisa = AccountTypes.NisaGrowth;
