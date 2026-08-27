@@ -1,4 +1,5 @@
 using InvestmentStory.Data;
+using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 
 var flags = args.Where(x => x.StartsWith("--", StringComparison.Ordinal)).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -6,6 +7,8 @@ var shouldMigrate = flags.Contains("--migrate");
 var shouldPrintTradeSummary = flags.Contains("--trade-summary");
 var shouldRefreshDividendSchedules = flags.Contains("--refresh-dividend-schedules");
 var shouldPrintDividendSchedules = flags.Contains("--dividend-schedules");
+var shouldPrintDividendPayments = flags.Contains("--dividend-payments");
+var shouldPrintDividendPlan = flags.Contains("--dividend-plan");
 var databasePath = args.FirstOrDefault(x => !x.StartsWith("--", StringComparison.Ordinal));
 databasePath = string.IsNullOrWhiteSpace(databasePath) ? null : databasePath;
 
@@ -98,4 +101,85 @@ if (shouldPrintDividendSchedules)
         Console.WriteLine(
             $"DividendSchedule={payment.PaymentDate:yyyy-MM-dd}|{payment.Ticker}|{payment.StockName}|{payment.Broker}|Qty={payment.Quantity:0.####}|PerShare={payment.DividendPerShare:0.####} {payment.Currency}|Gross={payment.GrossAmount:0.####} {payment.Currency}|NetJpy={payment.NetAmountJpy:0}|Status={payment.DividendStatus}|Source={payment.Source}");
     }
+}
+
+if (shouldPrintDividendPayments)
+{
+    var repository = new InvestmentStoryRepository(databasePath ?? DatabasePaths.GetDefaultDatabasePath());
+    var targetYear = DateTime.Today.Year;
+    var payments = repository.GetDividendPayments()
+        .Where(x => x.PaymentDate.Year == targetYear && !DividendConstants.IsUnconfirmed(x.DividendStatus))
+        .OrderBy(x => x.PaymentDate)
+        .ThenBy(x => x.Ticker)
+        .ThenBy(x => x.Broker)
+        .ThenBy(x => x.AccountType)
+        .ToList();
+
+    foreach (var payment in payments)
+    {
+        Console.WriteLine(
+            $"DividendPayment=Id:{payment.Id}|StockId:{payment.StockId}|{payment.PaymentDate:yyyy-MM-dd}|{payment.Ticker}|{payment.Broker}|{payment.AccountType}|Qty={payment.Quantity:0.####}|PerShare={payment.DividendPerShare:0.####} {payment.Currency}|Gross={payment.GrossAmount:0.####}|Net={payment.NetAmount:0.####}|Rate={payment.ExchangeRate:0.####}|GrossJpy={payment.GrossAmountJpy:0}|NetJpy={ResolveNetJpy(payment):0}|Status={payment.DividendStatus}|Source={payment.Source}");
+    }
+
+    foreach (var month in Enumerable.Range(1, 12))
+    {
+        Console.WriteLine($"DividendPaymentMonth={targetYear}-{month:00}|NetJpy={payments.Where(x => x.PaymentDate.Month == month).Sum(ResolveNetJpy):0}|Count={payments.Count(x => x.PaymentDate.Month == month)}");
+    }
+}
+
+if (shouldPrintDividendPlan)
+{
+    var repository = new InvestmentStoryRepository(databasePath ?? DatabasePaths.GetDefaultDatabasePath());
+    var targetYear = DateTime.Today.Year;
+    var planItems = new DividendGrowthSimulationService().CreateDefaultPlanItems(
+        repository.GetPositions(),
+        DividendGrowthDisplayModes.AggregateBySecurity,
+        repository.GetDividendCalendarEvents());
+    foreach (var item in planItems.Where(x => new[] { "TRMD", "MO", "CMBT", "8151" }.Contains(x.Ticker, StringComparer.OrdinalIgnoreCase)))
+    {
+        Console.WriteLine($"DividendPlanInput={item.Ticker}|Currency:{item.Currency}|Shares:{item.CurrentShares:0.####}|AnnualDps:{item.AnnualDividendPerShare:0.####}|Rate:{item.ExchangeRate:0.####}|Frequency:{item.DividendFrequency}|Months:{item.DividendMonths}|Components:{item.Components.Count}|Calendar:{item.DividendEvents.Count}");
+        foreach (var component in item.Components)
+        {
+            Console.WriteLine($"DividendPlanComponent={component.StockId}|{component.Ticker}|{component.Broker}|{component.AccountType}|Currency:{component.Currency}|Shares:{component.CurrentShares:0.####}|AnnualDps:{component.AnnualDividendPerShare:0.####}|Rate:{component.ExchangeRate:0.####}|Months:{component.DividendMonths}|Calendar:{component.DividendEvents.Count}");
+        }
+    }
+    var simulation = new DividendPurchasePlanSimulationService().Simulate(
+        new DividendPurchasePlanInput
+        {
+            PlanName = "DB audit",
+            TargetYear = targetYear,
+            PlannedPurchaseDate = DateTime.Today,
+            DisplayUnit = DividendPurchasePlanDisplayUnits.AllAccounts,
+            TargetAnnualNetDividendJpy = 1_200_000m,
+            PlanItems = planItems,
+            DividendPayments = repository.GetDividendPayments()
+        },
+        repository.GetTaxProfiles());
+
+    Console.WriteLine($"DividendPlanSummary=Current:{simulation.Summary.CurrentTargetYearNetDividendJpy:0}|Planned:{simulation.Summary.PlannedTargetYearNetDividendJpy:0}|NextYear:{simulation.Summary.NextYearAnnualNetDividendJpy:0}|Holdings:{simulation.Holdings.Count}");
+    foreach (var month in simulation.Months)
+    {
+        Console.WriteLine($"DividendPlanMonth={month.Year}-{month.Month:00}|Current:{month.CurrentNetDividendJpy:0}|Additional:{month.AdditionalNetDividendJpy:0}|Planned:{month.PlannedNetDividendJpy:0}|Events:{month.Events.Count}");
+        foreach (var item in month.Events.Where(x => x.CurrentNetDividendJpy + x.AdditionalNetDividendJpy > 50_000m))
+        {
+            Console.WriteLine($"DividendPlanLargeEvent={month.Year}-{month.Month:00}|{item.Ticker}|{item.Broker}|{item.AccountType}|Current:{item.CurrentNetDividendJpy:0}|Additional:{item.AdditionalNetDividendJpy:0}|Paid:{item.IsPaid}|Source:{item.Source}");
+        }
+    }
+}
+
+static decimal ResolveNetJpy(DividendPayment payment)
+{
+    if (payment.NetAmountJpy > 0m)
+    {
+        return payment.NetAmountJpy;
+    }
+
+    if (payment.JpyAmount > 0m)
+    {
+        return payment.JpyAmount;
+    }
+
+    return string.Equals(payment.Currency, "JPY", StringComparison.OrdinalIgnoreCase)
+        ? payment.NetAmount
+        : payment.NetAmount * (payment.ExchangeRate > 0m ? payment.ExchangeRate : 1m);
 }

@@ -221,16 +221,16 @@ public sealed class SbiStatementCsvParser
 
                 var row = ToDictionary(headers, ParseCsvLine(line));
                 var name = Get(row, "ファンド名");
-                var shares = ParseDecimal(Get(row, "保有口数"));
+                var shares = ParseDecimal(GetAny(row, "保有口数", "保有口数 (口)"));
                 if (string.IsNullOrWhiteSpace(name) || shares <= 0m)
                 {
                     continue;
                 }
 
-                var acquisitionAmount = ParseDecimal(Get(row, "取得金額"));
-                var marketValue = ParseDecimal(Get(row, "評価額"));
-                var averageCostNav = ParseDecimal(Get(row, "取得単価"));
-                var currentNav = ParseDecimal(Get(row, "基準価額"));
+                var acquisitionAmount = ParseDecimal(GetAny(row, "取得金額", "取得金額 (円)"));
+                var marketValue = ParseDecimal(GetAny(row, "評価額", "評価額 (円)"));
+                var averageCostNav = ParseDecimal(GetAny(row, "取得単価", "取得単価 (円)"));
+                var currentNav = ParseDecimal(GetAny(row, "基準価額", "基準価額 (円)"));
                 var distributionMethod = Get(row, "分配金受取方法");
                 var rowAccount = Get(row, "預り区分");
                 records.Add(new BrokerHoldingRecord
@@ -247,7 +247,7 @@ public sealed class SbiStatementCsvParser
                     AcquisitionAmount = acquisitionAmount,
                     MarketValue = marketValue,
                     MarketValueJpy = marketValue,
-                    UnrealizedGainLossJpy = ParseDecimal(Get(row, "評価損益")),
+                    UnrealizedGainLossJpy = ParseDecimal(GetAny(row, "評価損益", "評価損益 (円)")),
                     Currency = "JPY",
                     PurchaseExchangeRate = 1m,
                     CurrentExchangeRate = 1m,
@@ -326,8 +326,11 @@ public sealed class SbiStatementCsvParser
                           line.Contains("通貨", StringComparison.Ordinal) &&
                           line.Contains("受渡金額", StringComparison.Ordinal));
 
-    private static bool LooksLikeJapanStockHoldings(IReadOnlyList<string> lines) =>
-        lines.Any(line => line.Contains("保有証券一覧", StringComparison.Ordinal)) &&
+    private static bool LooksLikeJapanStockHoldings(IReadOnlyList<string> lines)
+    {
+        var hasHoldingsSection = lines.Any(line => line.Contains("保有証券一覧", StringComparison.Ordinal)) ||
+                                 lines.Any(line => line.Contains("保有状況-金額指定-", StringComparison.Ordinal));
+        return hasHoldingsSection &&
         (lines.Any(line => line.Contains("銘柄コード", StringComparison.Ordinal) &&
                            line.Contains("銘柄名称", StringComparison.Ordinal) &&
                            line.Contains("保有株数", StringComparison.Ordinal) &&
@@ -336,6 +339,7 @@ public sealed class SbiStatementCsvParser
                            line.Contains("保有口数", StringComparison.Ordinal) &&
                            line.Contains("基準価額", StringComparison.Ordinal) &&
                            line.Contains("評価額", StringComparison.Ordinal)));
+    }
 
     private static bool LooksLikeDomesticOrFundTrades(IReadOnlyList<string> lines) =>
         lines.Any(line => line.Contains("約定履歴照会", StringComparison.Ordinal)) ||
@@ -477,12 +481,24 @@ public sealed class SbiStatementCsvParser
     {
         for (var i = headerIndex - 1; i >= 0; i--)
         {
-            var line = lines[i].Trim();
+            var line = lines[i].Trim().Trim('"');
             if (!string.IsNullOrWhiteSpace(line) &&
                 !line.Contains(",", StringComparison.Ordinal) &&
                 !line.EndsWith("合計", StringComparison.Ordinal))
             {
-                return line;
+                const string sectionPrefix = "保有状況-金額指定-";
+                if (line.StartsWith(sectionPrefix, StringComparison.Ordinal))
+                {
+                    line = line[sectionPrefix.Length..];
+                }
+
+                var countSuffixIndex = line.LastIndexOf(" (", StringComparison.Ordinal);
+                if (countSuffixIndex >= 0 && line.EndsWith("件)", StringComparison.Ordinal))
+                {
+                    line = line[..countSuffixIndex];
+                }
+
+                return line.Trim();
             }
         }
 
@@ -551,6 +567,20 @@ public sealed class SbiStatementCsvParser
 
     private static string Get(IReadOnlyDictionary<string, string> row, string key) =>
         row.TryGetValue(key, out var value) ? value.Trim().Trim('"') : string.Empty;
+
+    private static string GetAny(IReadOnlyDictionary<string, string> row, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = Get(row, key);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return string.Empty;
+    }
 
     private static DateTime ParseJapaneseDate(string value) =>
         DateTime.TryParseExact(value, "yyyy年MM月dd日", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)

@@ -289,7 +289,7 @@ public sealed class DividendPurchasePlanSimulationService
                 lastRightsDate,
                 exDate,
                 recordDate,
-                Math.Max(0m, payment.DividendPerShare),
+                ResolveHistoricalAmountPerShare(item, payment),
                 DividendPlanDataQuality.Acquired,
                 string.IsNullOrWhiteSpace(payment.Source) ? "証券会社CSV入金実績" : payment.Source,
                 true,
@@ -402,7 +402,7 @@ public sealed class DividendPurchasePlanSimulationService
                 lastRightsDate,
                 exDividendDate,
                 recordDate,
-                Math.Max(0m, historical?.DividendPerShare ?? 0m),
+                historical is null ? 0m : ResolveHistoricalAmountPerShare(item, historical),
                 DividendPlanDataQuality.Estimated,
                 historical is not null ? "過去の配当実績から推定" : "配当月・頻度から推定",
                 false,
@@ -597,7 +597,10 @@ public sealed class DividendPurchasePlanSimulationService
 
     private static bool Matches(DividendGrowthPlanItem item, DividendPayment payment)
     {
-        if (item.StockId > 0 && payment.StockId == item.StockId)
+        // CSV再取込や旧スキーマの統合前後では、同じポジションでもStockIdが
+        // 付け替わっていることがある。ID一致は最優先するが、不一致だけを理由に
+        // 実績を捨てず、以下の正規化済みポジション情報でも照合する。
+        if (item.StockId > 0 && payment.StockId > 0 && payment.StockId == item.StockId)
         {
             return true;
         }
@@ -605,8 +608,48 @@ public sealed class DividendPurchasePlanSimulationService
         {
             return false;
         }
-        return string.IsNullOrWhiteSpace(item.Broker) || item.Broker == "複数" ||
-               string.Equals(item.Broker, payment.Broker, StringComparison.CurrentCultureIgnoreCase);
+
+        var itemBroker = SecuritySymbolNormalizer.NormalizeBroker(item.Broker ?? string.Empty);
+        var paymentBroker = SecuritySymbolNormalizer.NormalizeBroker(payment.Broker ?? string.Empty);
+        var brokerMatches = string.IsNullOrWhiteSpace(itemBroker) ||
+                            itemBroker == "複数" ||
+                            string.IsNullOrWhiteSpace(paymentBroker) ||
+                            string.Equals(itemBroker, paymentBroker, StringComparison.CurrentCultureIgnoreCase);
+        if (!brokerMatches)
+        {
+            return false;
+        }
+
+        var itemAccount = AccountTypeNormalizer.Normalize(item.AccountType);
+        var paymentAccount = AccountTypeNormalizer.Normalize(payment.AccountType);
+        return itemAccount == AccountTypes.Unknown ||
+               paymentAccount == AccountTypes.Unknown ||
+               string.Equals(itemAccount, paymentAccount, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static decimal ResolveHistoricalAmountPerShare(
+        DividendGrowthPlanItem item,
+        DividendPayment payment)
+    {
+        var amount = Math.Max(0m, payment.DividendPerShare);
+        if (amount <= 0m)
+        {
+            return 0m;
+        }
+
+        var itemCurrency = NormalizeCurrency(item.Currency);
+        var paymentCurrency = NormalizeCurrency(payment.Currency);
+        if (string.Equals(itemCurrency, paymentCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            return amount;
+        }
+
+        // Some broker CSVs store a foreign stock's per-share dividend after JPY
+        // conversion while the position itself is denominated in USD. Reusing
+        // that number as USD applies the exchange rate twice. The exact paid JPY
+        // total remains authoritative; future estimates fall back to the
+        // position's annual dividend in its native currency.
+        return 0m;
     }
 
     private static decimal CurrentMarketValueJpy(DividendGrowthPlanItem item) =>
@@ -728,8 +771,7 @@ public sealed class DividendPurchasePlanSimulationService
         }
         return left.IsPaid != right.IsPaid &&
                left.PaymentDate.Year == right.PaymentDate.Year &&
-               left.PaymentDate.Month == right.PaymentDate.Month &&
-               Math.Abs((left.PaymentDate - right.PaymentDate).TotalDays) <= 7;
+               Math.Abs((left.PaymentDate - right.PaymentDate).TotalDays) <= 21;
     }
 
     private static int ScheduleRank(ScheduleEvent item) => item.IsPaid

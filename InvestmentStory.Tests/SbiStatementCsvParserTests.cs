@@ -86,6 +86,68 @@ public sealed class SbiStatementCsvParserTests
     }
 
     [Fact]
+    public void ParseFiles_ReadsCurrentSbiMutualFundExportAndKeepsAccountPositionsSeparate()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_Fund_Current_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            ""
+            "保有状況-全体"
+
+            "評価額 (円)","評価損益 (円)","評価損益 (率・%)","前日比 (円)","前日比 (率・%)"
+            "2737598","+1017567","+59.16","-68","0"
+
+            ""
+            "保有状況-金額指定-NISA (つみたて)預り (1件)"
+
+            "評価額 (円)","評価損益 (円)","評価損益 (率・%)","前日比 (円)","前日比 (率・%)"
+            "1726229","+472873","+37.73","-43","0"
+
+            "ファンド名","積立設定中","定期売却設定中","保有口数 (口)","売却注文中 (口)","基準価額 (円)","取得単価 (円)","評価額 (円)","取得金額 (円)","評価損益 (円)","評価損益 (率・%)","評価損益 前日比 (円)","評価損益 前日比 (率・%)"
+            "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド","○","","421268","0",40977,29752,"1726229",1253356,"+472873","+37.73","-43","0"
+
+            ""
+            "保有状況-金額指定-旧つみたてNISA預り (1件)"
+
+            "評価額 (円)","評価損益 (円)","評価損益 (率・%)","前日比 (円)","前日比 (率・%)"
+            "1011369","+544694","+116.72","-25","0"
+
+            "ファンド名","積立設定中","定期売却設定中","保有口数 (口)","売却注文中 (口)","基準価額 (円)","取得単価 (円)","評価額 (円)","取得金額 (円)","評価損益 (円)","評価損益 (率・%)","評価損益 前日比 (円)","評価損益 前日比 (率・%)"
+            "ＳＢＩ・Ｖ・Ｓ＆Ｐ５００インデックス・ファンド","","","246814","0",40977,18908,"1011369",466675,"+544694","+116.72","-25","0"
+            """);
+
+        try
+        {
+            var parser = new SbiStatementCsvParser();
+
+            Assert.True(SbiStatementCsvParser.LooksLikeSbiStatementCsv(path));
+            var statement = parser.ParseFiles(new[] { path });
+
+            Assert.Equal(2, statement.Holdings.Count);
+            Assert.Equal(2_737_598m, statement.Holdings.Sum(x => x.MarketValue));
+            Assert.Equal(1_720_031m, statement.Holdings.Sum(x => x.AcquisitionAmount));
+            Assert.Equal(1_017_567m, statement.Holdings.Sum(x => x.UnrealizedGainLossJpy));
+
+            var currentNisa = Assert.Single(statement.Holdings, x => x.Account == "NISA (つみたて)預り");
+            Assert.Equal(421_268m, currentNisa.UnitsHeld);
+            Assert.Equal(40_977m, currentNisa.CurrentNav);
+            Assert.Equal(29_752m, currentNisa.AverageCostNav);
+            Assert.Equal(1_726_229m, currentNisa.MarketValue);
+            Assert.Equal(1_253_356m, currentNisa.AcquisitionAmount);
+
+            var legacyNisa = Assert.Single(statement.Holdings, x => x.Account == "旧つみたてNISA預り");
+            Assert.Equal(246_814m, legacyNisa.UnitsHeld);
+            Assert.Equal(40_977m, legacyNisa.CurrentNav);
+            Assert.Equal(18_908m, legacyNisa.AverageCostNav);
+            Assert.Equal(1_011_369m, legacyNisa.MarketValue);
+            Assert.Equal(466_675m, legacyNisa.AcquisitionAmount);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void ParseFromSeedFile_ReadsSbiFilesInSameFolder()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

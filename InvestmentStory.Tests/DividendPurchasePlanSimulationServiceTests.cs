@@ -212,6 +212,136 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         Assert.Equal("Nasdaq", september.Source);
     }
 
+    [Fact]
+    public void BrokerJpyPerShareForUsdPosition_IsNotConvertedToJpyTwice()
+    {
+        var item = CreateUsNisaItem(
+            plannedShares: 0m,
+            frequency: "1",
+            months: "10");
+        var history = new[]
+        {
+            new DividendPayment
+            {
+                StockId = item.StockId,
+                Ticker = item.Ticker,
+                Broker = item.Broker,
+                AccountType = item.AccountType,
+                PaymentDate = new DateTime(2025, 10, 20),
+                DividendPerShare = 160m,
+                Currency = "JPY",
+                ExchangeRate = 1m,
+                Source = DividendConstants.SourceCsv
+            }
+        };
+
+        var result = Simulate(item, new DateTime(2026, 1, 1), history);
+
+        // 160 JPYを160 USDとして再度為替換算すると46万円超になる。
+        // 通貨不一致時はポジションの年間配当4 USDを使用する。
+        Assert.Equal(11_520m, result.Summary.CurrentTargetYearNetDividendJpy);
+        Assert.All(result.Months.SelectMany(x => x.Events), x => Assert.True(x.CurrentNetDividendJpy < 20_000m));
+    }
+
+    [Fact]
+    public void LegacyStockIdActualPayment_IsMatchedByNormalizedPositionAndMergedWithCalendar()
+    {
+        var calendar = new[]
+        {
+            new DividendCalendarEvent
+            {
+                EventKey = "8151-2026-05",
+                PaymentDate = new DateTime(2026, 5, 29),
+                AmountPerShare = 30m,
+                Currency = "JPY",
+                Source = "Yahoo Finance",
+                DataQuality = DividendPlanDataQuality.Acquired,
+                IsConfirmed = true
+            },
+            new DividendCalendarEvent
+            {
+                EventKey = "8151-2026-12",
+                PaymentDate = new DateTime(2026, 12, 10),
+                AmountPerShare = 39m,
+                Currency = "JPY",
+                Source = "Yahoo Finance",
+                DataQuality = DividendPlanDataQuality.Acquired,
+                IsConfirmed = true
+            }
+        };
+        var item = new DividendGrowthPlanItem
+        {
+            StockId = 84,
+            PlanKey = "8151|野村証券|Specific",
+            CanonicalKey = "8151",
+            PositionKey = "8151|野村証券|Specific",
+            Ticker = "8151",
+            Name = "東陽テクニカ",
+            Broker = "野村証券",
+            AccountType = AccountTypes.Specific,
+            Country = "Japan",
+            Currency = "JPY",
+            CurrentShares = 7_000m,
+            CurrentPrice = 1_900m,
+            ExchangeRate = 1m,
+            AnnualDividendPerShare = 69m,
+            CurrentCostJpy = 8_246_000m,
+            CurrentMarketValueJpy = 13_300_000m,
+            DividendFrequency = "2",
+            DividendEvents = calendar
+        };
+        var history = new[]
+        {
+            new DividendPayment
+            {
+                StockId = 98,
+                Ticker = "8151",
+                Broker = "野村証券",
+                AccountType = AccountTypes.Unknown,
+                PaymentDate = new DateTime(2026, 6, 9),
+                Quantity = 6_000m,
+                DividendPerShare = 30m,
+                Currency = "JPY",
+                NetAmountJpy = 143_433m,
+                JpyAmount = 143_433m,
+                Source = DividendConstants.SourceCsv
+            }
+        };
+
+        var result = Simulate(item, new DateTime(2026, 1, 1), history);
+        var events = result.Months.SelectMany(x => x.Events).ToList();
+
+        Assert.Equal(2, events.Count);
+        Assert.DoesNotContain(events, x => x.PaymentDate.Month == 5);
+        var paid = Assert.Single(events, x => x.IsPaid);
+        Assert.Equal(new DateTime(2026, 6, 9), paid.PaymentDate);
+        Assert.Equal(143_433m, paid.CurrentNetDividendJpy);
+    }
+
+    [Fact]
+    public void LegacyStockIdFallback_DoesNotCrossKnownAccountBoundary()
+    {
+        var item = CreateUsNisaItem(plannedShares: 0m, frequency: "1", months: "6");
+        var history = new[]
+        {
+            new DividendPayment
+            {
+                StockId = 999,
+                Ticker = item.Ticker,
+                Broker = item.Broker,
+                AccountType = AccountTypes.Specific,
+                PaymentDate = new DateTime(2026, 6, 20),
+                Currency = "USD",
+                NetAmountJpy = 50_000m,
+                Source = DividendConstants.SourceCsv
+            }
+        };
+
+        var result = Simulate(item, new DateTime(2026, 1, 1), history);
+
+        Assert.DoesNotContain(result.Months.SelectMany(x => x.Events), x => x.IsPaid);
+    }
+
     private DividendPurchasePlanResult Simulate(
         DividendGrowthPlanItem item,
         DateTime purchaseDate,
