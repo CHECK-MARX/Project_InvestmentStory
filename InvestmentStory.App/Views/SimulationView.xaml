@@ -522,13 +522,54 @@
                             <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0">
                                 <StackPanel>
                                     <Grid Margin="0,0,0,10">
-                                        <TextBlock Text="資産推移  4シナリオ比較" Style="{StaticResource SectionTitleStyle}" />
-                                        <TextBlock Text="{Binding ChartHorizon}"
-                                                   HorizontalAlignment="Right"
-                                                   Foreground="{DynamicResource WarningBrush}"
-                                                   FontWeight="SemiBold" />
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <TextBlock Text="資産推移  4シナリオ比較" Style="{StaticResource SectionTitleStyle}" />
+                                            <TextBlock Text="{Binding ChartHorizon}"
+                                                       HorizontalAlignment="Right"
+                                                       Foreground="{DynamicResource WarningBrush}"
+                                                       FontWeight="SemiBold" />
+                                        </Grid>
+                                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,0">
+                                            <TextBlock Text="表示期間"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource SecondaryTextBrush}"
+                                                       Margin="0,0,8,0" />
+                                            <ComboBox ItemsSource="{Binding ScenarioChartRangeOptions}"
+                                                      SelectedItem="{Binding SelectedScenarioChartRange, Mode=TwoWay}"
+                                                      DisplayMemberPath="DisplayName"
+                                                      Width="160"
+                                                      Height="34" />
+                                            <Border Margin="12,0,0,0">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCustomScenarioChartRange}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <DatePicker SelectedDate="{Binding CustomScenarioChartStart, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                Width="140"
+                                                                Height="34" />
+                                                    <TextBlock Text="～"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource SecondaryTextBrush}"
+                                                               Margin="8,0" />
+                                                    <DatePicker SelectedDate="{Binding CustomScenarioChartEnd, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                Width="140"
+                                                                Height="34" />
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
                                     </Grid>
-                                     <controls:ScenarioComparisonChartControl Height="560"
+                                    <controls:ScenarioComparisonChartControl Height="560"
                                                                               Series="{Binding ScenarioChartSeries}"
                                                                               TargetAmount="{Binding TargetAmountJpy}"
                                                                               SelectedScenarioKey="{Binding SelectedStoryScenario.Value}"

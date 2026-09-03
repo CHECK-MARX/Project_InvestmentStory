@@ -169,6 +169,8 @@ public sealed class DividendChartInteractionTests
         var source = ReadRepoFile("InvestmentStory.App", "Controls", "DividendMonthMapControl.cs");
 
         Assert.Contains("ScheduleStatuses", source);
+        Assert.Contains("PaymentScheduleStatuses", source);
+        Assert.Contains("ExDividendScheduleStatuses", source);
         Assert.Contains("DividendChartColorRegistry.ForStatus", source);
         Assert.DoesNotContain("Contains(\"推定\")", source);
         Assert.DoesNotContain("Contains(\"受取\")", source);
@@ -251,6 +253,8 @@ public sealed class DividendChartInteractionTests
         Assert.Equal(DividendScheduleStatus.Estimated, row.ScheduleStatuses[5]);
         Assert.Equal(DividendScheduleStatus.OverdueUnmatched, row.ScheduleStatuses[8]);
         Assert.Null(row.ScheduleStatuses[1]);
+        Assert.Equal(DividendScheduleStatus.Expected, row.ExDividendScheduleStatuses[1]);
+        Assert.Null(row.ExDividendScheduleStatuses[2]);
 
         var tooltip = row.ToolTipForMonth(3);
         Assert.Contains("配当公表日 2026/02/01", tooltip);
@@ -259,6 +263,10 @@ public sealed class DividendChartInteractionTests
         Assert.Contains("基準日 2026/03/02", tooltip);
         Assert.Contains("支払日 2026/03/20", tooltip);
         Assert.Contains("Public dividend calendar", tooltip);
+
+        var exDividendTooltip = row.ExDividendToolTipForMonth(2);
+        Assert.Contains("2月 権利落ち日", exDividendTooltip);
+        Assert.Contains("権利落ち日 2026/02/27", exDividendTooltip);
     }
 
     [Fact]

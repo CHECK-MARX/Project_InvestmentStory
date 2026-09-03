@@ -85,6 +85,9 @@ public sealed class UiStyleRegressionTests
         Assert.Contains("ScenarioComparisonRows", xaml);
         Assert.Contains("ScenarioComparisonChartControl", xaml);
         Assert.Contains("ScenarioChartSeries", xaml);
+        Assert.Contains("ScenarioChartRangeOptions", xaml);
+        Assert.Contains("CustomScenarioChartStart", xaml);
+        Assert.Contains("CustomScenarioChartEnd", xaml);
         Assert.Contains("SelectedScenarioKey=\"{Binding SelectedStoryScenario.Value}\"", xaml);
         Assert.Contains("ScenarioRankingRows", xaml);
         Assert.Contains("ScenarioAnnualRows", xaml);

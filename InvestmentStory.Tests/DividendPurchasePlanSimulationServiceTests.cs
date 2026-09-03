@@ -342,6 +342,20 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         Assert.DoesNotContain(result.Months.SelectMany(x => x.Events), x => x.IsPaid);
     }
 
+    [Fact]
+    public void FrequencyWithoutDates_DoesNotCreateFabricatedMonthlySchedule()
+    {
+        var item = CreateUsNisaItem(
+            plannedShares: 0m,
+            frequency: "4",
+            months: string.Empty,
+            dividendEvents: Array.Empty<DividendCalendarEvent>());
+
+        var result = Simulate(item, new DateTime(2026, 1, 1), Array.Empty<DividendPayment>());
+
+        Assert.Empty(result.Months.SelectMany(x => x.Events));
+    }
+
     private DividendPurchasePlanResult Simulate(
         DividendGrowthPlanItem item,
         DateTime purchaseDate,

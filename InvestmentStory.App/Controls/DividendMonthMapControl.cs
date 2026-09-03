@@ -31,7 +31,10 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
         base.OnRender(dc);
         BeginInteractiveRender();
         _rows = Items?.OfType<DividendPlanStockMonthlyRowViewModel>()
-                    .Where(x => x.TotalValue > 0m).OrderByDescending(x => x.TotalValue).Take(12).ToList()
+                    .Where(x => x.TotalValue > 0m ||
+                                x.PaymentScheduleStatuses.Any(status => status is not null) ||
+                                x.ExDividendScheduleStatuses.Any(status => status is not null))
+                    .OrderByDescending(x => x.TotalValue).Take(12).ToList()
                 ?? new List<DividendPlanStockMonthlyRowViewModel>();
         if (_rows.Count == 0)
         {
@@ -40,7 +43,7 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
         }
 
         _left = Math.Clamp(ActualWidth * 0.18d, 78d, 150d);
-        _top = 56d;
+        _top = 76d;
         _cellWidth = Math.Max(22d, (ActualWidth - _left - 10d) / 12d);
         _cellHeight = Math.Max(22d, (ActualHeight - _top - 8d) / _rows.Count);
         var text = Brush("PrimaryTextBrush", Brushes.White);
@@ -48,8 +51,9 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
         var line = Brush("BorderBrush", Brushes.DimGray);
 
         DrawStatusLegend(dc, text);
+        DrawDateTypeLegend(dc, text);
         for (var month = 1; month <= 12; month++)
-            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 34, secondary);
+            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 54, secondary);
 
         foreach (var (row, rowIndex) in _rows.Select((row, index) => (row, index)))
         {
@@ -59,34 +63,85 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
                 new Point(_left + _cellWidth * 12, y + _cellHeight / 2d));
             for (var monthIndex = 0; monthIndex < 12; monthIndex++)
             {
-                var status = row.ScheduleStatuses[monthIndex];
-                if (status is null) continue;
-                var seriesKey = $"status:{status}";
-                if (!IsSeriesVisible(seriesKey)) continue;
-                var opacity = InteractionOpacity(row.Ticker, monthIndex + 1, status);
-                // The row label already identifies the security. The marker color represents the
-                // schedule status so it must match the status legend for every individual month.
-                var brush = DividendChartColorRegistry.StatusBrush(status.Value, opacity);
-                var visual = DividendChartColorRegistry.ForStatus(status.Value);
-                var center = new Point(_left + monthIndex * _cellWidth + _cellWidth / 2d, y + _cellHeight / 2d);
-                var radius = row.PlannedValues[monthIndex] > 0m ? 6d : 4d;
-                var pen = new Pen(DividendChartColorRegistry.StatusBrush(status.Value, opacity), 1.2);
-                if (visual.DashPattern is not null) pen.DashStyle = new DashStyle(visual.DashPattern, 0);
-                dc.DrawEllipse(brush, pen, center, radius, radius);
-                if (IsInteractionSelected(row.Ticker, monthIndex + 1, status) ||
-                    IsInteractionHovered(row.Ticker, monthIndex + 1, status))
-                {
-                    dc.DrawEllipse(
-                        null,
-                        new Pen(Brush("AccentBlueBrush", Brushes.White), 2.4),
-                        center,
-                        radius + 3,
-                        radius + 3);
-                }
-                AddHitTarget(new Rect(center.X - 10, center.Y - 10, 20, 20),
-                    row.ToolTipForMonth(monthIndex + 1), row.Ticker, monthIndex + 1, status, seriesKey);
+                var paymentStatus = row.PaymentScheduleStatuses[monthIndex];
+                var exDividendStatus = row.ExDividendScheduleStatuses[monthIndex];
+                var baseCenter = new Point(
+                    _left + monthIndex * _cellWidth + _cellWidth / 2d,
+                    y + _cellHeight / 2d);
+                var hasBothDateTypes = paymentStatus is not null && exDividendStatus is not null;
+
+                DrawScheduleMarker(
+                    dc,
+                    row,
+                    monthIndex,
+                    paymentStatus,
+                    new Point(baseCenter.X + (hasBothDateTypes ? 4d : 0d), baseCenter.Y),
+                    isExDividend: false);
+                DrawScheduleMarker(
+                    dc,
+                    row,
+                    monthIndex,
+                    exDividendStatus,
+                    new Point(baseCenter.X - (hasBothDateTypes ? 4d : 0d), baseCenter.Y),
+                    isExDividend: true);
             }
         }
+    }
+
+    private void DrawScheduleMarker(
+        DrawingContext dc,
+        DividendPlanStockMonthlyRowViewModel row,
+        int monthIndex,
+        DividendScheduleStatus? status,
+        Point center,
+        bool isExDividend)
+    {
+        if (status is null) return;
+        var seriesKey = $"status:{status}";
+        if (!IsSeriesVisible(seriesKey)) return;
+
+        var month = monthIndex + 1;
+        var opacity = InteractionOpacity(row.Ticker, month, status);
+        // The marker color represents status; shape represents the underlying date type.
+        var brush = DividendChartColorRegistry.StatusBrush(status.Value, opacity);
+        var visual = DividendChartColorRegistry.ForStatus(status.Value);
+        var pen = new Pen(DividendChartColorRegistry.StatusBrush(status.Value, opacity), isExDividend ? 1.8 : 1.2);
+        if (visual.DashPattern is not null) pen.DashStyle = new DashStyle(visual.DashPattern, 0);
+        var radius = row.PlannedValues[monthIndex] > 0m ? 6d : 4d;
+
+        if (isExDividend)
+        {
+            dc.DrawGeometry(null, pen, CreateDiamond(center, radius));
+        }
+        else
+        {
+            dc.DrawEllipse(brush, pen, center, radius, radius);
+        }
+
+        if (IsInteractionSelected(row.Ticker, month, status) ||
+            IsInteractionHovered(row.Ticker, month, status))
+        {
+            var selectionPen = new Pen(Brush("AccentBlueBrush", Brushes.White), 2.4);
+            if (isExDividend)
+            {
+                dc.DrawGeometry(null, selectionPen, CreateDiamond(center, radius + 3d));
+            }
+            else
+            {
+                dc.DrawEllipse(null, selectionPen, center, radius + 3d, radius + 3d);
+            }
+        }
+
+        var tooltip = isExDividend
+            ? row.ExDividendToolTipForMonth(month)
+            : row.PaymentToolTipForMonth(month);
+        AddHitTarget(
+            new Rect(center.X - 10, center.Y - 10, 20, 20),
+            tooltip,
+            row.Ticker,
+            month,
+            status,
+            seriesKey);
     }
 
     private void DrawStatusLegend(DrawingContext dc, Brush text)
@@ -105,6 +160,32 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
             x += width + 5;
             if (x > ActualWidth - 100) break;
         }
+    }
+
+    private void DrawDateTypeLegend(DrawingContext dc, Brush text)
+    {
+        var paymentCenter = new Point(9, 37);
+        dc.DrawEllipse(text, null, paymentCenter, 5, 5);
+        DrawText(dc, "支払・入金日", 9, 18, 30, text);
+
+        var exCenter = new Point(112, 37);
+        dc.DrawGeometry(
+            null,
+            new Pen(text, 1.8),
+            CreateDiamond(exCenter, 5));
+        DrawText(dc, "権利落ち日", 9, 122, 30, text);
+    }
+
+    private static Geometry CreateDiamond(Point center, double radius)
+    {
+        var geometry = new StreamGeometry();
+        using var context = geometry.Open();
+        context.BeginFigure(new Point(center.X, center.Y - radius), true, true);
+        context.LineTo(new Point(center.X + radius, center.Y), true, false);
+        context.LineTo(new Point(center.X, center.Y + radius), true, false);
+        context.LineTo(new Point(center.X - radius, center.Y), true, false);
+        geometry.Freeze();
+        return geometry;
     }
 
     private Brush Brush(string key, Brush fallback) => TryFindResource(key) as Brush ?? fallback;

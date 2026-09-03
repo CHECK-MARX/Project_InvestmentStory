@@ -349,7 +349,7 @@ public sealed class DividendPurchasePlanSimulationService
                 ? historyMonths
                 : calendarMonths.Count > 0
                     ? calendarMonths
-                : FrequencyToMonths(item.DividendFrequency);
+                    : Array.Empty<int>();
 
         if (months.Count == 0 && item.DividendPaymentDate is not null)
         {
@@ -404,7 +404,7 @@ public sealed class DividendPurchasePlanSimulationService
                 recordDate,
                 historical is null ? 0m : ResolveHistoricalAmountPerShare(item, historical),
                 DividendPlanDataQuality.Estimated,
-                historical is not null ? "過去の配当実績から推定" : "配当月・頻度から推定",
+                historical is not null ? "過去の配当実績から推定" : "登録済み配当月から推定",
                 false,
                 null));
         }
@@ -810,16 +810,6 @@ public sealed class DividendPurchasePlanSimulationService
                 .Distinct()
                 .Order()
                 .ToList();
-
-    private static IReadOnlyList<int> FrequencyToMonths(string frequency)
-    {
-        if (string.IsNullOrWhiteSpace(frequency)) return Array.Empty<int>();
-        if (frequency.Contains("12", StringComparison.Ordinal)) return Enumerable.Range(1, 12).ToList();
-        if (frequency.Contains("4", StringComparison.Ordinal)) return new[] { 3, 6, 9, 12 };
-        if (frequency.Contains("2", StringComparison.Ordinal)) return new[] { 6, 12 };
-        if (frequency.Contains("1", StringComparison.Ordinal)) return new[] { 12 };
-        return Array.Empty<int>();
-    }
 
     private static DateTime SafeDate(int year, int month, int day) =>
         new(year, month, Math.Clamp(day, 1, DateTime.DaysInMonth(year, month)));

@@ -319,7 +319,7 @@
                 <StackPanel><TextBlock Text="月別配当ヒートマップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><controls:DividendHeatmapControl Height="330" Items="{Binding DividendStockMonthlyRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
             </Border>
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="8,0,0,0">
-                <StackPanel><TextBlock Text="配当月マップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><TextBlock Text="点の色・線種＝各月の配当状態 / 凡例クリックで表示切替 / 点クリックで関連グラフを選択" Style="{StaticResource SubtleTextStyle}"/><controls:DividendMonthMapControl Height="305" Items="{Binding DividendStockMonthlyRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
+                <StackPanel><TextBlock Text="配当月マップ" Style="{StaticResource SectionTitleStyle}" Margin="0,0,0,8"/><TextBlock Text="点の色＝状態 / ● 支払・入金日 / ◇ 権利落ち日 / 凡例クリックで表示切替 / 点クリックで関連グラフを選択" Style="{StaticResource SubtleTextStyle}"/><controls:DividendMonthMapControl Height="325" Items="{Binding DividendStockMonthlyRows}" InteractionState="{Binding DividendChartInteraction}" /></StackPanel>
             </Border>
         </Grid>
 

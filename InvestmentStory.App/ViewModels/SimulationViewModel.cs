@@ -112,6 +112,10 @@ public sealed class SimulationViewModel : ObservableObject
     private string _actualAnnualizedReturnNote = string.Empty;
     private MutualFundScenarioComparisonResult? _lastScenarioResult;
     private DisplayOptionViewModel? _selectedStoryScenario;
+    private DisplayOptionViewModel? _selectedScenarioChartRange;
+    private DateTime? _customScenarioChartStart;
+    private DateTime? _customScenarioChartEnd;
+    private bool _suppressScenarioChartRangeRefresh;
     private string _targetAsset = "0円";
     private string _goalRemaining = "0円";
     private string _currentMonthlyContribution = "0円";
@@ -190,6 +194,7 @@ public sealed class SimulationViewModel : ObservableObject
         RunTsumitateNisaCommand = RunCommand;
         InitializeScenarioSettings();
         InitializeStoryScenarioOptions();
+        InitializeScenarioChartRangeOptions();
     }
 
     public ObservableCollection<SimulationProjectionRowViewModel> Projections { get; } = new();
@@ -254,6 +259,7 @@ public sealed class SimulationViewModel : ObservableObject
     public ObservableCollection<MutualFundScenarioChartSeriesViewModel> ScenarioChartSeries { get; } = new();
     public ObservableCollection<MutualFundScenarioRankingRowViewModel> ScenarioRankingRows { get; } = new();
     public ObservableCollection<DisplayOptionViewModel> StoryScenarioOptions { get; } = new();
+    public ObservableCollection<DisplayOptionViewModel> ScenarioChartRangeOptions { get; } = new();
     public ICommand RunCommand { get; }
     public ICommand RunPassiveIncomeCommand { get; }
     public ICommand SavePassiveIncomePlanCommand { get; }
@@ -878,6 +884,49 @@ public sealed class SimulationViewModel : ObservableObject
             }
         }
     }
+
+    public DisplayOptionViewModel? SelectedScenarioChartRange
+    {
+        get => _selectedScenarioChartRange;
+        set
+        {
+            if (SetProperty(ref _selectedScenarioChartRange, value))
+            {
+                OnPropertyChanged(nameof(IsCustomScenarioChartRange));
+                if (!_suppressScenarioChartRangeRefresh)
+                {
+                    RefreshScenarioChartSeries();
+                }
+            }
+        }
+    }
+
+    public DateTime? CustomScenarioChartStart
+    {
+        get => _customScenarioChartStart;
+        set
+        {
+            if (SetProperty(ref _customScenarioChartStart, value) && !_suppressScenarioChartRangeRefresh)
+            {
+                RefreshScenarioChartSeries();
+            }
+        }
+    }
+
+    public DateTime? CustomScenarioChartEnd
+    {
+        get => _customScenarioChartEnd;
+        set
+        {
+            if (SetProperty(ref _customScenarioChartEnd, value) && !_suppressScenarioChartRangeRefresh)
+            {
+                RefreshScenarioChartSeries();
+            }
+        }
+    }
+
+    public bool IsCustomScenarioChartRange =>
+        string.Equals(SelectedScenarioChartRange?.Value, "Custom", StringComparison.OrdinalIgnoreCase);
 
     public string TargetAsset
     {
@@ -2113,6 +2162,97 @@ public sealed class SimulationViewModel : ObservableObject
         SelectedStoryScenario = StoryScenarioOptions.First(x => x.Value == "Standard");
     }
 
+    private void InitializeScenarioChartRangeOptions()
+    {
+        ScenarioChartRangeOptions.Clear();
+        ScenarioChartRangeOptions.Add(new DisplayOptionViewModel("1Y", "1年"));
+        ScenarioChartRangeOptions.Add(new DisplayOptionViewModel("3Y", "3年"));
+        ScenarioChartRangeOptions.Add(new DisplayOptionViewModel("5Y", "5年"));
+        ScenarioChartRangeOptions.Add(new DisplayOptionViewModel("10Y", "10年"));
+        ScenarioChartRangeOptions.Add(new DisplayOptionViewModel("Target", "目標到達まで"));
+        ScenarioChartRangeOptions.Add(new DisplayOptionViewModel("Custom", "任意期間"));
+        SelectedScenarioChartRange = ScenarioChartRangeOptions.First(x => x.Value == "Target");
+    }
+
+    private void RefreshScenarioChartSeries()
+    {
+        ScenarioChartSeries.Clear();
+        var result = _lastScenarioResult;
+        var availableScenarios = result?.Scenarios
+            .Where(x => x.IsAvailable && x.ChartProjections.Count > 0)
+            .ToList() ?? new List<MutualFundScenarioResult>();
+        if (result is null || availableScenarios.Count == 0)
+        {
+            ChartStatus = "現在保有中の投資信託がありません。CSV取込または登録後に表示されます。";
+            ChartHorizon = string.Empty;
+            return;
+        }
+
+        var fullStart = availableScenarios.Min(x => x.ChartProjections[0].YearMonth);
+        var fullEnd = availableScenarios.Max(x => x.ChartProjections[^1].YearMonth);
+        var rangeKey = SelectedScenarioChartRange?.Value ?? "Target";
+        var start = fullStart;
+        var end = fullEnd;
+
+        var years = rangeKey switch
+        {
+            "1Y" => 1,
+            "3Y" => 3,
+            "5Y" => 5,
+            "10Y" => 10,
+            _ => 0
+        };
+        if (years > 0)
+        {
+            end = MinMonth(fullEnd, fullStart.AddYears(years).AddMonths(-1));
+        }
+        else if (string.Equals(rangeKey, "Custom", StringComparison.OrdinalIgnoreCase))
+        {
+            _suppressScenarioChartRangeRefresh = true;
+            try
+            {
+                CustomScenarioChartStart ??= fullStart;
+                CustomScenarioChartEnd ??= fullEnd;
+            }
+            finally
+            {
+                _suppressScenarioChartRangeRefresh = false;
+            }
+
+            start = ClampMonth(NormalizeMonth(CustomScenarioChartStart ?? fullStart), fullStart, fullEnd);
+            end = ClampMonth(NormalizeMonth(CustomScenarioChartEnd ?? fullEnd), fullStart, fullEnd);
+            if (start > end)
+            {
+                (start, end) = (end, start);
+            }
+        }
+
+        foreach (var scenario in availableScenarios)
+        {
+            ScenarioChartSeries.Add(new MutualFundScenarioChartSeriesViewModel(
+                scenario,
+                TargetAmountJpy,
+                start,
+                end));
+        }
+
+        ChartStatus = $"{start:yyyy/MM} - {end:yyyy/MM} / {availableScenarios.Count:N0}シナリオ月次複利比較";
+        ChartHorizon = string.Equals(rangeKey, "Target", StringComparison.OrdinalIgnoreCase)
+            ? result.UsesConservativeTargetHorizon && result.ConservativeTargetMonth is { } conservativeTarget
+                ? $"保守的シナリオの目標到達 {conservativeTarget:yyyy/MM} まで表示"
+                : $"試算期間 {Math.Max(1, ProjectionYears):N0}年を表示"
+            : string.Equals(rangeKey, "Custom", StringComparison.OrdinalIgnoreCase)
+                ? $"任意期間 {start:yyyy/MM} - {end:yyyy/MM}"
+                : $"開始月から{years:N0}年を表示";
+    }
+
+    private static DateTime NormalizeMonth(DateTime value) => new(value.Year, value.Month, 1);
+
+    private static DateTime ClampMonth(DateTime value, DateTime minimum, DateTime maximum) =>
+        value < minimum ? minimum : value > maximum ? maximum : value;
+
+    private static DateTime MinMonth(DateTime left, DateTime right) => left <= right ? left : right;
+
     private void OnMutualFundScenarioChanged()
     {
         if (!_suppressMutualFundAutoUpdates)
@@ -2142,7 +2282,7 @@ public sealed class SimulationViewModel : ObservableObject
         }
 
         actual.SetUnavailable(
-            "購入日・入出金・積立履歴が不足しているため、実績年利を算出できません。",
+            "履歴が不足しているか、年率が信頼範囲外のため、実績年利を算出できません。",
             "算出不可");
     }
 
@@ -2184,7 +2324,7 @@ public sealed class SimulationViewModel : ObservableObject
             ActualAnnualizedReturnMethod = "算出不可";
             ActualAnnualizedReturnPeriod = "-";
             ActualAnnualizedReturnPrecision = "-";
-            ActualAnnualizedReturnNote = "購入日・入出金・積立履歴・基準価額履歴が不足しているため、実績年利を算出できません。";
+            ActualAnnualizedReturnNote = "履歴が不足しているか、算出年率が信頼範囲外のため、実績年利を将来シナリオへ使用できません。";
         }
 
         AccountBreakdowns.Clear();
@@ -2220,13 +2360,6 @@ public sealed class SimulationViewModel : ObservableObject
             ScenarioAnnualRows.Add(new MutualFundScenarioMonthlyRowViewModel(row));
         }
 
-        ScenarioChartSeries.Clear();
-        foreach (var scenario in result.Scenarios.Where(x => x.IsAvailable))
-        {
-            ScenarioChartSeries.Add(new MutualFundScenarioChartSeriesViewModel(scenario, TargetAmountJpy));
-        }
-
-
         ScenarioRankingRows.Clear();
         var ranked = result.Scenarios
             .Where(x => x.IsAvailable)
@@ -2249,15 +2382,10 @@ public sealed class SimulationViewModel : ObservableObject
             : standard.TargetAchievementMonth.Value.ToString("yyyy/MM");
         RemainingPeriod = standard is null ? "未達" : FormatRemainingPeriod(standard.MonthsToTarget);
 
-        ChartStatus = result.ChartMonthlyComparisons.Count == 0
-            ? "現在保有中の投資信託がありません。CSV取込または登録後に表示されます。"
-            : $"{result.ChartMonthlyComparisons[0].YearMonth:yyyy/MM} - {result.ChartMonthlyComparisons[^1].YearMonth:yyyy/MM} / 4シナリオ月次複利比較";
-        ChartHorizon = result.UsesConservativeTargetHorizon && result.ConservativeTargetMonth is { } conservativeTarget
-            ? $"保守的シナリオの目標到達 {conservativeTarget:yyyy/MM} まで表示"
-            : $"表示期間 {Math.Max(1, ProjectionYears):N0}年";
+        RefreshScenarioChartSeries();
         UpdateFocusedScenario(result);
         StatusMessage = summary.ActualAnnualizedReturnRate is null
-            ? "実績参考年利は購入日・入出金・積立履歴が不足しているため算出不可です。税金、信託報酬、為替は考慮していません。"
+            ? "実績参考年利は履歴不足または信頼範囲外のため算出不可です。税金、信託報酬、為替は考慮していません。"
             : "実績参考年利は過去の運用結果に基づく参考値です。将来の運用成果を保証するものではありません。税金、信託報酬、為替は考慮していません。";
 
         ProjectionRows.Clear();
@@ -2950,14 +3078,24 @@ public sealed class MutualFundScenarioChartSeriesViewModel : ObservableObject
 {
     private bool _isVisible = true;
 
-    public MutualFundScenarioChartSeriesViewModel(MutualFundScenarioResult scenario, decimal targetAmount)
+    public MutualFundScenarioChartSeriesViewModel(
+        MutualFundScenarioResult scenario,
+        decimal targetAmount,
+        DateTime? startMonth = null,
+        DateTime? endMonth = null)
     {
         Key = scenario.Key;
         Name = scenario.Name;
         AnnualReturnRate = scenario.AnnualReturnRate is null ? string.Empty : $"{scenario.AnnualReturnRate.Value:N2}%";
         TargetAmountJpy = targetAmount;
-        TargetAchievementMonth = scenario.TargetAchievementMonth;
+        TargetAchievementMonth = scenario.TargetAchievementMonth is { } targetMonth &&
+                                 (startMonth is null || targetMonth >= startMonth.Value) &&
+                                 (endMonth is null || targetMonth <= endMonth.Value)
+            ? targetMonth
+            : null;
         Points = scenario.ChartProjections
+            .Where(row => (startMonth is null || row.YearMonth >= startMonth.Value) &&
+                          (endMonth is null || row.YearMonth <= endMonth.Value))
             .Select(row => new MutualFundScenarioChartPointViewModel(
                 row.YearMonth,
                 row.MarketValueJpy,
@@ -3671,8 +3809,11 @@ public sealed class DividendPlanStockMonthlyRowViewModel
         PlannedValues = Enumerable.Range(0, 12)
             .Select(index => CurrentValues[index] + ExistingAdditionalValues[index] + NewPurchaseValues[index])
             .ToArray();
-        ScheduleStatuses = Enumerable.Range(1, 12)
-            .Select(month => ResolveStatus(events.Where(x => x.Month == month).ToList()))
+        PaymentScheduleStatuses = Enumerable.Range(1, 12)
+            .Select(month => ResolveStatus(events.Where(x => x.PaymentDate.Month == month).ToList()))
+            .ToArray();
+        ExDividendScheduleStatuses = Enumerable.Range(1, 12)
+            .Select(month => ResolveStatus(events.Where(x => x.ExDividendDate?.Month == month).ToList()))
             .ToArray();
         TotalValue = PlannedValues.Sum();
     }
@@ -3685,10 +3826,15 @@ public sealed class DividendPlanStockMonthlyRowViewModel
     public IReadOnlyList<decimal> NewPurchaseValues { get; }
     public IReadOnlyList<decimal> PlannedValues { get; }
     public IReadOnlyList<decimal> MissedValues { get; }
-    public IReadOnlyList<DividendScheduleStatus?> ScheduleStatuses { get; }
+    public IReadOnlyList<DividendScheduleStatus?> PaymentScheduleStatuses { get; }
+    public IReadOnlyList<DividendScheduleStatus?> ExDividendScheduleStatuses { get; }
+    public IReadOnlyList<DividendScheduleStatus?> ScheduleStatuses => PaymentScheduleStatuses;
     public decimal TotalValue { get; }
 
     public string ToolTipForMonth(int month)
+        => PaymentToolTipForMonth(month);
+
+    public string PaymentToolTipForMonth(int month)
     {
         var index = Math.Clamp(month, 1, 12) - 1;
         return $"{Ticker} {Name}\n{month}月 合計 {Formatters.Jpy(PlannedValues[index])}\n" +
@@ -3696,7 +3842,20 @@ public sealed class DividendPlanStockMonthlyRowViewModel
                $"買い増し {Formatters.Jpy(ExistingAdditionalValues[index])}\n" +
                $"新規購入 {Formatters.Jpy(NewPurchaseValues[index])}\n" +
                $"受取不可 {Formatters.Jpy(MissedValues[index])}\n" +
-               StatusDetails(month, ScheduleStatuses[index]);
+               StatusDetails(
+                   Events.Where(x => x.PaymentDate.Month == month).OrderBy(x => x.PaymentDate).ToList(),
+                   PaymentScheduleStatuses[index],
+                   "支払・入金日");
+    }
+
+    public string ExDividendToolTipForMonth(int month)
+    {
+        month = Math.Clamp(month, 1, 12);
+        return $"{Ticker} {Name}\n{month}月 権利落ち日\n" +
+               StatusDetails(
+                   Events.Where(x => x.ExDividendDate?.Month == month).OrderBy(x => x.ExDividendDate).ToList(),
+                   ExDividendScheduleStatuses[month - 1],
+                   "権利落ち日");
     }
 
     private static IReadOnlyList<decimal> BuildValues(
@@ -3706,12 +3865,14 @@ public sealed class DividendPlanStockMonthlyRowViewModel
             .Select(month => events.Where(x => x.Month == month).Sum(selector))
             .ToArray();
 
-    private string StatusDetails(int month, DividendScheduleStatus? status)
+    private static string StatusDetails(
+        IReadOnlyList<DividendPurchasePlanEvent> events,
+        DividendScheduleStatus? status,
+        string dateType)
     {
         if (status is null) return "予定なし";
-        var monthEvents = Events.Where(x => x.Month == month).OrderBy(x => x.PaymentDate).ToList();
-        var details = monthEvents.Select(FormatEventDetails);
-        return $"代表状態 {DividendScheduleDisplay.Status(status.Value)}\n{string.Join("\n\n", details)}";
+        var details = events.Select(FormatEventDetails);
+        return $"{dateType} / 代表状態 {DividendScheduleDisplay.Status(status.Value)}\n{string.Join("\n\n", details)}";
     }
 
     private static DividendScheduleStatus? ResolveStatus(IReadOnlyList<DividendPurchasePlanEvent> events)

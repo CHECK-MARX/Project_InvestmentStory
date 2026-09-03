@@ -1,3 +1,4 @@
+using InvestmentStory.App.ViewModels;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 
@@ -6,6 +7,43 @@ namespace InvestmentStory.Tests;
 public sealed class MutualFundAssetSimulationServiceTests
 {
     private readonly MutualFundAssetSimulationService _service = new();
+
+    [Fact]
+    public void ScenarioChartSeries_FiltersToRequestedMonthRange()
+    {
+        var firstMonth = new DateTime(2026, 7, 1);
+        var scenario = new MutualFundScenarioResult
+        {
+            Key = "Standard",
+            Name = "標準",
+            AnnualReturnRate = 5m,
+            IsEnabled = true,
+            IsAvailable = true,
+            TargetAchievementMonth = firstMonth.AddMonths(18),
+            ChartProjections = Enumerable.Range(0, 24)
+                .Select(index => new MutualFundScenarioMonthlyProjection
+                {
+                    YearMonth = firstMonth.AddMonths(index),
+                    MonthsFromNow = index,
+                    MarketValueJpy = 1_000_000m + index,
+                    CumulativeContributionJpy = index * 40_000m,
+                    UnrealizedGainJpy = index,
+                    TargetAchievementRate = 5m
+                })
+                .ToList()
+        };
+
+        var series = new MutualFundScenarioChartSeriesViewModel(
+            scenario,
+            20_000_000m,
+            firstMonth,
+            firstMonth.AddMonths(11));
+
+        Assert.Equal(12, series.Points.Count);
+        Assert.Equal(firstMonth, series.Points[0].YearMonth);
+        Assert.Equal(firstMonth.AddMonths(11), series.Points[^1].YearMonth);
+        Assert.Null(series.TargetAchievementMonth);
+    }
 
     [Fact]
     public void Simulate_AllAccounts_SumsLegacyAndNewNisaCsvValues()
@@ -584,6 +622,26 @@ public sealed class MutualFundAssetSimulationServiceTests
         Assert.Equal(DateTime.Today, result.Summary.ActualAnnualizedReturnEstimate.PeriodEnd);
         Assert.InRange(result.Summary.ActualAnnualizedReturnRate!.Value, 16m, 18m);
         Assert.NotEqual(result.Summary.UnrealizedGainRate, result.Summary.ActualAnnualizedReturnRate.Value);
+    }
+
+    [Fact]
+    public void Simulate_RejectsImplausibleShortPeriodAnnualizedReturn()
+    {
+        var positions = new[]
+        {
+            CreateFundPosition(
+                1,
+                AccountTypes.Specific,
+                unitsHeld: 10000m,
+                averageCostNav: 1000m,
+                currentNav: 1200m,
+                purchaseDate: DateTime.Today.AddMonths(-2))
+        };
+
+        var result = _service.Simulate(positions, MutualFundSimulationScopeKeys.AllAccounts, CreateInput());
+
+        Assert.Null(result.Summary.ActualAnnualizedReturnEstimate);
+        Assert.Null(result.Summary.ActualAnnualizedReturnRate);
     }
 
     [Fact]

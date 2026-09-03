@@ -5,6 +5,8 @@ namespace InvestmentStory.Core.Services;
 public sealed class MutualFundAssetSimulationService
 {
     private const decimal DefaultUnitBase = 10000m;
+    private const decimal MinimumReliableActualAnnualizedReturnRate = -90m;
+    private const decimal MaximumReliableActualAnnualizedReturnRate = 50m;
     private static readonly string[] AccountScopeOrder =
     [
         AccountTypes.NisaLegacy,
@@ -921,7 +923,7 @@ public sealed class MutualFundAssetSimulationService
         }
 
         var annualized = ToDecimalPercent(Math.Pow(multiple, 1d / holdingYears) - 1d);
-        if (annualized is null)
+        if (annualized is null || !IsReliableActualAnnualizedReturnRate(annualized.Value))
         {
             return null;
         }
@@ -970,7 +972,7 @@ public sealed class MutualFundAssetSimulationService
         }
 
         var annualized = ToDecimalPercent(rate.Value);
-        if (annualized is null)
+        if (annualized is null || !IsReliableActualAnnualizedReturnRate(annualized.Value))
         {
             return null;
         }
@@ -1005,6 +1007,10 @@ public sealed class MutualFundAssetSimulationService
             ? new CashFlow(trade.TradeDate.Date, amount)
             : new CashFlow(trade.TradeDate.Date, -amount);
     }
+
+    private static bool IsReliableActualAnnualizedReturnRate(decimal annualizedReturnRate) =>
+        annualizedReturnRate > MinimumReliableActualAnnualizedReturnRate &&
+        annualizedReturnRate <= MaximumReliableActualAnnualizedReturnRate;
 
     private static bool IsCapitalFlowTrade(BrokerTrade trade) =>
         trade.SignedQuantity != 0m || trade.SettlementAmountJpy != 0m;
