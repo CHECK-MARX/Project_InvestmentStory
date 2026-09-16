@@ -1,0 +1,17 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/*[Bb]lender*": true,
+            "**/*ブレンダー*": true
+        },
+        "search.exclude": {
+            "**/*[Bb]lender*": true,
+            "**/*ブレンダー*": true
+        }
+    }
+}
