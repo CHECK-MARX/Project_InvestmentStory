@@ -199,6 +199,8 @@ public sealed class InvestmentCalculator
         IEnumerable<DividendPayment> dividendPayments,
         int year)
     {
+        ArgumentNullException.ThrowIfNull(dividendPayments);
+
         var monthly = dividendPayments
             .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
             .Where(x => x.PaymentDate.Year == year)
