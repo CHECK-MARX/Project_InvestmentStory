@@ -14,13 +14,37 @@
                         <Button Content="ファイル選択" Command="{Binding BrowseCommand}" Style="{StaticResource ActionButtonStyle}" />
                         <Button Content="プレビュー" Command="{Binding PreviewCommand}" Style="{StaticResource ActionButtonStyle}" />
                         <Button Content="取込実行" Command="{Binding ImportCommand}" Style="{StaticResource ActionButtonStyle}" />
+                        <Button Content="中止" Command="{Binding CancelCommand}" Style="{StaticResource ActionButtonStyle}" />
                     </StackPanel>
                     <TextBlock Text="CSV取込" Style="{StaticResource SectionTitleStyle}" />
                 </DockPanel>
                 <TextBlock Text="SBI証券、野村證券などのCSVを読み取り専用で自動判定します。対応済みCSVは、ファイル内の取込可能な保有・取引・配当情報をまとめて反映します。"
                            TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="14" Margin="0,0,0,12" />
                 <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,8" />
+                <StackPanel Margin="0,0,0,8">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="{Binding ProgressText}" />
+                    <ProgressBar Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue}" Height="8" Margin="0,4,0,0" />
+                </StackPanel>
                 <WrapPanel>
+                    <WrapPanel.Style>
+                        <Style TargetType="WrapPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </WrapPanel.Style>
                     <StackPanel Width="180">
                         <TextBlock Text="証券会社（未判定CSV用）" Style="{StaticResource LabelTextStyle}" />
                         <ComboBox ItemsSource="{Binding Brokers}" SelectedItem="{Binding Broker}" Height="30" Margin="0,0,14,10" />

@@ -14,7 +14,7 @@ public sealed class DividendReconciliationService
         var existing = existingPayments.ToList();
         var duplicateActual = existing
             .Where(x => DividendConstants.IsActual(x.DividendStatus))
-            .Where(x => IsSameDividendIdentity(x, actualPayment))
+            .Where(x => IsSameActualIdentity(x, actualPayment))
             .OrderByDescending(x => x.SourcePriority)
             .ThenByDescending(x => x.UpdatedAt)
             .FirstOrDefault();
@@ -37,6 +37,17 @@ public sealed class DividendReconciliationService
     private static bool IsManualActual(DividendPayment payment) =>
         DividendConstants.IsActual(payment.DividendStatus) &&
         string.Equals(payment.Source, DividendConstants.SourceManual, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSameActualIdentity(DividendPayment left, DividendPayment right) =>
+        !(left.SourceRowNumber > 0 && right.SourceRowNumber > 0 &&
+          string.Equals(left.SourceFile, right.SourceFile, StringComparison.OrdinalIgnoreCase) &&
+          left.SourceRowNumber != right.SourceRowNumber) &&
+        left.PaymentDate.Date == right.PaymentDate.Date &&
+        left.Quantity == right.Quantity &&
+        left.GrossAmount == right.GrossAmount &&
+        left.NetAmount == right.NetAmount &&
+        left.IsNetOnly == right.IsNetOnly &&
+        IsSameDividendIdentity(left, right);
 
     private static bool IsSameDividendIdentity(DividendPayment left, DividendPayment right)
     {

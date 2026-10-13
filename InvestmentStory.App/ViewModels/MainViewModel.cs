@@ -111,7 +111,16 @@ public sealed class MainViewModel : ObservableObject
             payment => _repository.SaveDividendPayment(payment),
             () => _repository.GetDividendPayments(),
             records => _repository.SaveBrokerTrades(records),
-            LoadData);
+            LoadData,
+            stockId => _repository.GetBrokerTrades(stockId),
+            action => _repository.RunImportAtomically(action),
+            () => _repository.GetSettings().CsvMergePolicy,
+            (trade, reason) => _repository.SaveCsvImportReviewTrade(trade, reason),
+            unresolved => _repository.SaveCsvImportReviewDividend(unresolved),
+            (holding, reason) => _repository.SaveCsvImportReviewHolding(holding, reason),
+            entry => _repository.SaveCsvImportLog(entry),
+            useAsyncCommands: true,
+            afterImportAsync: LoadDataAfterImportAsync);
         BrokerIntegration = new BrokerIntegrationViewModel(
             () => _repository.GetSettings(),
             appSettings => _repository.SaveSettings(appSettings),
@@ -261,25 +270,42 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private void LoadData()
+    private async Task LoadDataAfterImportAsync()
     {
-        var positions = _repository.GetPositions();
+        var repository = _repository;
+        var sampleMode = IsSampleMode;
+        var rankingModes = PassiveIncome.RankingModes.ToArray();
+        var apply = await Task.Run(() => PrepareLoadData(repository, sampleMode, rankingModes));
+        if (ReferenceEquals(repository, _repository) && sampleMode == IsSampleMode)
+            apply();
+        else
+            LoadData();
+    }
+
+    private void LoadData() => PrepareLoadData(_repository, IsSampleMode, PassiveIncome.RankingModes.ToArray())();
+
+    private Action PrepareLoadData(
+        InvestmentStoryRepository repository, bool sampleMode, IReadOnlyList<string> rankingModes)
+    {
+        var positions = repository.GetPositions();
         var usdJpyQuote = GetUsdJpyRate();
-        if (!IsSampleMode && ApplyLatestExchangeRate(positions, usdJpyQuote))
+        if (!sampleMode && ApplyLatestExchangeRate(positions, usdJpyQuote, repository))
         {
-            positions = _repository.GetPositions();
+            positions = repository.GetPositions();
         }
 
-        _snapshots = positions.Select(_calculator.CreateSnapshot).ToList();
-        var dividends = _repository.GetDividendPayments();
-        var goal = _repository.GetGoal(DateTime.Today.Year);
-        var realizedGainLossJpy = _repository.GetAllBrokerTrades().Sum(x => x.RealizedGainLossJpy);
-        var returnSummary = _portfolioAnalyticsService.BuildReturnSummary(_snapshots, dividends, realizedGainLossJpy);
-        SaveCurrentPortfolioSnapshot(dividends, realizedGainLossJpy, usdJpyQuote);
-        var portfolioSnapshots = _repository.GetPortfolioSnapshots();
+        var snapshots = positions.Select(_calculator.CreateSnapshot).ToList();
+        var dividends = repository.GetDividendPayments();
+        var goal = repository.GetGoal(DateTime.Today.Year);
+        var brokerTrades = repository.GetAllBrokerTrades();
+        var realizedGainLossJpy = brokerTrades.Sum(x => x.RealizedGainLossJpy);
+        var returnSummary = _portfolioAnalyticsService.BuildReturnSummary(snapshots, dividends, realizedGainLossJpy);
+        repository.SavePortfolioSnapshot(_portfolioAnalyticsService.CreatePortfolioSnapshot(
+            snapshots, dividends, realizedGainLossJpy, ResolveSnapshotUsdRate(usdJpyQuote, snapshots), DateTime.Today));
+        var portfolioSnapshots = repository.GetPortfolioSnapshots();
         var comparison = _portfolioAnalyticsService.CompareSnapshots(portfolioSnapshots, DateTime.Today);
         var summary = _calculator.CreateDashboardSummary(
-            _snapshots,
+            snapshots,
             dividends,
             goal,
             DateTime.Today,
@@ -293,27 +319,30 @@ public sealed class MainViewModel : ObservableObject
             dividends,
             DateTime.Today.Year,
             goal?.MonthlyPassiveIncomeGoal ?? 0m);
-        var dividendRankings = PassiveIncome.RankingModes.ToDictionary(
+        var dividendRankings = rankingModes.ToDictionary(
             mode => mode,
-            mode => _portfolioAnalyticsService.BuildDividendRanking(dividends, mode, DateTime.Today.Year, _snapshots));
+            mode => _portfolioAnalyticsService.BuildDividendRanking(dividends, mode, DateTime.Today.Year, snapshots));
 
-        SaveDataQuality(positions);
+        SaveDataQuality(positions, repository);
+        var taxProfiles = repository.GetTaxProfiles();
+        var calendarEvents = repository.GetDividendCalendarEvents();
+        var settings = repository.GetSettings();
 
-        Dashboard.Update(summary, _snapshots, portfolioSnapshots);
-        StockList.Update(_snapshots, dividends);
-        Dividends.Update(positions, dividends, goal, DateTime.Today);
-        PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
-        Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
-        Simulation.UpdateMutualFundPortfolio(positions, _repository.GetAllBrokerTrades());
-        Simulation.UpdateDividendPortfolio(
-            positions,
-            _repository.GetTaxProfiles(),
-            dividends,
-            _repository.GetDividendCalendarEvents());
-        BrokerIntegration.Update(positions, _repository.GetSettings());
+        return () =>
+        {
+            _snapshots = snapshots;
+            Dashboard.Update(summary, snapshots, portfolioSnapshots);
+            StockList.Update(snapshots, dividends);
+            Dividends.Update(positions, dividends, goal, DateTime.Today);
+            PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
+            Simulation.UpdateCurrentAnnualIncome(summary.AnnualPassiveIncomeForecastJpy);
+            Simulation.UpdateMutualFundPortfolio(positions, brokerTrades);
+            Simulation.UpdateDividendPortfolio(positions, taxProfiles, dividends, calendarEvents);
+            BrokerIntegration.Update(positions, settings);
 
-        var detailSnapshots = ResolveDetailSnapshots();
-        UpdateStockDetail(detailSnapshots);
+            var detailSnapshots = ResolveDetailSnapshots();
+            UpdateStockDetail(detailSnapshots);
+        };
     }
 
     private void RecordCurrentPortfolioSnapshot()
@@ -356,20 +385,20 @@ public sealed class MainViewModel : ObservableObject
         _repository.SavePortfolioSnapshot(snapshot);
     }
 
-    private decimal ResolveSnapshotUsdRate(ExchangeRateQuote quote)
+    private decimal ResolveSnapshotUsdRate(ExchangeRateQuote quote, IReadOnlyList<StockSnapshot>? snapshots = null)
     {
         if (quote.Rate > 0m)
         {
             return quote.Rate;
         }
 
-        return _snapshots
+        return (snapshots ?? _snapshots)
             .Where(x => x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
             .Select(x => x.Position.CurrentHolding.CurrentExchangeRate)
             .FirstOrDefault(x => x > 0m);
     }
 
-    private void SaveDataQuality(IReadOnlyList<StockPosition> positions)
+    private void SaveDataQuality(IReadOnlyList<StockPosition> positions, InvestmentStoryRepository repository)
     {
         var items = positions
             .Where(x => x.Stock.Id > 0)
@@ -377,11 +406,12 @@ public sealed class MainViewModel : ObservableObject
             .ToList();
         if (items.Count > 0)
         {
-            _repository.SaveDataQualityInfos(items);
+            repository.SaveDataQualityInfos(items);
         }
     }
 
-    private bool ApplyLatestExchangeRate(IReadOnlyList<StockPosition> positions, ExchangeRateQuote quote)
+    private bool ApplyLatestExchangeRate(
+        IReadOnlyList<StockPosition> positions, ExchangeRateQuote quote, InvestmentStoryRepository repository)
     {
         if (!IsLiveExchangeRate(quote) || quote.Rate <= 0m)
         {
@@ -403,7 +433,7 @@ public sealed class MainViewModel : ObservableObject
             position.CurrentHolding.ExchangeRateSource = quote.Source;
             position.CurrentHolding.ExchangeRateInputType = quote.InputType;
             position.CurrentHolding.UpdatedAt = DateTime.Today;
-            _repository.SavePosition(position);
+            repository.SavePosition(position);
             changed = true;
         }
 
@@ -509,6 +539,7 @@ public sealed class MainViewModel : ObservableObject
             JapanMarketDataProvider = source.JapanMarketDataProvider,
             ExchangeRateProvider = source.ExchangeRateProvider,
             BrokerDataMode = source.BrokerDataMode,
+            CsvMergePolicy = source.CsvMergePolicy,
             AlphaVantageApiKey = source.AlphaVantageApiKey,
             JQuantsApiKey = source.JQuantsApiKey,
             ApiTimeoutSeconds = source.ApiTimeoutSeconds,

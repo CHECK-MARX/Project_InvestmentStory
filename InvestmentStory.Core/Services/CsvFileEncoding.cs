@@ -14,22 +14,52 @@ internal static class CsvFileEncoding
         return File.ReadLines(filePath, Detect(filePath));
     }
 
+    public static string[] ReadAllRecords(string filePath)
+    {
+        var records = new List<string>();
+        var current = new StringBuilder();
+        var quoted = false;
+        foreach (var line in ReadLines(filePath))
+        {
+            if (current.Length > 0) current.Append('\n');
+            current.Append(line);
+            for (var i = 0; i < line.Length; i++)
+            {
+                if (line[i] != '"') continue;
+                if (quoted && i + 1 < line.Length && line[i + 1] == '"') { i++; continue; }
+                quoted = !quoted;
+            }
+            if (!quoted)
+            {
+                records.Add(current.ToString());
+                current.Clear();
+            }
+        }
+
+        if (quoted) throw new InvalidOperationException("CSVの引用符が閉じられていません。");
+        return records.ToArray();
+    }
+
     private static Encoding Detect(string filePath)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        var bytes = File.ReadAllBytes(filePath);
-        if (bytes.Length >= 3 &&
-            bytes[0] == 0xEF &&
-            bytes[1] == 0xBB &&
-            bytes[2] == 0xBF)
+        using var stream = File.OpenRead(filePath);
+        Span<byte> bom = stackalloc byte[3];
+        var read = stream.Read(bom);
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        if (read == 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF)
         {
-            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: true, throwOnInvalidBytes: true);
+            return utf8;
         }
 
+        stream.Position = 0;
         try
         {
-            _ = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes);
-            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+            using var reader = new StreamReader(stream, utf8, detectEncodingFromByteOrderMarks: false,
+                bufferSize: 4096, leaveOpen: true);
+            var chars = new char[4096];
+            while (reader.Read(chars, 0, chars.Length) > 0) { }
+            return utf8;
         }
         catch (DecoderFallbackException)
         {

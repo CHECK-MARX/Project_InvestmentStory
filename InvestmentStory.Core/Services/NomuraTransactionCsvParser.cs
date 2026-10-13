@@ -29,17 +29,44 @@ public sealed class NomuraTransactionCsvParser
         var rows = ReadRows(filePath);
         var dividends = new List<BrokerDividendRecord>();
         var trades = new List<BrokerTradeRecord>();
+        var unresolvedDividends = new List<BrokerUnresolvedDividend>();
+        var unresolvedTrades = new List<BrokerTradeRecord>();
         var ignoredRows = 0;
+        var rowAudit = new CsvSourceRowAuditBuilder();
 
         foreach (var row in rows)
         {
+            var rowNumber = int.Parse(row["__SourceRowNumber"], CultureInfo.InvariantCulture);
+            rowAudit.Seen(rowNumber);
             var tradeType = Get(row, "取引区分");
             if (string.Equals(tradeType, "入金（配当金）", StringComparison.Ordinal))
             {
-                var dividend = CreateDividendRecord(row);
-                if (!string.IsNullOrWhiteSpace(dividend.Ticker))
+                var dividend = CreateDividendRecord(row, Path.GetFullPath(filePath));
+                if (!string.IsNullOrWhiteSpace(dividend.Ticker) &&
+                    (dividend.Currency == "JPY" || dividend.ExchangeRate > 0m))
                 {
                     dividends.Add(dividend);
+                    rowAudit.Parsed();
+                }
+                else
+                {
+                    unresolvedDividends.Add(new BrokerUnresolvedDividend
+                    {
+                        PaymentDate = dividend.PaymentDate,
+                        Broker = dividend.Broker,
+                        Name = dividend.Name,
+                        Product = dividend.Product,
+                        Quantity = dividend.Quantity,
+                        GrossAmount = dividend.GrossAmount,
+                        TaxAmount = dividend.TaxAmount,
+                        Source = dividend.Source,
+                        Reason = string.IsNullOrWhiteSpace(dividend.Ticker)
+                            ? "銘柄コードがなく、名称からティッカーを確定できません。"
+                            : "外貨配当の為替レートを確定できません。"
+                    });
+                    ignoredRows++;
+                    rowAudit.Pending(rowNumber, string.IsNullOrWhiteSpace(dividend.Ticker)
+                        ? "銘柄コードを確定できません。" : "為替レートを確定できません。");
                 }
 
                 continue;
@@ -51,12 +78,20 @@ public sealed class NomuraTransactionCsvParser
                 if (!string.IsNullOrWhiteSpace(trade.Ticker))
                 {
                     trades.Add(trade);
+                    rowAudit.Parsed();
+                }
+                else
+                {
+                    unresolvedTrades.Add(trade);
+                    ignoredRows++;
+                    rowAudit.Pending(rowNumber, "銘柄コードを確定できません。");
                 }
 
                 continue;
             }
 
             ignoredRows++;
+            rowAudit.Excluded(rowNumber, $"投資成績の対象外の取引区分: {tradeType}");
         }
 
         return new BrokerStatementImport
@@ -66,7 +101,11 @@ public sealed class NomuraTransactionCsvParser
             CanUpdateHoldings = trades.Count > 0,
             Dividends = dividends,
             Trades = trades,
-            IgnoredRowCount = ignoredRows
+            IgnoredRowCount = ignoredRows,
+            UnresolvedDividends = unresolvedDividends,
+            UnresolvedTrades = unresolvedTrades,
+            SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase)
+            { [filePath] = rowAudit.Build() }
         };
     }
 
@@ -79,7 +118,7 @@ public sealed class NomuraTransactionCsvParser
             throw new FileNotFoundException("CSVファイルが見つかりません。", filePath);
         }
 
-        var lines = File.ReadAllLines(filePath, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        var lines = CsvFileEncoding.ReadAllRecords(filePath);
         var headerIndex = Array.FindIndex(lines, line =>
             line.Contains("約定日", StringComparison.Ordinal) &&
             line.Contains("受渡日", StringComparison.Ordinal) &&
@@ -91,17 +130,22 @@ public sealed class NomuraTransactionCsvParser
         }
 
         var headers = ParseCsvLine(lines[headerIndex]);
+        CsvRowValidation.ValidateHeaders(headers, "約定日", "受渡日", "取引区分", "商品",
+            "銘柄コード", "銘柄名", "発行通貨", "数量", "単価", "受渡金額/決済損益", "レート");
         var rows = new List<IReadOnlyDictionary<string, string>>();
-        foreach (var line in lines.Skip(headerIndex + 1).Where(x => !string.IsNullOrWhiteSpace(x)))
+        for (var index = headerIndex + 1; index < lines.Length; index++)
         {
-            var values = ParseCsvLine(line);
-            rows.Add(ToDictionary(headers, values));
+            if (string.IsNullOrWhiteSpace(lines[index])) continue;
+            var values = ParseCsvLine(lines[index]);
+            var row = CsvRowValidation.ToDictionary(headers, values, index + 1);
+            row["__SourceRowNumber"] = (index + 1).ToString(CultureInfo.InvariantCulture);
+            rows.Add(row);
         }
 
         return rows;
     }
 
-    private static BrokerDividendRecord CreateDividendRecord(IReadOnlyDictionary<string, string> row)
+    private static BrokerDividendRecord CreateDividendRecord(IReadOnlyDictionary<string, string> row, string fileName)
     {
         var product = Get(row, "商品");
         var rawName = Get(row, "銘柄名");
@@ -113,11 +157,11 @@ public sealed class NomuraTransactionCsvParser
         var rate = ParseDecimal(Get(row, "レート"));
         var currency = ResolveCurrency(issueCurrency);
         var gross = quantity * unitDividend;
-        var exchangeRate = currency == "USD" && rate > 0m ? rate : 1m;
-        var net = currency == "USD" && exchangeRate > 0m
+        var exchangeRate = currency == "JPY" ? 1m : rate > 0m ? rate : 0m;
+        var net = currency != "JPY" && exchangeRate > 0m
             ? decimal.Round(netJpy / exchangeRate, 6)
-            : netJpy;
-        var tax = Math.Max(0m, gross - net);
+            : currency == "JPY" ? netJpy : 0m;
+        var tax = exchangeRate > 0m ? Math.Max(0m, gross - net) : 0m;
 
         return new BrokerDividendRecord
         {
@@ -134,7 +178,9 @@ public sealed class NomuraTransactionCsvParser
             Currency = currency,
             ExchangeRate = exchangeRate,
             NetAmountJpy = netJpy,
-            Source = "野村取引履歴CSV"
+            Source = "野村取引履歴CSV",
+            SourceFile = fileName,
+            SourceRowNumber = int.Parse(Get(row, "__SourceRowNumber"), CultureInfo.InvariantCulture)
         };
     }
 
@@ -148,7 +194,7 @@ public sealed class NomuraTransactionCsvParser
         var quantity = ParseDecimal(Get(row, "数量"));
         var rate = ParseDecimal(Get(row, "レート"));
         var currency = ResolveCurrency(issueCurrency);
-        var exchangeRate = currency == "USD" && rate > 0m ? rate : 1m;
+        var exchangeRate = currency == "JPY" ? 1m : rate > 0m ? rate : 0m;
 
         return new BrokerTradeRecord
         {
@@ -179,13 +225,13 @@ public sealed class NomuraTransactionCsvParser
             return false;
         }
 
-        var lines = File.ReadLines(filePath, Encoding.UTF8).Take(10).ToList();
+        var lines = CsvFileEncoding.ReadLines(filePath).Take(10).ToList();
         return lines.Any(x => x.Contains("取引履歴", StringComparison.Ordinal)) &&
                lines.Any(x => x.Contains("約定日", StringComparison.Ordinal) &&
                               x.Contains("取引区分", StringComparison.Ordinal));
     }
 
-    private static string ResolveTicker(string code, string rawName)
+    internal static string ResolveTicker(string code, string rawName)
     {
         if (!string.IsNullOrWhiteSpace(code))
         {
@@ -213,7 +259,11 @@ public sealed class NomuraTransactionCsvParser
     }
 
     private static string ResolveCurrency(string issueCurrency) =>
-        string.Equals(issueCurrency, "USD", StringComparison.OrdinalIgnoreCase) ? "USD" : "JPY";
+        string.IsNullOrWhiteSpace(issueCurrency) ? "JPY" : issueCurrency.Trim().ToUpperInvariant() switch
+        {
+            "円" or "YEN" => "JPY",
+            var currency => currency
+        };
 
     private static string NormalizeDisplayName(string rawName) =>
         rawName.Trim().Replace("　", " ");
@@ -224,17 +274,6 @@ public sealed class NomuraTransactionCsvParser
             .Replace("　", string.Empty)
             .Replace("－", "-")
             .ToUpperInvariant();
-
-    private static Dictionary<string, string> ToDictionary(IReadOnlyList<string> headers, IReadOnlyList<string> values)
-    {
-        var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < headers.Count; i++)
-        {
-            row[headers[i]] = i < values.Count ? values[i] : string.Empty;
-        }
-
-        return row;
-    }
 
     private static string Get(IReadOnlyDictionary<string, string> row, string key) =>
         row.TryGetValue(key, out var value) ? value.Trim() : string.Empty;
@@ -247,9 +286,10 @@ public sealed class NomuraTransactionCsvParser
     private static decimal ParseDecimal(string value)
     {
         var normalized = value.Replace(",", string.Empty).Trim();
+        if (normalized.Length == 0 || normalized == "--") return 0m;
         return decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out var result)
             ? result
-            : 0m;
+            : throw new InvalidOperationException($"数値を読み取れません: {value}");
     }
 
     private static IReadOnlyList<string> ParseCsvLine(string line)

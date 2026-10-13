@@ -42,4 +42,31 @@ public sealed class SbiDistributionCsvParserTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void ParseStatement_KeepsUnknownTickerInReviewAndBalancesSourceRows()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"sbi_distribution_review_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            "受渡日","口座","商品","銘柄名","数量","受取額(税引後・円)"
+            "2026/6/12","特定","米国株式","トーム A TRMD","70","7,820.89"
+            "2026/6/13","特定","米国株式","名称だけの外国銘柄","10","500"
+            """, Encoding.UTF8);
+        try
+        {
+            var statement = new SbiDistributionCsvParser().ParseStatement(path);
+            Assert.Single(statement.Dividends);
+            Assert.Single(statement.UnresolvedDividends);
+            var audit = statement.SourceRowAudits[path];
+            Assert.True(audit.IsBalanced);
+            Assert.Equal(2, audit.InputRows);
+            Assert.Equal(1, audit.ParsedRows);
+            Assert.Equal(1, audit.PendingRows);
+            Assert.Equal(3, Assert.Single(audit.Issues).RowNumber);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

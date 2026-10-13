@@ -2,6 +2,62 @@ using InvestmentStory.Data;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+if (args.Contains("--csv-scan", StringComparer.OrdinalIgnoreCase))
+{
+    var csvDirectory = args.FirstOrDefault(x => !x.StartsWith("--", StringComparison.Ordinal)) ?? "csv";
+    foreach (var file in Directory.GetFiles(csvDirectory, "*.csv", SearchOption.AllDirectories)
+                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+    {
+        var name = Path.GetRelativePath(csvDirectory, file);
+        try
+        {
+            BrokerStatementImport? statement = null;
+            IReadOnlyList<BrokerDividendRecord>? dividends = null;
+            string format;
+            if (NomuraHoldingsCsvParser.LooksLikeNomuraHoldingsCsv(file))
+            {
+                format = "NomuraHoldings";
+                statement = new NomuraHoldingsCsvParser().Parse(file);
+            }
+            else if (NomuraTransactionCsvParser.LooksLikeNomuraTransactionCsv(file))
+            {
+                format = "NomuraTransactions";
+                statement = new NomuraTransactionCsvParser().Parse(file);
+            }
+            else if (NomuraDividendCsvParser.LooksLikeNomuraDividendCsv(file))
+            {
+                format = "NomuraDividends";
+                statement = new NomuraDividendCsvParser().Parse(file);
+            }
+            else if (SbiStatementCsvParser.LooksLikeSbiStatementCsv(file))
+            {
+                format = "SbiStatement";
+                statement = new SbiStatementCsvParser().ParseFromSeedFile(file);
+            }
+            else if (SbiDistributionCsvParser.LooksLikeSbiDistributionCsv(file))
+            {
+                format = "SbiDividends";
+                dividends = new SbiDistributionCsvParser().Parse(file);
+            }
+            else
+            {
+                Console.WriteLine($"CsvScan={name}|Unsupported|DB反映不可");
+                continue;
+            }
+
+            Console.WriteLine($"CsvScan={name}|{format}|Holdings={statement?.Holdings.Count ?? 0}|" +
+                              $"Trades={statement?.Trades.Count ?? 0}|Dividends={statement?.Dividends.Count ?? dividends?.Count ?? 0}|" +
+                              $"Ignored={statement?.IgnoredRowCount ?? 0}|Review={statement?.ReviewMessages.Count ?? 0}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"CsvScan={name}|ParseError|{ex.Message}");
+        }
+    }
+    return;
+}
+
 var flags = args.Where(x => x.StartsWith("--", StringComparison.Ordinal)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 var shouldMigrate = flags.Contains("--migrate");
 var shouldPrintTradeSummary = flags.Contains("--trade-summary");

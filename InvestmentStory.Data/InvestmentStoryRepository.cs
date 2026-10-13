@@ -8,6 +8,14 @@ namespace InvestmentStory.Data;
 public sealed class InvestmentStoryRepository
 {
     private readonly string _databasePath;
+    private SqliteConnection? _importConnection;
+    private SqliteTransaction? _importTransaction;
+    private SqliteCommand? _importDividendInsertCommand;
+    private SqliteCommand? _importDividendUpdateCommand;
+    private readonly Dictionary<string, SqliteParameter> _importDividendInsertParameters = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SqliteParameter> _importDividendUpdateParameters = new(StringComparer.Ordinal);
+    private bool _importDividendInsertPrepared;
+    private bool _importDividendUpdatePrepared;
 
     public InvestmentStoryRepository(string? databasePath = null)
     {
@@ -16,6 +24,38 @@ public sealed class InvestmentStoryRepository
 
     public string DatabasePath => _databasePath;
 
+    public void RunImportAtomically(Action apply)
+    {
+        ArgumentNullException.ThrowIfNull(apply);
+        if (_importConnection is not null)
+        {
+            throw new InvalidOperationException("取込トランザクションを入れ子にできません。");
+        }
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        _importConnection = connection;
+        _importTransaction = transaction;
+        try
+        {
+            apply();
+            transaction.Commit();
+        }
+        finally
+        {
+            _importDividendInsertCommand?.Dispose();
+            _importDividendUpdateCommand?.Dispose();
+            _importDividendInsertCommand = null;
+            _importDividendUpdateCommand = null;
+            _importDividendInsertParameters.Clear();
+            _importDividendUpdateParameters.Clear();
+            _importDividendInsertPrepared = false;
+            _importDividendUpdatePrepared = false;
+            _importTransaction = null;
+            _importConnection = null;
+        }
+    }
+
     public void Initialize()
     {
         new DatabaseInitializer().Initialize(_databasePath);
@@ -23,8 +63,9 @@ public sealed class InvestmentStoryRepository
 
     public IReadOnlyList<StockPosition> GetPositions()
     {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
         command.CommandText = """
             SELECT
                 s.Id, s.Name, s.Ticker, s.Country, s.Currency, s.Broker, s.AccountType, s.CustodyType,
@@ -155,8 +196,10 @@ public sealed class InvestmentStoryRepository
         ArgumentNullException.ThrowIfNull(position);
         NormalizePositionForPersistence(position);
 
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        var connection = _importConnection ?? ownedConnection!;
+        using var ownedTransaction = _importTransaction is null ? connection.BeginTransaction() : null;
+        var transaction = _importTransaction ?? ownedTransaction!;
 
         if (position.Stock.Id == 0)
         {
@@ -187,7 +230,7 @@ public sealed class InvestmentStoryRepository
         }
 
         SyncAutoInitialPositionTrade(connection, transaction, position);
-        transaction.Commit();
+        ownedTransaction?.Commit();
         return stockId;
     }
 
@@ -202,8 +245,9 @@ public sealed class InvestmentStoryRepository
 
     public IReadOnlyList<DividendPayment> GetDividendPayments()
     {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
         command.CommandText = """
             SELECT
                 d.Id, d.StockId, d.AccountType, d.TaxAccountType, d.PaymentDate, d.RecordDate,
@@ -216,7 +260,7 @@ public sealed class InvestmentStoryRepository
                 d.ForeignTaxAmountJpy, d.DomesticTaxAmountJpy, d.TotalTaxAmountJpy,
                 d.NetAmountJpy, d.JpyAmount, d.IsTaxEstimated, d.IsNisa, d.IsForeignStock,
                 d.TaxProfileId, d.MatchedActualDividendId, d.ReplacedByDividendId,
-                d.CreatedAt, d.UpdatedAt, d.Memo
+                d.CreatedAt, d.UpdatedAt, d.Memo, d.IsNetOnly
             FROM DividendPayments d
             INNER JOIN Stocks s ON s.Id = d.StockId
             ORDER BY d.PaymentDate DESC, d.Id DESC;
@@ -273,7 +317,8 @@ public sealed class InvestmentStoryRepository
                 ReplacedByDividendId = GetNullableInt32(reader, 42),
                 CreatedAt = GetDateTimeOrDefault(reader, 43, DateTime.MinValue),
                 UpdatedAt = GetDateTimeOrDefault(reader, 44, DateTime.MinValue),
-                Memo = GetString(reader, 45)
+                Memo = GetString(reader, 45),
+                IsNetOnly = GetInt32OrZero(reader, 46) == 1
             });
         }
 
@@ -398,10 +443,11 @@ public sealed class InvestmentStoryRepository
     {
         ArgumentNullException.ThrowIfNull(dividend);
 
-        using var connection = OpenConnection();
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        var connection = _importConnection ?? ownedConnection!;
         return dividend.Id == 0
-            ? InsertDividend(connection, dividend)
-            : UpdateDividend(connection, dividend);
+            ? InsertDividend(connection, dividend, _importTransaction)
+            : UpdateDividend(connection, dividend, _importTransaction);
     }
 
     public void DeleteDividendPayment(int dividendPaymentId)
@@ -576,6 +622,7 @@ public sealed class InvestmentStoryRepository
             JapanMarketDataProvider = GetSetting(values, nameof(AppSettings.JapanMarketDataProvider), "Yahoo Finance"),
             ExchangeRateProvider = GetSetting(values, nameof(AppSettings.ExchangeRateProvider), "Yahoo Finance"),
             BrokerDataMode = GetSetting(values, nameof(AppSettings.BrokerDataMode), "手入力"),
+            CsvMergePolicy = GetSetting(values, nameof(AppSettings.CsvMergePolicy), "証券会社データを正として上書き"),
             AlphaVantageApiKey = GetSetting(values, nameof(AppSettings.AlphaVantageApiKey), string.Empty),
             JQuantsApiKey = GetSetting(values, nameof(AppSettings.JQuantsApiKey), string.Empty),
             ApiTimeoutSeconds = GetIntSetting(values, nameof(AppSettings.ApiTimeoutSeconds), 10),
@@ -615,6 +662,7 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.JapanMarketDataProvider), settings.JapanMarketDataProvider);
         UpsertSetting(connection, transaction, nameof(AppSettings.ExchangeRateProvider), settings.ExchangeRateProvider);
         UpsertSetting(connection, transaction, nameof(AppSettings.BrokerDataMode), settings.BrokerDataMode);
+        UpsertSetting(connection, transaction, nameof(AppSettings.CsvMergePolicy), settings.CsvMergePolicy);
         UpsertSetting(connection, transaction, nameof(AppSettings.AlphaVantageApiKey), settings.AlphaVantageApiKey);
         UpsertSetting(connection, transaction, nameof(AppSettings.JQuantsApiKey), settings.JQuantsApiKey);
         UpsertSetting(connection, transaction, nameof(AppSettings.ApiTimeoutSeconds), settings.ApiTimeoutSeconds.ToString());
@@ -999,6 +1047,7 @@ public sealed class InvestmentStoryRepository
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         var ledgerBuilder = new TradeLedgerService();
         var ledgers = new List<BrokerTrade>();
+        var recordsByPosition = new Dictionary<int, (StockPosition Position, List<BrokerTradeRecord> Records)>();
 
         foreach (var group in records.GroupBy(BuildTradePositionKey, StringComparer.OrdinalIgnoreCase))
         {
@@ -1008,7 +1057,19 @@ public sealed class InvestmentStoryRepository
                 continue;
             }
 
-            ledgers.AddRange(ledgerBuilder.BuildLedger(position.Stock.Id, group.ToList()));
+            if (!recordsByPosition.TryGetValue(position.Stock.Id, out var target))
+            {
+                target = (position, new List<BrokerTradeRecord>());
+                recordsByPosition.Add(position.Stock.Id, target);
+            }
+            target.Records.AddRange(group);
+        }
+
+        foreach (var (stockId, target) in recordsByPosition)
+        {
+            var combined = TradeHistoryService.Merge(GetBrokerTrades(stockId), target.Records,
+                target.Position.Stock.Ticker);
+            ledgers.AddRange(ledgerBuilder.BuildLedger(stockId, combined));
         }
 
         if (ledgers.Count == 0)
@@ -1016,16 +1077,134 @@ public sealed class InvestmentStoryRepository
             return;
         }
 
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        var connection = _importConnection ?? ownedConnection!;
+        using var ownedTransaction = _importTransaction is null ? connection.BeginTransaction() : null;
+        var transaction = _importTransaction ?? ownedTransaction!;
         DeleteAutoInitialPositionTrades(connection, transaction, ledgers.Select(x => x.StockId));
+        using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            var parameterNames = AddIdParameters(delete, ledgers.Select(x => x.StockId).Distinct().ToList());
+            delete.CommandText = $"DELETE FROM BrokerTrades WHERE StockId IN ({string.Join(", ", parameterNames)});";
+            delete.ExecuteNonQuery();
+        }
         foreach (var trade in ledgers)
         {
             InsertBrokerTrade(connection, transaction, trade);
         }
 
-        NormalizeZeroPriceInboundSplitsFromCurrentHoldings(connection, transaction, ledgers.Select(x => x.StockId));
-        transaction.Commit();
+        ownedTransaction?.Commit();
+    }
+
+    public void SaveCsvImportReviewTrade(BrokerTradeRecord trade, string reason)
+    {
+        ArgumentNullException.ThrowIfNull(trade);
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            INSERT OR IGNORE INTO CsvImportReviewRows
+                (Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity,
+                 UnitPrice, Currency, Source, Reason)
+            VALUES ($broker, $account, $ticker, $tradeDate, $tradeType, $quantity,
+                    $signedQuantity, $unitPrice, $currency, $source, $reason);
+            """;
+        command.Parameters.AddWithValue("$broker", trade.Broker);
+        command.Parameters.AddWithValue("$account", trade.Account);
+        command.Parameters.AddWithValue("$ticker", trade.Ticker);
+        command.Parameters.AddWithValue("$tradeDate", ToDateText(trade.TradeDate));
+        command.Parameters.AddWithValue("$tradeType", trade.TradeType);
+        command.Parameters.AddWithValue("$quantity", trade.Quantity);
+        command.Parameters.AddWithValue("$signedQuantity", trade.SignedQuantity);
+        command.Parameters.AddWithValue("$unitPrice", trade.UnitPrice);
+        command.Parameters.AddWithValue("$currency", trade.Currency);
+        command.Parameters.AddWithValue("$source", trade.Source);
+        command.Parameters.AddWithValue("$reason", reason);
+        command.ExecuteNonQuery();
+    }
+
+    public void SaveCsvImportReviewHolding(BrokerHoldingRecord holding, string reason)
+    {
+        ArgumentNullException.ThrowIfNull(holding);
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            INSERT OR IGNORE INTO CsvImportReviewHoldings
+                (Broker, Account, Ticker, SecurityName, AssetType, Currency, SnapshotDate, Shares, Reason)
+            VALUES ($broker, $account, $ticker, $name, $assetType, $currency, $snapshotDate, $shares, $reason);
+            """;
+        command.Parameters.AddWithValue("$broker", holding.Broker);
+        command.Parameters.AddWithValue("$account", holding.Account);
+        command.Parameters.AddWithValue("$ticker", holding.Ticker);
+        command.Parameters.AddWithValue("$name", holding.Name);
+        command.Parameters.AddWithValue("$assetType", holding.AssetType);
+        command.Parameters.AddWithValue("$currency", holding.Currency);
+        command.Parameters.AddWithValue("$snapshotDate", ToOptionalDateText(holding.SnapshotDate));
+        command.Parameters.AddWithValue("$shares", holding.Shares);
+        command.Parameters.AddWithValue("$reason", reason);
+        command.ExecuteNonQuery();
+    }
+
+    public void SaveCsvImportLog(CsvImportLogEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            INSERT INTO CsvImportLogs
+                (FileName, FileSize, FileHash, Broker, CsvType, ImportedAt, RowCount,
+                 ParsedRowCount, PendingRowCount, ExcludedRowCount,
+                 InsertedCount, UpdatedCount, SkippedCount, ConflictCount, Result, ErrorSummary,
+                 BatchId, ParserVersion)
+            VALUES ($fileName, $fileSize, $fileHash, $broker, $csvType, CURRENT_TIMESTAMP,
+                    $rowCount, $parsedRowCount, $pendingRowCount, $excludedRowCount,
+                    $insertedCount, $updatedCount, $skippedCount, $conflictCount,
+                    $result, $errorSummary, $batchId, $parserVersion);
+            """;
+        command.Parameters.AddWithValue("$fileName", entry.FileName);
+        command.Parameters.AddWithValue("$fileSize", entry.FileSize);
+        command.Parameters.AddWithValue("$fileHash", entry.FileHash);
+        command.Parameters.AddWithValue("$broker", entry.Broker);
+        command.Parameters.AddWithValue("$csvType", entry.CsvType);
+        command.Parameters.AddWithValue("$rowCount", entry.RowCount);
+        command.Parameters.AddWithValue("$parsedRowCount", entry.ParsedRowCount);
+        command.Parameters.AddWithValue("$pendingRowCount", entry.PendingRowCount);
+        command.Parameters.AddWithValue("$excludedRowCount", entry.ExcludedRowCount);
+        command.Parameters.AddWithValue("$insertedCount", entry.InsertedCount);
+        command.Parameters.AddWithValue("$updatedCount", entry.UpdatedCount);
+        command.Parameters.AddWithValue("$skippedCount", entry.SkippedCount);
+        command.Parameters.AddWithValue("$conflictCount", entry.ConflictCount);
+        command.Parameters.AddWithValue("$result", entry.Result);
+        command.Parameters.AddWithValue("$errorSummary", entry.ErrorSummary);
+        command.Parameters.AddWithValue("$batchId", entry.BatchId);
+        command.Parameters.AddWithValue("$parserVersion", entry.ParserVersion);
+        command.ExecuteNonQuery();
+    }
+
+    public void SaveCsvImportReviewDividend(BrokerUnresolvedDividend dividend)
+    {
+        ArgumentNullException.ThrowIfNull(dividend);
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            INSERT OR IGNORE INTO CsvImportReviewDividends
+                (PaymentDate, Broker, SecurityName, Product, Quantity, GrossAmount, TaxAmount, Source, Reason)
+            VALUES ($paymentDate, $broker, $name, $product, $quantity, $gross, $tax, $source, $reason);
+            """;
+        command.Parameters.AddWithValue("$paymentDate", ToDateText(dividend.PaymentDate));
+        command.Parameters.AddWithValue("$broker", dividend.Broker);
+        command.Parameters.AddWithValue("$name", dividend.Name);
+        command.Parameters.AddWithValue("$product", dividend.Product);
+        command.Parameters.AddWithValue("$quantity", dividend.Quantity);
+        command.Parameters.AddWithValue("$gross", dividend.GrossAmount);
+        command.Parameters.AddWithValue("$tax", dividend.TaxAmount);
+        command.Parameters.AddWithValue("$source", dividend.Source);
+        command.Parameters.AddWithValue("$reason", dividend.Reason);
+        command.ExecuteNonQuery();
     }
 
     private static void DeleteAutoInitialPositionTrades(
@@ -1068,9 +1247,10 @@ public sealed class InvestmentStoryRepository
         var normalizedCurrency = NormalizeCurrency(trade.Currency);
 
         var candidates = positions
-            .Where(x => !x.IsMutualFund)
+            .Where(x => x.IsMutualFund == (trade.Ticker.StartsWith("FUND:", StringComparison.OrdinalIgnoreCase) ||
+                                          trade.Product.Contains("投資信託", StringComparison.Ordinal)))
             .Where(x => PositionIdentityService.NormalizeBroker(x.Stock.Broker).Equals(normalizedBroker, StringComparison.OrdinalIgnoreCase))
-            .Where(x => SecuritySymbolNormalizer.NormalizeTicker(x.Stock.Ticker).Equals(normalizedTicker, StringComparison.OrdinalIgnoreCase))
+            .Where(x => NormalizeTradeTicker(x.Stock.Ticker).Equals(NormalizeTradeTicker(normalizedTicker), StringComparison.OrdinalIgnoreCase))
             .Where(x => NormalizeCurrency(x.Stock.Currency).Equals(normalizedCurrency, StringComparison.OrdinalIgnoreCase))
             .Select(x => new
             {
@@ -1244,8 +1424,9 @@ public sealed class InvestmentStoryRepository
 
     public IReadOnlyList<BrokerTrade> GetBrokerTrades(int stockId)
     {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
         command.CommandText = """
             SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
                    Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
@@ -1931,7 +2112,7 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$signedQuantity", trade.SignedQuantity);
         command.Parameters.AddWithValue("$unitPrice", trade.UnitPrice);
         command.Parameters.AddWithValue("$currency", NormalizeCurrency(trade.Currency));
-        command.Parameters.AddWithValue("$exchangeRate", trade.ExchangeRate <= 0m ? 1m : trade.ExchangeRate);
+        command.Parameters.AddWithValue("$exchangeRate", NormalizeCurrency(trade.Currency) == "JPY" ? 1m : trade.ExchangeRate);
         command.Parameters.AddWithValue("$settlementAmountJpy", trade.SettlementAmountJpy);
         command.Parameters.AddWithValue("$feeJpy", trade.FeeJpy);
         command.Parameters.AddWithValue("$taxJpy", trade.TaxJpy);
@@ -1981,10 +2162,14 @@ public sealed class InvestmentStoryRepository
         return trades;
     }
 
-    private static int InsertDividend(SqliteConnection connection, DividendPayment dividend)
+    private int InsertDividend(SqliteConnection connection, DividendPayment dividend, SqliteTransaction? transaction = null)
     {
-        using var command = connection.CreateCommand();
-        command.CommandText = """
+        using var ownedCommand = transaction is null ? connection.CreateCommand() : null;
+        var command = transaction is null
+            ? ownedCommand!
+            : _importDividendInsertCommand ??= connection.CreateCommand();
+        command.Transaction = transaction;
+        if (command.CommandText.Length == 0) command.CommandText = """
             INSERT INTO DividendPayments
                 (StockId, AccountType, TaxAccountType, PaymentDate, RecordDate, ExDividendDate, DeclaredDate,
                  FiscalYear, FiscalQuarter, Broker, DividendStatus, Source, SourceFile, SourceRowNumber,
@@ -1993,7 +2178,7 @@ public sealed class InvestmentStoryRepository
                  ExchangeRateSource, ExchangeRateInputType, GrossAmountJpy, ForeignTaxAmountJpy,
                  DomesticTaxAmountJpy, TotalTaxAmountJpy, NetAmountJpy, JpyAmount, IsTaxEstimated,
                  IsNisa, IsForeignStock, TaxProfileId, MatchedActualDividendId, ReplacedByDividendId,
-                 CreatedAt, UpdatedAt, Memo)
+                 CreatedAt, UpdatedAt, Memo, IsNetOnly)
             VALUES
                 ($stockId, $accountType, $taxAccountType, $paymentDate, $recordDate, $exDividendDate, $declaredDate,
                  $fiscalYear, $fiscalQuarter, $broker, $dividendStatus, $source, $sourceFile, $sourceRowNumber,
@@ -2002,17 +2187,26 @@ public sealed class InvestmentStoryRepository
                  $exchangeRateSource, $exchangeRateInputType, $grossAmountJpy, $foreignTaxAmountJpy,
                  $domesticTaxAmountJpy, $totalTaxAmountJpy, $netAmountJpy, $jpyAmount, $isTaxEstimated,
                  $isNisa, $isForeignStock, $taxProfileId, $matchedActualDividendId, $replacedByDividendId,
-                 $createdAt, $updatedAt, $memo);
+                 $createdAt, $updatedAt, $memo, $isNetOnly);
             SELECT last_insert_rowid();
             """;
-        AddDividendParameters(command, dividend);
+        AddDividendParameters(command, dividend, transaction is null ? null : _importDividendInsertParameters);
+        if (transaction is not null && !_importDividendInsertPrepared)
+        {
+            command.Prepare();
+            _importDividendInsertPrepared = true;
+        }
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
-    private static int UpdateDividend(SqliteConnection connection, DividendPayment dividend)
+    private int UpdateDividend(SqliteConnection connection, DividendPayment dividend, SqliteTransaction? transaction = null)
     {
-        using var command = connection.CreateCommand();
-        command.CommandText = """
+        using var ownedCommand = transaction is null ? connection.CreateCommand() : null;
+        var command = transaction is null
+            ? ownedCommand!
+            : _importDividendUpdateCommand ??= connection.CreateCommand();
+        command.Transaction = transaction;
+        if (command.CommandText.Length == 0) command.CommandText = """
             UPDATE DividendPayments
             SET StockId = $stockId,
                 AccountType = $accountType,
@@ -2049,6 +2243,7 @@ public sealed class InvestmentStoryRepository
                 NetAmountJpy = $netAmountJpy,
                 JpyAmount = $jpyAmount,
                 IsTaxEstimated = $isTaxEstimated,
+                IsNetOnly = $isNetOnly,
                 IsNisa = $isNisa,
                 IsForeignStock = $isForeignStock,
                 TaxProfileId = $taxProfileId,
@@ -2059,8 +2254,14 @@ public sealed class InvestmentStoryRepository
                 Memo = $memo
             WHERE Id = $id;
             """;
-        AddDividendParameters(command, dividend);
-        command.Parameters.AddWithValue("$id", dividend.Id);
+        var parameterCache = transaction is null ? null : _importDividendUpdateParameters;
+        AddDividendParameters(command, dividend, parameterCache);
+        SetDividendParameter(command, parameterCache, "$id", dividend.Id);
+        if (transaction is not null && !_importDividendUpdatePrepared)
+        {
+            command.Prepare();
+            _importDividendUpdatePrepared = true;
+        }
         command.ExecuteNonQuery();
         return dividend.Id;
     }
@@ -2089,10 +2290,10 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$memo", stock.Memo);
     }
 
-    private static void AddDividendParameters(SqliteCommand command, DividendPayment dividend)
+    private static void AddDividendParameters(SqliteCommand command, DividendPayment dividend, Dictionary<string, SqliteParameter>? parameterCache)
     {
         var currency = NormalizeCurrency(dividend.Currency);
-        var exchangeRate = currency == "JPY" ? 1m : dividend.ExchangeRate <= 0m ? 1m : dividend.ExchangeRate;
+        var exchangeRate = currency == "JPY" ? 1m : dividend.ExchangeRate > 0m ? dividend.ExchangeRate : 0m;
         var accountType = DividendConstants.NormalizeAccountType(dividend.AccountType);
         var taxAccountType = DividendConstants.NormalizeAccountType(dividend.TaxAccountType);
         if (taxAccountType == DividendConstants.AccountUnknown)
@@ -2104,12 +2305,12 @@ public sealed class InvestmentStoryRepository
             ? dividend.TotalTaxAmount
             : dividend.TaxAmount > 0m ? dividend.TaxAmount : dividend.ForeignTaxAmount + dividend.DomesticTaxAmount;
         var taxAmount = dividend.TaxAmount > 0m ? dividend.TaxAmount : totalTaxAmount;
-        var grossAmount = dividend.GrossAmount > 0m ? dividend.GrossAmount : dividend.NetAmount + taxAmount;
+        var grossAmount = dividend.IsNetOnly ? 0m : dividend.GrossAmount > 0m ? dividend.GrossAmount : dividend.NetAmount + taxAmount;
         var netAmount = dividend.NetAmount > 0m ? dividend.NetAmount : Math.Max(0m, grossAmount - taxAmount);
         var dividendPerShare = dividend.DividendPerShare > 0m
             ? dividend.DividendPerShare
             : dividend.Quantity > 0m && grossAmount > 0m ? grossAmount / dividend.Quantity : 0m;
-        var grossAmountJpy = dividend.GrossAmountJpy > 0m ? dividend.GrossAmountJpy : grossAmount * exchangeRate;
+        var grossAmountJpy = dividend.IsNetOnly ? 0m : dividend.GrossAmountJpy > 0m ? dividend.GrossAmountJpy : grossAmount * exchangeRate;
         var foreignTaxAmountJpy = dividend.ForeignTaxAmountJpy > 0m ? dividend.ForeignTaxAmountJpy : dividend.ForeignTaxAmount * exchangeRate;
         var domesticTaxAmountJpy = dividend.DomesticTaxAmountJpy > 0m ? dividend.DomesticTaxAmountJpy : dividend.DomesticTaxAmount * exchangeRate;
         var totalTaxAmountJpy = dividend.TotalTaxAmountJpy > 0m ? dividend.TotalTaxAmountJpy : taxAmount * exchangeRate;
@@ -2122,53 +2323,67 @@ public sealed class InvestmentStoryRepository
         var createdAt = dividend.CreatedAt == default || dividend.CreatedAt == DateTime.MinValue ? DateTime.Now : dividend.CreatedAt;
         var updatedAt = dividend.UpdatedAt == default || dividend.UpdatedAt == DateTime.MinValue ? DateTime.Now : dividend.UpdatedAt;
 
-        command.Parameters.AddWithValue("$stockId", dividend.StockId);
-        command.Parameters.AddWithValue("$accountType", accountType);
-        command.Parameters.AddWithValue("$taxAccountType", taxAccountType);
-        command.Parameters.AddWithValue("$paymentDate", ToDateText(dividend.PaymentDate));
-        command.Parameters.AddWithValue("$recordDate", ToOptionalDateText(dividend.RecordDate));
-        command.Parameters.AddWithValue("$exDividendDate", ToOptionalDateText(dividend.ExDividendDate));
-        command.Parameters.AddWithValue("$declaredDate", ToOptionalDateText(dividend.DeclaredDate));
-        command.Parameters.AddWithValue("$fiscalYear", dividend.FiscalYear == 0 ? dividend.PaymentDate.Year : dividend.FiscalYear);
-        command.Parameters.AddWithValue("$fiscalQuarter", string.IsNullOrWhiteSpace(dividend.FiscalQuarter)
+        SetDividendParameter(command, parameterCache, "$stockId", dividend.StockId);
+        SetDividendParameter(command, parameterCache, "$accountType", accountType);
+        SetDividendParameter(command, parameterCache, "$taxAccountType", taxAccountType);
+        SetDividendParameter(command, parameterCache, "$paymentDate", ToDateText(dividend.PaymentDate));
+        SetDividendParameter(command, parameterCache, "$recordDate", ToOptionalDateText(dividend.RecordDate));
+        SetDividendParameter(command, parameterCache, "$exDividendDate", ToOptionalDateText(dividend.ExDividendDate));
+        SetDividendParameter(command, parameterCache, "$declaredDate", ToOptionalDateText(dividend.DeclaredDate));
+        SetDividendParameter(command, parameterCache, "$fiscalYear", dividend.FiscalYear == 0 ? dividend.PaymentDate.Year : dividend.FiscalYear);
+        SetDividendParameter(command, parameterCache, "$fiscalQuarter", string.IsNullOrWhiteSpace(dividend.FiscalQuarter)
             ? $"Q{((dividend.PaymentDate.Month - 1) / 3) + 1}"
             : dividend.FiscalQuarter);
-        command.Parameters.AddWithValue("$broker", dividend.Broker);
-        command.Parameters.AddWithValue("$dividendStatus", string.IsNullOrWhiteSpace(dividend.DividendStatus)
+        SetDividendParameter(command, parameterCache, "$broker", dividend.Broker);
+        SetDividendParameter(command, parameterCache, "$dividendStatus", string.IsNullOrWhiteSpace(dividend.DividendStatus)
             ? DividendConstants.Actual
             : dividend.DividendStatus.Trim());
-        command.Parameters.AddWithValue("$source", source);
-        command.Parameters.AddWithValue("$sourceFile", dividend.SourceFile);
-        command.Parameters.AddWithValue("$sourceRowNumber", dividend.SourceRowNumber);
-        command.Parameters.AddWithValue("$sourcePriority", sourcePriority);
-        command.Parameters.AddWithValue("$quantity", dividend.Quantity);
-        command.Parameters.AddWithValue("$dividendPerShare", dividendPerShare);
-        command.Parameters.AddWithValue("$grossAmount", grossAmount);
-        command.Parameters.AddWithValue("$foreignTaxAmount", dividend.ForeignTaxAmount);
-        command.Parameters.AddWithValue("$domesticTaxAmount", dividend.DomesticTaxAmount);
-        command.Parameters.AddWithValue("$totalTaxAmount", totalTaxAmount);
-        command.Parameters.AddWithValue("$taxAmount", taxAmount);
-        command.Parameters.AddWithValue("$netAmount", netAmount);
-        command.Parameters.AddWithValue("$currency", currency);
-        command.Parameters.AddWithValue("$exchangeRate", exchangeRate);
-        command.Parameters.AddWithValue("$exchangeRateAcquiredAt", ToDateTimeText(dividend.ExchangeRateAcquiredAt));
-        command.Parameters.AddWithValue("$exchangeRateSource", string.IsNullOrWhiteSpace(dividend.ExchangeRateSource) ? "手入力" : dividend.ExchangeRateSource);
-        command.Parameters.AddWithValue("$exchangeRateInputType", string.IsNullOrWhiteSpace(dividend.ExchangeRateInputType) ? "手入力" : dividend.ExchangeRateInputType);
-        command.Parameters.AddWithValue("$grossAmountJpy", grossAmountJpy);
-        command.Parameters.AddWithValue("$foreignTaxAmountJpy", foreignTaxAmountJpy);
-        command.Parameters.AddWithValue("$domesticTaxAmountJpy", domesticTaxAmountJpy);
-        command.Parameters.AddWithValue("$totalTaxAmountJpy", totalTaxAmountJpy);
-        command.Parameters.AddWithValue("$netAmountJpy", netAmountJpy);
-        command.Parameters.AddWithValue("$jpyAmount", jpyAmount);
-        command.Parameters.AddWithValue("$isTaxEstimated", dividend.IsTaxEstimated ? 1 : 0);
-        command.Parameters.AddWithValue("$isNisa", dividend.IsNisa || DividendConstants.IsNisaAccount(accountType) || DividendConstants.IsNisaAccount(taxAccountType) ? 1 : 0);
-        command.Parameters.AddWithValue("$isForeignStock", dividend.IsForeignStock || currency != "JPY" ? 1 : 0);
-        command.Parameters.AddWithValue("$taxProfileId", dividend.TaxProfileId.HasValue ? dividend.TaxProfileId.Value : (object)DBNull.Value);
-        command.Parameters.AddWithValue("$matchedActualDividendId", dividend.MatchedActualDividendId.HasValue ? dividend.MatchedActualDividendId.Value : (object)DBNull.Value);
-        command.Parameters.AddWithValue("$replacedByDividendId", dividend.ReplacedByDividendId.HasValue ? dividend.ReplacedByDividendId.Value : (object)DBNull.Value);
-        command.Parameters.AddWithValue("$createdAt", ToDateTimeText(createdAt));
-        command.Parameters.AddWithValue("$updatedAt", ToDateTimeText(updatedAt));
-        command.Parameters.AddWithValue("$memo", dividend.Memo);
+        SetDividendParameter(command, parameterCache, "$source", source);
+        SetDividendParameter(command, parameterCache, "$sourceFile", dividend.SourceFile);
+        SetDividendParameter(command, parameterCache, "$sourceRowNumber", dividend.SourceRowNumber);
+        SetDividendParameter(command, parameterCache, "$sourcePriority", sourcePriority);
+        SetDividendParameter(command, parameterCache, "$quantity", dividend.Quantity);
+        SetDividendParameter(command, parameterCache, "$dividendPerShare", dividendPerShare);
+        SetDividendParameter(command, parameterCache, "$grossAmount", grossAmount);
+        SetDividendParameter(command, parameterCache, "$foreignTaxAmount", dividend.ForeignTaxAmount);
+        SetDividendParameter(command, parameterCache, "$domesticTaxAmount", dividend.DomesticTaxAmount);
+        SetDividendParameter(command, parameterCache, "$totalTaxAmount", totalTaxAmount);
+        SetDividendParameter(command, parameterCache, "$taxAmount", taxAmount);
+        SetDividendParameter(command, parameterCache, "$netAmount", netAmount);
+        SetDividendParameter(command, parameterCache, "$currency", currency);
+        SetDividendParameter(command, parameterCache, "$exchangeRate", exchangeRate);
+        SetDividendParameter(command, parameterCache, "$exchangeRateAcquiredAt", ToDateTimeText(dividend.ExchangeRateAcquiredAt));
+        SetDividendParameter(command, parameterCache, "$exchangeRateSource", string.IsNullOrWhiteSpace(dividend.ExchangeRateSource) ? "手入力" : dividend.ExchangeRateSource);
+        SetDividendParameter(command, parameterCache, "$exchangeRateInputType", string.IsNullOrWhiteSpace(dividend.ExchangeRateInputType) ? "手入力" : dividend.ExchangeRateInputType);
+        SetDividendParameter(command, parameterCache, "$grossAmountJpy", grossAmountJpy);
+        SetDividendParameter(command, parameterCache, "$foreignTaxAmountJpy", foreignTaxAmountJpy);
+        SetDividendParameter(command, parameterCache, "$domesticTaxAmountJpy", domesticTaxAmountJpy);
+        SetDividendParameter(command, parameterCache, "$totalTaxAmountJpy", totalTaxAmountJpy);
+        SetDividendParameter(command, parameterCache, "$netAmountJpy", netAmountJpy);
+        SetDividendParameter(command, parameterCache, "$jpyAmount", jpyAmount);
+        SetDividendParameter(command, parameterCache, "$isTaxEstimated", dividend.IsTaxEstimated ? 1 : 0);
+        SetDividendParameter(command, parameterCache, "$isNetOnly", dividend.IsNetOnly ? 1 : 0);
+        SetDividendParameter(command, parameterCache, "$isNisa", dividend.IsNisa || DividendConstants.IsNisaAccount(accountType) || DividendConstants.IsNisaAccount(taxAccountType) ? 1 : 0);
+        SetDividendParameter(command, parameterCache, "$isForeignStock", dividend.IsForeignStock || currency != "JPY" ? 1 : 0);
+        SetDividendParameter(command, parameterCache, "$taxProfileId", dividend.TaxProfileId.HasValue ? dividend.TaxProfileId.Value : (object)DBNull.Value);
+        SetDividendParameter(command, parameterCache, "$matchedActualDividendId", dividend.MatchedActualDividendId.HasValue ? dividend.MatchedActualDividendId.Value : (object)DBNull.Value);
+        SetDividendParameter(command, parameterCache, "$replacedByDividendId", dividend.ReplacedByDividendId.HasValue ? dividend.ReplacedByDividendId.Value : (object)DBNull.Value);
+        SetDividendParameter(command, parameterCache, "$createdAt", ToDateTimeText(createdAt));
+        SetDividendParameter(command, parameterCache, "$updatedAt", ToDateTimeText(updatedAt));
+        SetDividendParameter(command, parameterCache, "$memo", dividend.Memo);
+    }
+
+    private static void SetDividendParameter(
+        SqliteCommand command, Dictionary<string, SqliteParameter>? parameterCache, string name, object value)
+    {
+        if (parameterCache is null)
+        {
+            command.Parameters.AddWithValue(name, value);
+            return;
+        }
+
+        if (parameterCache.TryGetValue(name, out var parameter)) parameter.Value = value;
+        else parameterCache[name] = command.Parameters.AddWithValue(name, value);
     }
 
     private static string GetString(SqliteDataReader reader, int ordinal) =>
@@ -2328,7 +2543,9 @@ public sealed class InvestmentStoryRepository
     {
         var stock = new Stock
         {
-            AssetType = AssetTypes.Stock,
+            AssetType = trade.Ticker.StartsWith("FUND:", StringComparison.OrdinalIgnoreCase) ||
+                        trade.Product.Contains("投資信託", StringComparison.Ordinal)
+                ? AssetTypes.MutualFund : AssetTypes.Stock,
             Broker = trade.Broker,
             Ticker = trade.Ticker,
             Currency = trade.Currency,
@@ -2347,6 +2564,12 @@ public sealed class InvestmentStoryRepository
             Split = new StockSplit()
         };
         return SecurityIdentityService.BuildPositionKey(position);
+    }
+
+    private static string NormalizeTradeTicker(string ticker)
+    {
+        var normalized = SecuritySymbolNormalizer.NormalizeTicker(ticker);
+        return normalized.StartsWith("FUND:", StringComparison.OrdinalIgnoreCase) ? normalized[5..] : normalized;
     }
 
     private static string BuildPositionKey(string broker, string ticker, string accountType)

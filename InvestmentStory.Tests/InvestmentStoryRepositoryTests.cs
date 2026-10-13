@@ -8,7 +8,7 @@ namespace InvestmentStory.Tests;
 public sealed class InvestmentStoryRepositoryTests
 {
     [Fact]
-    public void Initialize_CreatesSampleData()
+    public void Initialize_LeavesNormalDatabaseEmpty()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_test_{Guid.NewGuid():N}.db");
         try
@@ -21,23 +21,9 @@ public sealed class InvestmentStoryRepositoryTests
             var dividends = repository.GetDividendPayments();
             var goal = repository.GetGoal(DateTime.Today.Year);
 
-            Assert.Equal(3, positions.Count);
-            Assert.Contains(positions, x => x.Stock.Ticker == "NVDA" && x.CurrentHolding.CurrentShares == 50m);
-            Assert.Contains(positions, x => x.Stock.Ticker == "TSLA" && x.Split.SplitRatio == 3m);
-            Assert.Contains(positions, x => x.Stock.Ticker == "AMD" && x.Purchase.UnitPrice == 150m);
-            Assert.Contains(positions, x => x.Stock.Ticker == "NVDA" &&
-                x.Purchase.ExchangeRate == 160m &&
-                x.Purchase.ExchangeRateSource == "手入力" &&
-                x.CurrentHolding.CurrentExchangeRate == 160m &&
-                x.CurrentHolding.ExchangeRateInputType == "手入力");
-            Assert.NotEmpty(dividends);
-            Assert.All(dividends, x =>
-            {
-                Assert.Equal(160m, x.ExchangeRate);
-                Assert.Equal("手入力", x.ExchangeRateInputType);
-                Assert.True(x.JpyAmount > 0m);
-            });
-            Assert.NotNull(goal);
+            Assert.Empty(positions);
+            Assert.Empty(dividends);
+            Assert.Null(goal);
         }
         finally
         {
@@ -59,6 +45,7 @@ public sealed class InvestmentStoryRepositoryTests
 
             var settings = repository.GetSettings();
             settings.ThemeMode = "Dark";
+            settings.CsvMergePolicy = "新規銘柄だけ追加";
             settings.IsSidebarCollapsed = true;
             settings.StockListDisplayMode = "配当";
             settings.LastDashboardCompositionMode = "Broker";
@@ -70,6 +57,7 @@ public sealed class InvestmentStoryRepositoryTests
             var loaded = reloaded.GetSettings();
 
             Assert.Equal("Dark", loaded.ThemeMode);
+            Assert.Equal("新規銘柄だけ追加", loaded.CsvMergePolicy);
             Assert.True(loaded.IsSidebarCollapsed);
             Assert.Equal("配当", loaded.StockListDisplayMode);
             Assert.Equal("Broker", loaded.LastDashboardCompositionMode);
@@ -92,7 +80,13 @@ public sealed class InvestmentStoryRepositoryTests
         {
             var repository = new InvestmentStoryRepository(databasePath);
             repository.Initialize();
-            var stockId = repository.GetPositions().First().Stock.Id;
+            var stockId = repository.SavePosition(new StockPosition
+            {
+                Stock = new Stock { Ticker = "TEST", Name = "Test", Broker = "Test", Currency = "USD" },
+                Purchase = new Purchase { PurchaseDate = new DateTime(2026, 1, 1), Shares = 1m, UnitPrice = 1m },
+                Split = new StockSplit { SplitRatio = 1m },
+                CurrentHolding = new CurrentHolding { CurrentShares = 1m, CurrentPrice = 1m }
+            });
             const string eventKey = "2026-02-27|1.25|USD";
 
             var saved = repository.SaveDividendCalendarEvents(stockId, new[]

@@ -40,6 +40,7 @@ public sealed class DividendPayment
     public decimal NetAmountJpy { get; set; }
     public decimal JpyAmount { get; set; }
     public bool IsTaxEstimated { get; set; }
+    public bool IsNetOnly { get; set; }
     public bool IsNisa { get; set; }
     public bool IsForeignStock { get; set; }
     public int? TaxProfileId { get; set; }

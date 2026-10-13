@@ -16,14 +16,14 @@ public sealed class DatabaseAuditServiceTests
             var audit = new DatabaseAuditService().Audit(databasePath);
 
             Assert.Equal(databasePath, audit.Database);
-            Assert.True(audit.Stocks > 0);
+            Assert.Equal(0, audit.Stocks);
             Assert.Equal(0, audit.DuplicatePositionGroups);
             Assert.Equal(0, audit.DuplicateDividendRows);
             Assert.Equal(0, audit.DuplicateTradeRows);
             Assert.Equal(0, audit.DuplicateTransactionRows);
             Assert.Equal(0, audit.DuplicateMutualFundGroups);
-            Assert.True(audit.SecurityMasters > 0);
-            Assert.True(audit.Positions > 0);
+            Assert.Equal(0, audit.SecurityMasters);
+            Assert.Equal(0, audit.Positions);
             Assert.True(audit.Transactions >= 0);
             Assert.True(audit.DividendPayments >= 0);
             Assert.True(audit.ZeroPriceInboundEvents >= 0);
