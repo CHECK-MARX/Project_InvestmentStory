@@ -40,7 +40,7 @@ public sealed class DividendHeatmapControl : InteractiveDividendChartControl
         }
 
         _left = Math.Clamp(ActualWidth * 0.18d, 78d, 150d);
-        _top = 56d;
+        _top = 70d;
         _cellWidth = Math.Max(22d, (ActualWidth - _left - 10d) / 12d);
         _cellHeight = Math.Max(22d, (ActualHeight - _top - 8d) / _rows.Count);
         var text = Brush("PrimaryTextBrush", Brushes.White);
@@ -50,7 +50,7 @@ public sealed class DividendHeatmapControl : InteractiveDividendChartControl
 
         DrawScaleLegend(dc, max, secondary);
         for (var month = 1; month <= 12; month++)
-            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 34, secondary);
+            DrawText(dc, $"{month}月", 10, _left + (month - 1) * _cellWidth + 4, 48, secondary);
 
         foreach (var (row, rowIndex) in _rows.Select((row, index) => (row, index)))
         {
@@ -105,7 +105,8 @@ public sealed class DividendHeatmapControl : InteractiveDividendChartControl
         }
         DrawText(dc, "0", 9, 34, 17, secondary);
         DrawText(dc, $"{max:N0}円", 9, 104, 17, secondary);
-        DrawText(dc, "塗り=金額 / 枠=状態 / 空欄=配当なし", 9, 190, 5, secondary);
+        DrawText(dc, "塗り=入金見込み額 / 枠色・線種=状態 / 空欄=支払予定なし", 9, 190, 5, secondary);
+        DrawText(dc, "水色実線=入金済み / 緑実線=公表済み / 橙点線=推定 / 灰点線=権利取得不可 / 赤点線=期限超過", 9, 4, 32, secondary);
     }
 
     private Brush Brush(string key, Brush fallback) => TryFindResource(key) as Brush ?? fallback;

@@ -13,13 +13,13 @@ public sealed class DashboardViewModel : ObservableObject
     private DashboardSummary _summary = new();
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
     private IReadOnlyList<PortfolioSnapshot> _portfolioSnapshots = Array.Empty<PortfolioSnapshot>();
-    private string _selectedCompositionMode = "国別";
+    private string _selectedCompositionMode = "分野別";
     private string _selectedHistoryPeriod = "1年";
 
     public DashboardViewModel(Action? recordSnapshot = null)
     {
         _recordSnapshot = recordSnapshot ?? (() => { });
-        CompositionModes = new[] { "国別", "通貨別", "証券会社別", "資産種別別", "口座区分別", "セクター別" };
+        CompositionModes = new[] { "分野別", "国別", "通貨別", "証券会社別", "資産種別別", "口座区分別" };
         HistoryPeriods = new[] { "1か月", "3か月", "6か月", "1年", "3年", "全期間" };
         RecordSnapshotCommand = new RelayCommand(_recordSnapshot);
     }
@@ -62,7 +62,12 @@ public sealed class DashboardViewModel : ObservableObject
     public ICommand RecordSnapshotCommand { get; }
     public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
     public ObservableCollection<PortfolioSnapshotRowViewModel> PortfolioHistoryRows { get; } = new();
-    public ObservableCollection<ChartBarRowViewModel> CompositionBars { get; } = new();
+    public ObservableCollection<CompositionCategoryViewModel> CompositionCategories { get; } = new();
+    public string CompositionTotal => Formatters.Jpy(_snapshots.Where(x => x.CurrentMarketValueJpy > 0m)
+        .Sum(x => x.CurrentMarketValueJpy));
+    public string CompositionSummary => CompositionCategories.Count == 0
+        ? "評価額のある保有銘柄がありません。"
+        : $"{CompositionCategories.Count}分野・区分 / {CompositionCategories.SelectMany(x => x.Holdings.Select(h => h.Label)).Distinct().Count()}銘柄";
     public ObservableCollection<FxSensitivityRowViewModel> FxSensitivityRows { get; } = new();
     public ObservableCollection<NisaDashboardSummaryViewModel> NisaSummaries { get; } = new();
 
@@ -150,14 +155,13 @@ public sealed class DashboardViewModel : ObservableObject
         var fromDate = ResolveHistoryStartDate(DateTime.Today);
         var values = portfolioSnapshots
             .Where(x => fromDate is null || x.SnapshotDate.Date >= fromDate.Value)
-            .OrderByDescending(x => x.SnapshotDate)
-            .Take(20)
+            .GroupBy(x => x.SnapshotDate.Date)
+            .Select(group => group.OrderByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id).First())
             .OrderBy(x => x.SnapshotDate)
             .ToList();
-        var max = values.Count == 0 ? 0m : values.Max(x => x.TotalMarketValueJpy);
         foreach (var value in values)
         {
-            PortfolioHistoryRows.Add(new PortfolioSnapshotRowViewModel(value, max));
+            PortfolioHistoryRows.Add(new PortfolioSnapshotRowViewModel(value));
         }
 
         OnPropertyChanged(nameof(PortfolioHistoryMessage));
@@ -165,76 +169,48 @@ public sealed class DashboardViewModel : ObservableObject
 
     private void RebuildCompositionBars()
     {
-        CompositionBars.Clear();
-        var groups = BuildCompositionGroups().ToList();
-        if (groups.Count == 0)
-        {
-            CompositionBars.Add(new ChartBarRowViewModel("データなし", 0m, 1m));
-            return;
-        }
-
-        var top = groups
+        CompositionCategories.Clear();
+        var valuedSnapshots = _snapshots.Where(x => x.CurrentMarketValueJpy > 0m).ToList();
+        var total = valuedSnapshots.Sum(x => x.CurrentMarketValueJpy);
+        var groups = valuedSnapshots.GroupBy(ResolveCompositionLabel)
+            .Select(group => new
+            {
+                Label = group.Key,
+                Amount = group.Sum(x => x.CurrentMarketValueJpy),
+                Holdings = group.GroupBy(x => SecuritySymbolNormalizer.NormalizeTicker(x.Position.Stock.Ticker))
+                    .Select(holding => new CompositionHoldingViewModel(holding.Key,
+                        holding.First().Position.Stock.Name, holding.Sum(x => x.CurrentMarketValueJpy)))
+                    .OrderByDescending(x => x.Amount)
+                    .ToList()
+            })
             .OrderByDescending(x => x.Amount)
-            .Take(5)
             .ToList();
-        var other = groups.Sum(x => x.Amount) - top.Sum(x => x.Amount);
-        if (other > 0m)
+        for (var index = 0; index < groups.Count; index++)
         {
-            top.Add(("その他", other));
+            var group = groups[index];
+            CompositionCategories.Add(new CompositionCategoryViewModel(
+                group.Label, group.Amount, total, group.Holdings, index));
         }
-
-        var max = top.Max(x => x.Amount);
-        foreach (var item in top)
-        {
-            CompositionBars.Add(new ChartBarRowViewModel(item.Label, item.Amount, max));
-        }
+        OnPropertyChanged(nameof(CompositionTotal));
+        OnPropertyChanged(nameof(CompositionSummary));
     }
 
-    private IEnumerable<(string Label, decimal Amount)> BuildCompositionGroups()
+    private string ResolveCompositionLabel(StockSnapshot snapshot)
     {
-        var valuedSnapshots = _snapshots
-            .Where(x => x.CurrentMarketValueJpy > 0m)
-            .ToList();
-
-        if (SelectedCompositionMode == "通貨別")
+        var stock = snapshot.Position.Stock;
+        return SelectedCompositionMode switch
         {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Currency) ? "未設定" : x.Position.Stock.Currency)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "証券会社別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Broker) ? "未設定" : x.Position.Stock.Broker)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "資産種別別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => x.Position.IsMutualFund ? "投資信託" : "株式")
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "口座区分別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.AccountType) ? "未設定" : x.Position.Stock.AccountType)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "セクター別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Sector) ? "未設定" : x.Position.Stock.Sector)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        return valuedSnapshots
-            .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Country) ? "未設定" : x.Position.Stock.Country)
-            .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+            "分野別" or "セクター別" => snapshot.Position.IsMutualFund
+                ? "投資信託" : StockSectorClassifier.Classify(stock).Sector,
+            "通貨別" => NonEmpty(stock.Currency),
+            "証券会社別" => NonEmpty(stock.Broker),
+            "資産種別別" => snapshot.Position.IsMutualFund ? "投資信託" : "株式",
+            "口座区分別" => NonEmpty(ResolveAccountType(snapshot)),
+            _ => NonEmpty(stock.Country)
+        };
     }
+
+    private static string NonEmpty(string value) => string.IsNullOrWhiteSpace(value) ? "未設定" : value.Trim();
 
     private void RebuildFxSensitivityRows()
     {

@@ -415,7 +415,11 @@ public sealed class InvestmentStoryRepository
                     PaymentDate = CASE WHEN excluded.PaymentDate <> '' THEN excluded.PaymentDate ELSE DividendCalendarEvents.PaymentDate END,
                     AmountPerShare = CASE WHEN excluded.AmountPerShare > 0 THEN excluded.AmountPerShare ELSE DividendCalendarEvents.AmountPerShare END,
                     Currency = CASE WHEN excluded.Currency <> '' THEN excluded.Currency ELSE DividendCalendarEvents.Currency END,
-                    Source = CASE WHEN excluded.Source <> '' THEN excluded.Source ELSE DividendCalendarEvents.Source END,
+                    Source = CASE
+                        WHEN excluded.PaymentDate = '' AND DividendCalendarEvents.PaymentDate <> ''
+                            THEN DividendCalendarEvents.Source
+                        WHEN excluded.Source <> '' THEN excluded.Source
+                        ELSE DividendCalendarEvents.Source END,
                     DataQuality = CASE WHEN excluded.IsConfirmed = 1 THEN excluded.DataQuality ELSE DividendCalendarEvents.DataQuality END,
                     AcquiredAt = CASE WHEN excluded.AcquiredAt <> '' THEN excluded.AcquiredAt ELSE DividendCalendarEvents.AcquiredAt END,
                     IsConfirmed = MAX(DividendCalendarEvents.IsConfirmed, excluded.IsConfirmed);

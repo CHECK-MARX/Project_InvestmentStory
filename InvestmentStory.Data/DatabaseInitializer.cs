@@ -1,3 +1,4 @@
+using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using Microsoft.Data.Sqlite;
 
@@ -27,6 +28,55 @@ public sealed class DatabaseInitializer
         BackfillInitialPositionTrades(connection, databasePath);
         CreateCsvIdempotencyIndexes(connection);
         BackfillCanonicalSecurityKeys(connection);
+        BackfillStockSectors(connection, databasePath);
+    }
+
+    private static void BackfillStockSectors(SqliteConnection connection, string databasePath)
+    {
+        var updates = new List<(int Id, string Sector, string Industry)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT Id, Ticker, AssetType, Sector, Industry FROM Stocks;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var stock = new Stock
+                {
+                    Id = reader.GetInt32(0),
+                    Ticker = reader.GetString(1),
+                    AssetType = reader.GetString(2),
+                    Sector = reader.GetString(3),
+                    Industry = reader.GetString(4)
+                };
+                var oldSector = stock.Sector;
+                var oldIndustry = stock.Industry;
+                StockSectorClassifier.FillMissingClassification(stock);
+                if (stock.Sector != oldSector || stock.Industry != oldIndustry)
+                    updates.Add((stock.Id, stock.Sector, stock.Industry));
+            }
+        }
+
+        if (updates.Count == 0) return;
+        var backupPath = Path.Combine(Path.GetDirectoryName(databasePath) ?? string.Empty,
+            $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.Now:yyyyMMdd_HHmmss}_before_sector_classification{Path.GetExtension(databasePath)}");
+        using (var destination = new SqliteConnection(CreateConnectionString(backupPath)))
+        {
+            destination.Open();
+            connection.BackupDatabase(destination);
+        }
+
+        using var transaction = connection.BeginTransaction();
+        foreach (var update in updates)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE Stocks SET Sector = $sector, Industry = $industry WHERE Id = $id;";
+            command.Parameters.AddWithValue("$sector", update.Sector);
+            command.Parameters.AddWithValue("$industry", update.Industry);
+            command.Parameters.AddWithValue("$id", update.Id);
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
     }
 
     internal static string CreateConnectionString(string databasePath)

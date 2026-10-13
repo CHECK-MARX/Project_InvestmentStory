@@ -316,6 +316,163 @@ public sealed class CsvImportSafetyTests
     }
 
     [Fact]
+    public void SameForeignDividendInUsdAndRoundedJpy_IsOneActualPayment()
+    {
+        var service = new DividendReconciliationService();
+        var usd = new DividendPayment
+        {
+            Id = 1, StockId = 10, Ticker = "NVDA", Broker = "野村証券",
+            AccountType = AccountTypes.Unknown, Currency = "USD", Source = DividendConstants.SourceCsv,
+            DividendStatus = DividendConstants.Actual, PaymentDate = new DateTime(2026, 1, 5),
+            Quantity = 50m, GrossAmount = .50m, NetAmount = .372368m, NetAmountJpy = 58m
+        };
+        var jpy = new DividendPayment
+        {
+            StockId = 10, Ticker = "NVDA", Broker = "野村証券",
+            AccountType = AccountTypes.Unknown, Currency = "JPY", Source = DividendConstants.SourceCsv,
+            DividendStatus = DividendConstants.Actual, PaymentDate = usd.PaymentDate,
+            Quantity = 50m, GrossAmount = 70m, NetAmount = 57m, NetAmountJpy = 57m
+        };
+
+        jpy.SourceRowNumber = 39;
+
+        Assert.Equal(usd.Id, service.ReconcileActual(new[] { usd }, jpy).DuplicateActual?.Id);
+    }
+
+    [Fact]
+    public void SameCsvDividendUnderDifferentStockRows_IsOneActualPayment()
+    {
+        var service = new DividendReconciliationService();
+        var first = new DividendPayment
+        {
+            Id = 1, StockId = 10, Ticker = "CMBT", Broker = "SBI証券",
+            AccountType = AccountTypes.Specific, Currency = "JPY", Source = DividendConstants.SourceCsv,
+            DividendStatus = DividendConstants.Actual, PaymentDate = new DateTime(2026, 1, 19),
+            Quantity = 40m, NetAmountJpy = 179.64m
+        };
+
+        var second = new DividendPayment
+        {
+            StockId = 11, Ticker = "CMBT", Broker = "SBI証券",
+            AccountType = AccountTypes.Specific, Currency = "JPY", Source = DividendConstants.SourceCsv,
+            DividendStatus = DividendConstants.Actual, PaymentDate = first.PaymentDate,
+            Quantity = 40m, NetAmountJpy = 179.64m
+        };
+        second.SourceRowNumber = 21;
+
+        Assert.Equal(first.Id, service.ReconcileActual(new[] { first }, second).DuplicateActual?.Id);
+        second.AccountType = AccountTypes.NisaGrowth;
+        Assert.Null(service.ReconcileActual(new[] { first }, second).DuplicateActual);
+    }
+
+    [Fact]
+    public void SeparateRowsInOneBrokerCsv_AreNotCollapsedByEqualAmounts()
+    {
+        var first = new DividendPayment
+        {
+            Id = 1, StockId = 1, Ticker = "MO", Broker = "SBI証券",
+            AccountType = AccountTypes.Specific, Source = DividendConstants.SourceCsv,
+            SourceFile = "statement.csv", SourceRowNumber = 20,
+            DividendStatus = DividendConstants.Actual, Currency = "JPY",
+            PaymentDate = new DateTime(2026, 1, 13), Quantity = 20m, NetAmountJpy = 1_000m
+        };
+        var second = new DividendPayment
+        {
+            StockId = first.StockId, Ticker = first.Ticker, Broker = first.Broker,
+            AccountType = first.AccountType, Source = first.Source,
+            SourceFile = first.SourceFile, SourceRowNumber = 21,
+            DividendStatus = first.DividendStatus, Currency = first.Currency,
+            PaymentDate = first.PaymentDate, Quantity = first.Quantity, NetAmountJpy = first.NetAmountJpy
+        };
+
+        Assert.Null(new DividendReconciliationService().ReconcileActual(new[] { first }, second).DuplicateActual);
+    }
+
+    [Fact]
+    public void ImportedCsv_ReplacesMatchingManualPaymentWithBrokerAlias()
+    {
+        var service = new DividendReconciliationService();
+        var manual = new DividendPayment
+        {
+            Id = 1, StockId = 10, Ticker = "CSCO", Broker = "野村證券",
+            AccountType = AccountTypes.Unknown, Currency = "USD", Source = DividendConstants.SourceManual,
+            DividendStatus = DividendConstants.Actual, PaymentDate = new DateTime(2026, 1, 26),
+            GrossAmount = 8.2m, NetAmount = 5.883845m, NetAmountJpy = 928m
+        };
+        var csv = new DividendPayment
+        {
+            StockId = 11, Ticker = "CSCO", Broker = "野村証券",
+            AccountType = AccountTypes.Unknown, Currency = "USD", Source = DividendConstants.SourceCsv,
+            DividendStatus = DividendConstants.Actual, PaymentDate = manual.PaymentDate,
+            Quantity = 20m, GrossAmount = manual.GrossAmount,
+            NetAmount = manual.NetAmount, NetAmountJpy = manual.NetAmountJpy
+        };
+
+        var decision = service.ReconcileActual(new[] { manual }, csv);
+
+        Assert.Null(decision.DuplicateActual);
+        Assert.Equal(manual.Id, Assert.Single(decision.ReplaceTargets).Id);
+    }
+
+    [Fact]
+    public void ImportDividend_ReusesLegacyPaymentEvenWhenItsStockRowDiffers()
+    {
+        WithRepository(repository =>
+        {
+            var oldPosition = Position("CMBT", "USD", 40m, 150m);
+            oldPosition.Stock.AccountType = AccountTypes.NisaGrowth;
+            var oldStockId = repository.SavePosition(oldPosition);
+            var correctStockId = repository.SavePosition(Position("CMBT", "USD", 40m, 150m));
+            var oldPaymentId = repository.SaveDividendPayment(new DividendPayment
+            {
+                StockId = oldStockId, Broker = "SBI証券", AccountType = AccountTypes.Specific,
+                PaymentDate = new DateTime(2026, 1, 19), DividendStatus = DividendConstants.Actual,
+                Source = DividendConstants.SourceCsv, SourceFile = "legacy.csv",
+                Currency = "JPY", ExchangeRate = 1m, Quantity = 40m,
+                NetAmount = 180m, NetAmountJpy = 180m, JpyAmount = 180m
+            });
+            Import(repository, new BrokerStatementImport
+            {
+                Dividends = new[]
+                {
+                    new BrokerDividendRecord
+                    {
+                        Broker = "SBI証券", Account = AccountTypes.Specific,
+                        Ticker = "CMBT", Name = "CMB Tech", PaymentDate = new DateTime(2026, 1, 19),
+                        Currency = "JPY", Quantity = 40m, NetAmount = 180m, NetAmountJpy = 180m,
+                        Source = "SBI配当CSV", SourceFile = "new.csv", SourceRowNumber = 21
+                    }
+                }
+            });
+
+            var payment = Assert.Single(repository.GetDividendPayments());
+            Assert.Equal(oldPaymentId, payment.Id);
+            Assert.Equal(correctStockId, payment.StockId);
+            Assert.Equal(21, payment.SourceRowNumber);
+
+            Import(repository, new BrokerStatementImport
+            {
+                Dividends = new[]
+                {
+                    new BrokerDividendRecord
+                    {
+                        Broker = payment.Broker, Account = AccountTypes.Specific,
+                        Ticker = "CMBT", Name = "CMB Tech", PaymentDate = new DateTime(2026, 1, 19),
+                        Currency = "JPY", Quantity = 40m, NetAmount = 180m, NetAmountJpy = 180m,
+                        Source = payment.Source, SourceFile = "legacy.csv", SourceRowNumber = 0
+                    }
+                }
+            });
+
+            payment = Assert.Single(repository.GetDividendPayments());
+            Assert.Equal(oldPaymentId, payment.Id);
+            Assert.Equal(correctStockId, payment.StockId);
+            Assert.Equal("new.csv", payment.SourceFile);
+            Assert.Equal(21, payment.SourceRowNumber);
+        });
+    }
+
+    [Fact]
     public void ImportTransaction_RollsBackPositionAndDividendWhenLaterWriteFails()
     {
         WithRepository(repository =>

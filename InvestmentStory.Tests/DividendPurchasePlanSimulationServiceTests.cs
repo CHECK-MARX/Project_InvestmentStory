@@ -356,6 +356,85 @@ public sealed class DividendPurchasePlanSimulationServiceTests
         Assert.Empty(result.Months.SelectMany(x => x.Events));
     }
 
+    [Fact]
+    public void GeneratedPaymentsAndOldYearDrift_DoNotAddExtraPaymentMonths()
+    {
+        var item = CreateUsNisaItem(0m, frequency: "年4回", months: string.Empty);
+        var history = new List<DividendPayment>();
+        foreach (var month in new[] { 2, 5, 8, 11 })
+            history.Add(new DividendPayment
+            {
+                StockId = item.StockId, Ticker = item.Ticker, Broker = item.Broker,
+                AccountType = item.AccountType, Currency = "USD",
+                PaymentDate = new DateTime(2025, month, 5), DividendStatus = DividendConstants.Actual,
+                Source = DividendConstants.SourceCsv, NetAmountJpy = 100m
+            });
+        foreach (var month in new[] { 2, 5, 8 })
+            history.Add(new DividendPayment
+            {
+                StockId = item.StockId, Ticker = item.Ticker, Broker = item.Broker,
+                AccountType = item.AccountType, Currency = "USD",
+                PaymentDate = new DateTime(2026, month, 5), DividendStatus = DividendConstants.Actual,
+                Source = DividendConstants.SourceCsv, NetAmountJpy = 100m
+            });
+        foreach (var month in new[] { 3, 6, 9, 12 })
+            history.Add(new DividendPayment
+            {
+                StockId = item.StockId, Ticker = item.Ticker, Broker = item.Broker,
+                AccountType = item.AccountType, Currency = "USD",
+                PaymentDate = new DateTime(2026, month, 20), DividendStatus = DividendConstants.Estimated,
+                Source = DividendConstants.SourceEstimatedFromAnnualDividend
+            });
+
+        var events = Simulate(item, new DateTime(2026, 1, 1), history)
+            .Months.SelectMany(x => x.Events).ToList();
+        Assert.Equal(new[] { 2, 5, 8, 11 }, events.Select(x => x.Month).Order());
+        Assert.Equal(3, events.Count(x => x.IsPaid));
+        Assert.Equal(1, events.Count(x => !x.IsPaid));
+    }
+
+    [Fact]
+    public void ExDividendMonth_IsNotMistakenForPaymentMonthAcrossYearBoundary()
+    {
+        var calendar = new[] { 2025, 2026 }.Select(year => new DividendCalendarEvent
+        {
+            EventKey = $"ex-{year}",
+            ExDividendDate = new DateTime(year, 12, 26),
+            Currency = "USD", Source = "Issuer",
+            DataQuality = DividendPlanDataQuality.Acquired,
+            IsConfirmed = true
+        }).ToList();
+        var item = CreateUsNisaItem(0m, frequency: "4", months: string.Empty,
+            dividendEvents: calendar);
+
+        var result = Simulate(item, new DateTime(2026, 1, 1), Array.Empty<DividendPayment>());
+        var january = Assert.Single(result.Months.SelectMany(x => x.Events));
+        Assert.Equal(2026, january.PaymentDate.Year);
+        Assert.Equal(1, january.PaymentDate.Month);
+        Assert.Equal(new DateTime(2025, 12, 26), january.ExDividendDate);
+        Assert.Equal(DividendPlanDataQuality.Estimated, january.DataQuality);
+    }
+
+    [Fact]
+    public void ThreePublishedQuarterlyPayments_CompleteDecemberInsteadOfOldOctoberDrift()
+    {
+        var calendar = new[] { 3, 6, 9 }.Select(month => new DividendCalendarEvent
+        {
+            EventKey = $"2026-{month}",
+            PaymentDate = new DateTime(2026, month, 25),
+            Currency = "USD", Source = "Issuer",
+            DataQuality = DividendPlanDataQuality.Acquired, IsConfirmed = true
+        }).ToList();
+        var item = CreateUsNisaItem(0m, frequency: "4", months: string.Empty,
+            dividendEvents: calendar);
+        var result = Simulate(item, new DateTime(2026, 1, 1), Array.Empty<DividendPayment>());
+
+        Assert.Equal(new[] { 3, 6, 9, 12 }, result.Months.SelectMany(x => x.Events)
+            .Select(x => x.Month).Order());
+        Assert.Equal(DividendPlanDataQuality.Estimated,
+            Assert.Single(result.Months[11].Events).DataQuality);
+    }
+
     private DividendPurchasePlanResult Simulate(
         DividendGrowthPlanItem item,
         DateTime purchaseDate,

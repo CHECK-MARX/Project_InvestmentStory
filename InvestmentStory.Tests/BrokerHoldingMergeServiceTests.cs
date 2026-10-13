@@ -18,6 +18,7 @@ public sealed class BrokerHoldingMergeServiceTests
                 Name = "Manual Ito En",
                 Broker = "SBI証券",
                 Currency = "JPY",
+                Sector = "独自分類",
                 DataSource = "手入力",
                 Memo = "manual memo"
             },
@@ -58,6 +59,7 @@ public sealed class BrokerHoldingMergeServiceTests
             AverageAcquisitionPrice = 3039m,
             MarketValue = 620000m,
             Currency = "JPY",
+            Product = "国内株式",
             SnapshotDate = new DateTime(2026, 7, 7)
         };
 
@@ -71,6 +73,7 @@ public sealed class BrokerHoldingMergeServiceTests
         Assert.Equal(200m, decision.Merged.CurrentHolding.CurrentShares);
         Assert.Equal(3100m, decision.Merged.CurrentHolding.CurrentPrice);
         Assert.Equal("伊藤園", decision.Merged.Stock.Name);
+        Assert.Equal("独自分類", decision.Merged.Stock.Sector);
         Assert.Equal("証券会社データ", decision.Merged.Stock.DataSource);
         Assert.Equal("manual memo", decision.Merged.Stock.Memo);
         Assert.Equal("manual purchase memo", decision.Merged.Purchase.Memo);

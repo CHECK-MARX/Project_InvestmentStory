@@ -61,6 +61,7 @@ public sealed class DividendsViewModel : ObservableObject
     public ObservableCollection<DividendAnnualRankingRowViewModel> AnnualRankingRows { get; } = new();
     public ObservableCollection<TaxProfile> TaxProfiles { get; } = new();
     public DividendChartInteractionState DividendChartInteraction { get; } = new();
+    public DateTime AsOfDate => _asOf;
     public ICommand NewCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand ToggleDetailsCommand { get; }
@@ -184,6 +185,7 @@ public sealed class DividendsViewModel : ObservableObject
         _allPayments = payments.ToList();
         _fallbackGoal = currentGoal;
         _asOf = (asOf ?? DateTime.Today).Date;
+        OnPropertyChanged(nameof(AsOfDate));
         var selectedStockId = SelectedStockId;
         StockOptions.Clear();
         foreach (var position in positions.OrderBy(x => x.Stock.Ticker))
@@ -263,11 +265,14 @@ public sealed class DividendsViewModel : ObservableObject
                 entry.DisplayStatus,
                 entry.DataQuality);
             Payments.Add(paymentRow);
-            PlannedPayments.Add(paymentRow);
             DividendChartEntries.Add(new DividendDashboardEntryViewModel(entry));
             if (entry.IsActual)
             {
                 ActualPayments.Add(paymentRow);
+            }
+            else
+            {
+                PlannedPayments.Add(paymentRow);
             }
         }
 

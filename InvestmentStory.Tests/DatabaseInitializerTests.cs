@@ -7,6 +7,56 @@ namespace InvestmentStory.Tests;
 public sealed class DatabaseInitializerTests
 {
     [Fact]
+    public void Initialize_BackfillsKnownSectorsOnceAndPreservesManualClassification()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_sectors_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, """
+                    INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, Sector)
+                    VALUES ('Toyo', '8151', '日本', 'JPY', 'Test', '国内株式'),
+                           ('Nvidia', 'NVDA', '米国', 'USD', 'Test', '外株'),
+                           ('Custom', 'NVDA', '米国', 'USD', 'Other', '独自分類');
+                    """);
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Sector, Industry FROM Stocks WHERE Ticker = '8151';";
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal("卸売・商社", reader.GetString(0));
+                Assert.Equal("計測機器・技術商社", reader.GetString(1));
+            }
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Sector FROM Stocks WHERE Ticker = 'NVDA' ORDER BY Id;";
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal("情報技術", reader.GetString(0));
+                Assert.True(reader.Read());
+                Assert.Equal("独自分類", reader.GetString(0));
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_sector_classification.db"));
+
+            new DatabaseInitializer().Initialize(path);
+            Assert.Single(Directory.GetFiles(directory, "*_before_sector_classification.db"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
     public void Initialize_MigratesTickerUniqueConstraintAndLegacyEurnAlias()
     {
         var path = Path.Combine(Path.GetTempPath(), $"investment_story_{Guid.NewGuid():N}.db");

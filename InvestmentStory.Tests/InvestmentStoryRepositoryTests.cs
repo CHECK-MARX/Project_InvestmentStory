@@ -112,10 +112,9 @@ public sealed class InvestmentStoryRepositoryTests
                 new DividendCalendarEvent
                 {
                     EventKey = eventKey,
-                    PaymentDate = new DateTime(2026, 3, 20),
                     AmountPerShare = 1.25m,
                     Currency = "USD",
-                    Source = "Historical estimate",
+                    Source = "Yahoo Finance ex-date only",
                     DataQuality = DividendPlanDataQuality.Estimated,
                     AcquiredAt = new DateTime(2026, 2, 3, 8, 0, 0),
                     IsConfirmed = false
@@ -130,6 +129,7 @@ public sealed class InvestmentStoryRepositoryTests
             Assert.Equal(new DateTime(2026, 3, 20), item.PaymentDate);
             Assert.Equal(1.25m, item.AmountPerShare);
             Assert.Equal(DividendPlanDataQuality.Acquired, item.DataQuality);
+            Assert.Equal("Nasdaq", item.Source);
             Assert.True(item.IsConfirmed);
         }
         finally

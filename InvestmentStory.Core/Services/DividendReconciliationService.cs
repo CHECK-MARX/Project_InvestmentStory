@@ -58,20 +58,41 @@ public sealed class DividendReconciliationService
         DividendConstants.IsActual(payment.DividendStatus) &&
         string.Equals(payment.Source, DividendConstants.SourceManual, StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsSameActualIdentity(DividendPayment left, DividendPayment right) =>
-        !(left.SourceRowNumber > 0 && right.SourceRowNumber > 0 &&
-          string.Equals(left.SourceFile, right.SourceFile, StringComparison.OrdinalIgnoreCase) &&
-          left.SourceRowNumber != right.SourceRowNumber) &&
-        left.PaymentDate.Date == right.PaymentDate.Date &&
-        left.Quantity == right.Quantity &&
-        left.GrossAmount == right.GrossAmount &&
-        left.NetAmount == right.NetAmount &&
-        left.IsNetOnly == right.IsNetOnly &&
-        IsSameDividendIdentity(left, right);
+    private static bool IsSameActualIdentity(DividendPayment left, DividendPayment right)
+    {
+        if (left.SourceRowNumber > 0 && right.SourceRowNumber > 0 &&
+            string.Equals(left.SourceFile, right.SourceFile, StringComparison.OrdinalIgnoreCase) &&
+            left.SourceRowNumber != right.SourceRowNumber)
+            return false;
+
+        if (left.PaymentDate.Date != right.PaymentDate.Date ||
+            left.Quantity != right.Quantity ||
+            !string.Equals(Normalize(left.Broker), Normalize(right.Broker), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(NormalizeAccount(left.AccountType), NormalizeAccount(right.AccountType), StringComparison.OrdinalIgnoreCase) ||
+            !IsSameSecurity(left, right))
+            return false;
+
+        // Broker CSV exports may describe one foreign dividend in USD and in rounded JPY.
+        // Only the same broker/account/security/date/quantity can be reconciled this way.
+        if (string.Equals(left.Source, DividendConstants.SourceCsv, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(right.Source, DividendConstants.SourceCsv, StringComparison.OrdinalIgnoreCase) &&
+            (left.SourceRowNumber > 0 || right.SourceRowNumber > 0))
+        {
+            var leftJpy = left.NetAmountJpy > 0m ? left.NetAmountJpy : left.JpyAmount;
+            var rightJpy = right.NetAmountJpy > 0m ? right.NetAmountJpy : right.JpyAmount;
+            return leftJpy > 0m && rightJpy > 0m && IsClose(leftJpy, rightJpy, 10m);
+        }
+
+        return left.StockId == right.StockId &&
+               left.GrossAmount == right.GrossAmount &&
+               left.NetAmount == right.NetAmount &&
+               left.IsNetOnly == right.IsNetOnly &&
+               IsSameDividendIdentity(left, right);
+    }
 
     private static bool IsSameDividendIdentity(DividendPayment left, DividendPayment right)
     {
-        if (left.StockId != right.StockId)
+        if (!IsSameSecurity(left, right))
         {
             return false;
         }
@@ -118,7 +139,14 @@ public sealed class DividendReconciliationService
         return denominator > 0m && diff / denominator <= 0.01m;
     }
 
-    private static string Normalize(string value) => value.Trim();
+    private static bool IsSameSecurity(DividendPayment left, DividendPayment right) =>
+        left.StockId == right.StockId ||
+        (!string.IsNullOrWhiteSpace(left.Ticker) &&
+         !string.IsNullOrWhiteSpace(right.Ticker) &&
+         string.Equals(SecuritySymbolNormalizer.NormalizeTicker(left.Ticker),
+             SecuritySymbolNormalizer.NormalizeTicker(right.Ticker), StringComparison.OrdinalIgnoreCase));
+
+    private static string Normalize(string value) => SecuritySymbolNormalizer.NormalizeBroker(value ?? string.Empty);
 
     private static string NormalizeCurrency(string currency)
     {

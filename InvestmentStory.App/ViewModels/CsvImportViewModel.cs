@@ -1873,6 +1873,10 @@ public sealed class CsvImportViewModel : ObservableObject
         var decision = reconciliationService.ReconcileActual(existingDividends.Candidates(payment), payment);
         if (decision.DuplicateActual is not null)
         {
+            // Keep the CSV row with traceable provenance when an older import is replayed.
+            if (decision.DuplicateActual.SourceRowNumber > 0 && payment.SourceRowNumber == 0)
+                return DividendImportAction.Skipped;
+
             if (payment.SourceRowNumber > 0 && decision.DuplicateActual.SourceRowNumber > 0 &&
                 !string.Equals(payment.SourceFile, decision.DuplicateActual.SourceFile,
                     StringComparison.OrdinalIgnoreCase))
@@ -1891,7 +1895,11 @@ public sealed class CsvImportViewModel : ObservableObject
                 AddImportLog($"要確認: {payment.PaymentDate:yyyy/MM/dd} {payment.Ticker} / {reason}");
                 return DividendImportAction.NeedsReview;
             }
-            if (SameImportedDividendValues(decision.DuplicateActual, payment))
+            if (SameImportedDividendValues(decision.DuplicateActual, payment) &&
+                decision.DuplicateActual.StockId == payment.StockId &&
+                decision.DuplicateActual.SourceRowNumber == payment.SourceRowNumber &&
+                string.Equals(decision.DuplicateActual.SourceFile, payment.SourceFile,
+                    StringComparison.OrdinalIgnoreCase))
                 return DividendImportAction.Skipped;
             payment.Id = decision.DuplicateActual.Id;
             payment.CreatedAt = decision.DuplicateActual.CreatedAt;
@@ -1957,7 +1965,8 @@ public sealed class CsvImportViewModel : ObservableObject
     {
         private readonly List<DividendPayment> _payments;
         private readonly Dictionary<(int StockId, int Day), List<DividendPayment>> _byDate = new();
-        private readonly Dictionary<(int StockId, string Broker, string File, int Row), DividendPayment> _bySourceRow = new();
+        private readonly Dictionary<(string Ticker, int Day), List<DividendPayment>> _byTickerDate = new();
+        private readonly Dictionary<(string Ticker, string Broker, string File, int Row), DividendPayment> _bySourceRow = new();
         private readonly Dictionary<int, int> _positionById = new();
 
         public DividendPaymentIndex(IReadOnlyList<DividendPayment> payments)
@@ -1974,8 +1983,11 @@ public sealed class CsvImportViewModel : ObservableObject
             {
                 if (_byDate.TryGetValue((payment.StockId, day + offset), out var bucket))
                     candidates.AddRange(bucket);
+                if (_byTickerDate.TryGetValue((TickerKey(payment), day + offset), out var tickerBucket))
+                    candidates.AddRange(tickerBucket);
             }
 
+            candidates = candidates.DistinctBy(x => x.Id).ToList();
             candidates.Sort((left, right) => _positionById[left.Id].CompareTo(_positionById[right.Id]));
             return candidates;
         }
@@ -2010,6 +2022,10 @@ public sealed class CsvImportViewModel : ObservableObject
             if (!_byDate.TryGetValue(key, out var bucket))
                 _byDate[key] = bucket = new List<DividendPayment>();
             bucket.Add(payment);
+            var tickerKey = (TickerKey(payment), key.Item2);
+            if (!_byTickerDate.TryGetValue(tickerKey, out var tickerBucket))
+                _byTickerDate[tickerKey] = tickerBucket = new List<DividendPayment>();
+            tickerBucket.Add(payment);
             if (payment.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(payment.SourceFile))
                 _bySourceRow.TryAdd(SourceKey(payment), payment);
         }
@@ -2022,12 +2038,24 @@ public sealed class CsvImportViewModel : ObservableObject
                 bucket.Remove(payment);
                 if (bucket.Count == 0) _byDate.Remove(key);
             }
+            var tickerKey = (TickerKey(payment), key.Item2);
+            if (_byTickerDate.TryGetValue(tickerKey, out var tickerBucket))
+            {
+                tickerBucket.Remove(payment);
+                if (tickerBucket.Count == 0) _byTickerDate.Remove(tickerKey);
+            }
             if (payment.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(payment.SourceFile))
                 _bySourceRow.Remove(SourceKey(payment));
         }
 
-        private static (int, string, string, int) SourceKey(DividendPayment payment) =>
-            (payment.StockId, payment.Broker.ToUpperInvariant(), payment.SourceFile.ToUpperInvariant(),
+        private static string TickerKey(DividendPayment payment) =>
+            string.IsNullOrWhiteSpace(payment.Ticker)
+                ? $"STOCK:{payment.StockId}"
+                : SecuritySymbolNormalizer.NormalizeTicker(payment.Ticker);
+
+        private static (string, string, string, int) SourceKey(DividendPayment payment) =>
+            (TickerKey(payment), SecuritySymbolNormalizer.NormalizeBroker(payment.Broker).ToUpperInvariant(),
+                payment.SourceFile.ToUpperInvariant(),
                 payment.SourceRowNumber);
     }
 

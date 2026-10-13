@@ -37,7 +37,7 @@ public sealed class DividendScheduleService
                 .OrderByDescending(x => x.IsConfirmed)
                 .ThenByDescending(x => x.AcquiredAt)
                 .ToList();
-            var months = ResolveDividendMonths(position, actualHistory, existing, positionCalendar);
+            var months = ResolveDividendMonths(position, actualHistory, existing, positionCalendar, asOf.Year);
             if (months.Count == 0)
             {
                 continue;
@@ -60,7 +60,7 @@ public sealed class DividendScheduleService
                     paymentYear,
                     month,
                     calendarEvent);
-                if (HasActualPaymentForMonth(position.Stock.Id, existing, paymentDate.Year, paymentDate.Month))
+                if (HasActualPaymentNearDate(position, existing, paymentDate))
                 {
                     continue;
                 }
@@ -211,7 +211,7 @@ public sealed class DividendScheduleService
     {
         var from = asOf.AddYears(-5);
         return existing
-            .Where(x => x.StockId == position.Stock.Id)
+            .Where(x => MatchesPosition(position, x))
             .Where(x => DividendConstants.IsActual(x.DividendStatus))
             .Where(x => x.PaymentDate >= from && x.PaymentDate <= asOf.AddYears(1))
             .OrderByDescending(x => x.PaymentDate)
@@ -222,23 +222,37 @@ public sealed class DividendScheduleService
         StockPosition position,
         IReadOnlyList<DividendPayment> actualHistory,
         IReadOnlyList<DividendPayment> existing,
-        IReadOnlyList<DividendCalendarEvent> calendarEvents)
+        IReadOnlyList<DividendCalendarEvent> calendarEvents,
+        int targetYear)
     {
         var publishedMonths = calendarEvents
             .Where(x => x.PaymentDate.HasValue)
             .Select(x => x.PaymentDate!.Value.Month)
             .Distinct()
             .ToList();
+        var frequency = ParseFrequency(position.CurrentHolding.DividendFrequency);
+        var completeYearMonths = actualHistory
+            .Where(x => x.PaymentDate.Year < targetYear)
+            .GroupBy(x => x.PaymentDate.Year)
+            .OrderByDescending(x => x.Key)
+            .Select(group => group.Select(x => x.PaymentDate.Month).Distinct().Order().ToList())
+            .FirstOrDefault(months => frequency > 0 && months.Count == frequency);
+        if (frequency > 0 && publishedMonths.Count >= frequency)
+            return publishedMonths.Order().ToList();
+        if (completeYearMonths is not null)
+            return FillPaymentMonths(publishedMonths, completeYearMonths, frequency);
         var configuredMonths = ParseMonths(position.CurrentHolding.DividendMonths);
         if (configuredMonths.Count > 0)
         {
-            return publishedMonths.Concat(configuredMonths).Distinct().Order().ToList();
+            return publishedMonths.Concat(configuredMonths).Distinct()
+                .Take(frequency > 0 ? frequency : 12).Order().ToList();
         }
 
         var frequencyMonths = FrequencyToMonths(position.CurrentHolding.DividendFrequency);
         if (frequencyMonths.Count > 0)
         {
-            return publishedMonths.Concat(frequencyMonths).Distinct().Order().ToList();
+            return publishedMonths.Concat(frequencyMonths).Distinct()
+                .Take(frequency > 0 ? frequency : 12).Order().ToList();
         }
 
         var historyMonths = actualHistory
@@ -259,6 +273,26 @@ public sealed class DividendScheduleService
             .Distinct()
             .Order()
             .ToList();
+    }
+
+    private static IReadOnlyList<int> FillPaymentMonths(
+        IReadOnlyList<int> published,
+        IReadOnlyList<int> historical,
+        int frequency)
+    {
+        var selected = published.Distinct().ToList();
+        var remaining = historical.Where(month => !selected.Contains(month)).Distinct().ToList();
+        while (selected.Count < frequency && remaining.Count > 0)
+        {
+            var next = selected.Count == 0
+                ? remaining[0]
+                : remaining.OrderByDescending(month => selected.Min(known =>
+                        Math.Min(Math.Abs(month - known), 12 - Math.Abs(month - known))))
+                    .ThenBy(month => month).First();
+            selected.Add(next);
+            remaining.Remove(next);
+        }
+        return selected.Order().ToList();
     }
 
     private static DateTime ResolvePaymentDate(
@@ -403,16 +437,36 @@ public sealed class DividendScheduleService
         return price <= 0m || annualDividendPerShare / price <= 0.40m;
     }
 
-    private static bool HasActualPaymentForMonth(
-        int stockId,
+    private static bool HasActualPaymentNearDate(
+        StockPosition position,
         IReadOnlyList<DividendPayment> existing,
-        int year,
-        int month) =>
+        DateTime paymentDate) =>
         existing.Any(x =>
-            x.StockId == stockId &&
+            MatchesPosition(position, x) &&
             DividendConstants.IsActual(x.DividendStatus) &&
-            x.PaymentDate.Year == year &&
-            x.PaymentDate.Month == month);
+            x.PaymentDate.Year == paymentDate.Year &&
+            Math.Abs((x.PaymentDate.Date - paymentDate.Date).TotalDays) <= 45);
+
+    private static bool MatchesPosition(StockPosition position, DividendPayment payment)
+    {
+        if (position.Stock.Id > 0 && payment.StockId == position.Stock.Id) return true;
+        if (!string.Equals(SecuritySymbolNormalizer.NormalizeTicker(position.Stock.Ticker),
+                SecuritySymbolNormalizer.NormalizeTicker(payment.Ticker), StringComparison.OrdinalIgnoreCase))
+            return false;
+        var broker = SecuritySymbolNormalizer.NormalizeBroker(position.Stock.Broker ?? string.Empty);
+        var paymentBroker = SecuritySymbolNormalizer.NormalizeBroker(payment.Broker ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(broker) && !string.IsNullOrWhiteSpace(paymentBroker) &&
+            !string.Equals(broker, paymentBroker, StringComparison.CurrentCultureIgnoreCase))
+            return false;
+        var account = AccountTypeNormalizer.Normalize(position.Stock.AccountType);
+        var paymentAccount = AccountTypeNormalizer.Normalize(payment.AccountType);
+        return account == AccountTypes.Unknown || paymentAccount == AccountTypes.Unknown ||
+               string.Equals(account, paymentAccount, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int ParseFrequency(string frequency) =>
+        int.TryParse(new string((frequency ?? string.Empty).Where(char.IsDigit).ToArray()), out var value) &&
+        value is 1 or 2 or 4 or 12 ? value : 0;
 
     private static bool IsGeneratedSchedule(DividendPayment payment) =>
         DividendConstants.IsUnconfirmed(payment.DividendStatus) &&

@@ -116,8 +116,15 @@
                 </Grid.ColumnDefinitions>
                 <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="月別配当グラフ（実績・予定・前年・目標）" Style="{StaticResource SectionTitleStyle}" />
-                        <ItemsControl ItemsSource="{Binding MonthlyBreakdownRows}" Height="320" Margin="0,12,0,0">
+                        <TextBlock Text="今年の月別配当（1～12月）" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" Style="{StaticResource SubtleTextStyle}">
+                            <Run Text="■" Foreground="{DynamicResource AccentBlueBrush}"/><Run Text=" 青：今年の入金実績　"/>
+                            <Run Text="■" Foreground="{DynamicResource DividendBrush}"/><Run Text=" 紫：今年の入金予定・推定　"/>
+                            <Run Text="■" Foreground="{DynamicResource NeutralBrush}"/><Run Text=" 灰：前年同月の入金実績　"/>
+                            <Run Text="■" Foreground="{DynamicResource WarningBrush}"/><Run Text=" 橙：月間目標"/>
+                        </TextBlock>
+                        <TextBlock Text="右側の見込み＝青の実績＋紫の予定。入金日を基準に集計しています。" Margin="0,2,0,0" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap"/>
+                        <ItemsControl ItemsSource="{Binding MonthlyBreakdownRows}" Margin="0,12,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,4" ToolTip="{Binding ToolTip}">
@@ -142,7 +149,7 @@
                                             </Grid>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" HorizontalAlignment="Right">
-                                            <TextBlock Text="{Binding Forecast}" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Forecast, StringFormat=見込み {0}}" HorizontalAlignment="Right" FontWeight="SemiBold" />
                                             <TextBlock Text="{Binding Planned, StringFormat=予定 {0}}" HorizontalAlignment="Right" Style="{StaticResource SubtleTextStyle}" />
                                         </StackPanel>
                                     </Grid>
@@ -154,7 +161,8 @@
                 <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
                         <TextBlock Text="年別配当グラフ" Style="{StaticResource SectionTitleStyle}" />
-                        <ItemsControl ItemsSource="{Binding YearlyBars}" Height="260" Margin="0,12,0,0">
+                        <TextBlock Text="緑：各年の入金実績（税引後）" Margin="0,6,0,0" Style="{StaticResource SubtleTextStyle}" />
+                        <ItemsControl ItemsSource="{Binding YearlyBars}" Margin="0,12,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,6" ToolTip="{Binding ToolTip}">

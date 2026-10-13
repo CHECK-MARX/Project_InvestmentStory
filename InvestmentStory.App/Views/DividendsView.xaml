@@ -103,6 +103,8 @@
                 <StackPanel>
                     <TextBlock Text="年間累計（実績・実績＋予定・目標）" Style="{StaticResource SectionTitleStyle}" />
                     <controls:DividendAnnualCumulativeChartControl Items="{Binding MonthlySummaryRows}"
+                                                                   SelectedYear="{Binding SelectedYear}"
+                                                                   AsOfDate="{Binding AsOfDate}"
                                                                    InteractionState="{Binding DividendChartInteraction}"
                                                                    Height="360" ClipToBounds="True" />
                 </StackPanel>

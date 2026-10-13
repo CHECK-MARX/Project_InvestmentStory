@@ -210,6 +210,66 @@ public sealed class DividendTaxAndScheduleTests
     }
 
     [Fact]
+    public void ScheduleService_UsesFourActualPaymentMonthsAcrossLegacyStockIds()
+    {
+        var position = CreatePosition(currentShares: 20m, annualDividendPerShare: 4m, stockId: 81);
+        var existing = new List<DividendPayment>();
+        foreach (var month in new[] { 2, 5, 8, 11 })
+            existing.Add(new DividendPayment
+            {
+                StockId = 99, Ticker = "PEP", Broker = "SBI",
+                AccountType = DividendConstants.AccountSpecific,
+                PaymentDate = new DateTime(2025, month, 5),
+                DividendStatus = DividendConstants.Actual,
+                DividendPerShare = 1m, Currency = "USD"
+            });
+        existing.Add(new DividendPayment
+        {
+            StockId = 99, Ticker = "PEP", Broker = "SBI",
+            AccountType = DividendConstants.AccountSpecific,
+            PaymentDate = new DateTime(2026, 2, 5),
+            DividendStatus = DividendConstants.Actual,
+            DividendPerShare = 1m, Currency = "USD"
+        });
+        existing.Add(new DividendPayment
+        {
+            Id = 70, StockId = 81, Ticker = "PEP", Broker = "SBI",
+            AccountType = DividendConstants.AccountSpecific,
+            PaymentDate = new DateTime(2026, 3, 20),
+            DividendStatus = DividendConstants.Estimated,
+            Source = DividendConstants.SourceEstimatedFromAnnualDividend
+        });
+
+        var result = new DividendScheduleService().BuildSchedules(new[] { position }, existing,
+            UsProfiles(), new DateTime(2026, 10, 1));
+        Assert.Equal(new[] { 5, 8, 11 }, result.Schedules.Select(x => x.PaymentDate.Month).Order());
+        Assert.Contains(70, result.ObsoleteScheduleIds);
+    }
+
+    [Fact]
+    public void ScheduleService_FillsMissingQuarterWithoutAddingHistoricalDriftMonth()
+    {
+        var position = CreatePosition(currentShares: 20m, annualDividendPerShare: 4m, stockId: 82);
+        var history = new[] { 4, 6, 9, 12 }.Select(month => new DividendPayment
+        {
+            StockId = 82, Ticker = "PEP", Broker = "SBI",
+            AccountType = DividendConstants.AccountSpecific,
+            PaymentDate = new DateTime(2025, month, 20),
+            DividendStatus = DividendConstants.Actual,
+            DividendPerShare = 1m, Currency = "USD"
+        }).ToArray();
+        var published = new[] { 3, 6, 9 }.Select(month => new DividendCalendarEvent
+        {
+            StockId = 82, PaymentDate = new DateTime(2026, month, 20),
+            IsConfirmed = true, AmountPerShare = 1m, Source = "Issuer"
+        }).ToArray();
+
+        var result = new DividendScheduleService().BuildSchedules(new[] { position }, history,
+            UsProfiles(), new DateTime(2026, 10, 1), published);
+        Assert.Equal(new[] { 3, 6, 9, 12 }, result.Schedules.Select(x => x.PaymentDate.Month).Order());
+    }
+
+    [Fact]
     public void ScheduleService_PrefersConfirmedPublicCalendarDateAndAmount()
     {
         var service = new DividendScheduleService();

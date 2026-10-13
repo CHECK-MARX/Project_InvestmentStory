@@ -263,10 +263,18 @@ public sealed class BrokerHoldingMergeService
             SetIfChanged(target.Stock.Name, source.Name.Trim(), value => target.Stock.Name = value, "銘柄名", changedFields);
         }
 
-        if (!string.IsNullOrWhiteSpace(source.Product))
+        if (!string.IsNullOrWhiteSpace(source.Product) &&
+            !StockSectorClassifier.IsGenericProductType(source.Product) &&
+            StockSectorClassifier.IsGenericProductType(target.Stock.Sector))
         {
-            SetIfChanged(target.Stock.Sector, source.Product.Trim(), value => target.Stock.Sector = value, "商品種別", changedFields);
+            SetIfChanged(target.Stock.Sector, source.Product.Trim(), value => target.Stock.Sector = value, "分野", changedFields);
         }
+
+        var classification = StockSectorClassifier.Classify(target.Stock);
+        if (StockSectorClassifier.IsGenericProductType(target.Stock.Sector) && classification.Sector != "未分類")
+            SetIfChanged(target.Stock.Sector, classification.Sector, value => target.Stock.Sector = value, "分野", changedFields);
+        if (string.IsNullOrWhiteSpace(target.Stock.Industry) && classification.Industry.Length > 0)
+            SetIfChanged(target.Stock.Industry, classification.Industry, value => target.Stock.Industry = value, "業種", changedFields);
 
         if (!string.IsNullOrWhiteSpace(source.Market))
         {
@@ -434,22 +442,25 @@ public sealed class BrokerHoldingMergeService
             ? 1m
             : source.CurrentExchangeRate > 0m ? source.CurrentExchangeRate : purchaseExchangeRate;
 
+        var stock = new Stock
+        {
+            Ticker = NormalizeTickerForDisplay(source.Ticker),
+            Name = string.IsNullOrWhiteSpace(source.Name) ? NormalizeTickerForDisplay(source.Ticker) : source.Name.Trim(),
+            Broker = source.Broker.Trim(),
+            AccountType = NormalizeSourceAccountType(source),
+            CustodyType = source.Account.Trim(),
+            Currency = currency,
+            Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本"
+                : currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "米国" : string.Empty,
+            Sector = source.Product,
+            Market = source.Market,
+            DataSource = sourceLabel
+        };
+        StockSectorClassifier.FillMissingClassification(stock);
+
         return new StockPosition
         {
-            Stock = new Stock
-            {
-                Ticker = NormalizeTickerForDisplay(source.Ticker),
-                Name = string.IsNullOrWhiteSpace(source.Name) ? NormalizeTickerForDisplay(source.Ticker) : source.Name.Trim(),
-                Broker = source.Broker.Trim(),
-                AccountType = NormalizeSourceAccountType(source),
-                CustodyType = source.Account.Trim(),
-                Currency = currency,
-                Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本"
-                    : currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "米国" : string.Empty,
-                Sector = source.Product,
-                Market = source.Market,
-                DataSource = sourceLabel
-            },
+            Stock = stock,
             Purchase = new Purchase
             {
                 PurchaseDate = snapshotAt.Date,
