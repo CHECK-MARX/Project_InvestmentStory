@@ -1512,7 +1512,9 @@ public sealed class DatabaseInitializer
     private static void MergeDuplicateStocksByBrokerAndTicker(SqliteConnection connection, string ticker)
     {
         var rows = ReadStockMergeRows(connection, ticker);
-        foreach (var group in rows.GroupBy(x => SecuritySymbolNormalizer.NormalizeBroker(x.Broker)))
+        foreach (var group in rows.GroupBy(x => PositionIdentityService.BuildKey(
+                     x.Broker, ticker, x.AssetType, x.AccountType, x.CustodyType, x.Currency),
+                     StringComparer.OrdinalIgnoreCase))
         {
             var stocks = group.ToList();
             if (stocks.Count <= 1)
@@ -1543,7 +1545,8 @@ public sealed class DatabaseInitializer
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT s.Id, s.Broker, IFNULL(ch.CurrentShares, 0), IFNULL(ch.CurrentPrice, 0)
+            SELECT s.Id, s.Broker, s.AssetType, s.AccountType, s.CustodyType, s.Currency,
+                   IFNULL(ch.CurrentShares, 0), IFNULL(ch.CurrentPrice, 0)
             FROM Stocks s
             LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
             WHERE UPPER(s.Ticker) = UPPER($ticker);
@@ -1557,14 +1560,20 @@ public sealed class DatabaseInitializer
             rows.Add(new StockMergeRow(
                 reader.GetInt32(0),
                 reader.GetString(1),
-                Convert.ToDecimal(reader.GetDouble(2)),
-                Convert.ToDecimal(reader.GetDouble(3))));
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                Convert.ToDecimal(reader.GetDouble(6)),
+                Convert.ToDecimal(reader.GetDouble(7))));
         }
 
         return rows;
     }
 
-    private sealed record StockMergeRow(int Id, string Broker, decimal CurrentShares, decimal CurrentPrice);
+    private sealed record StockMergeRow(
+        int Id, string Broker, string AssetType, string AccountType, string CustodyType,
+        string Currency, decimal CurrentShares, decimal CurrentPrice);
 
     private static void AddColumnIfMissing(
         SqliteConnection connection,

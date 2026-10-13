@@ -55,6 +55,52 @@ public sealed class DatabaseInitializerTests
     }
 
     [Fact]
+    public void Initialize_DoesNotMergeCmbtPositionsAcrossAccounts()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"investment_story_cmbt_accounts_{Guid.NewGuid():N}.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            long nisaId;
+            long specificId;
+            using (var connection = Open(path))
+            {
+                Execute(connection, """
+                    INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, AccountType, CustodyType)
+                    VALUES ('CMB テック', 'CMBT', '米国', 'USD', 'SBI証券', 'NisaGrowth', 'NISA');
+                    """);
+                nisaId = LastInsertId(connection);
+                Execute(connection, """
+                    INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, AccountType, CustodyType)
+                    VALUES ('CMB テック', 'CMBT', '米国', 'USD', 'SBI証券', 'Specific', '特定');
+                    """);
+                specificId = LastInsertId(connection);
+                foreach (var id in new[] { nisaId, specificId })
+                    Execute(connection, """
+                        INSERT INTO DividendPayments
+                            (StockId, PaymentDate, Broker, GrossAmount, TaxAmount, NetAmount,
+                             Currency, JpyAmount, NetAmountJpy, SourceFile, SourceRowNumber)
+                        VALUES ($stockId, '2026-06-12', 'SBI証券', 100, 0, 100,
+                                'JPY', 100, 100, 'source.csv', 13);
+                        """, ("$stockId", id));
+            }
+
+            new DatabaseInitializer().Initialize(path);
+
+            using var verified = Open(path);
+            using var command = verified.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM Stocks WHERE Ticker = 'CMBT';";
+            Assert.Equal(2L, (long)command.ExecuteScalar()!);
+            command.CommandText = "SELECT COUNT(DISTINCT StockId) FROM DividendPayments WHERE SourceFile = 'source.csv';";
+            Assert.Equal(2L, (long)command.ExecuteScalar()!);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Initialize_RepairsDuplicatePositionsCreatedByCsvReimport()
     {
         var path = Path.Combine(Path.GetTempPath(), $"investment_story_duplicate_repair_{Guid.NewGuid():N}.db");
