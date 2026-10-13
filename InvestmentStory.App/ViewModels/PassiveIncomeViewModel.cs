@@ -114,12 +114,9 @@ public sealed class PassiveIncomeViewModel : ObservableObject
 
         MonthlyBreakdownRows.Clear();
         var breakdownItems = monthlyBreakdown ?? Array.Empty<MonthlyDividendBreakdown>();
-        var breakdownMax = breakdownItems.Count == 0
-            ? 0m
-            : breakdownItems.Max(x => Math.Max(Math.Max(x.ActualJpy, x.PlannedJpy), Math.Max(x.PreviousYearActualJpy, x.MonthlyGoalJpy)));
         foreach (var item in breakdownItems)
         {
-            MonthlyBreakdownRows.Add(new MonthlyDividendBreakdownRowViewModel(item, breakdownMax));
+            MonthlyBreakdownRows.Add(new MonthlyDividendBreakdownRowViewModel(item));
         }
 
         var yearlyItems = yearly.Count == 0
