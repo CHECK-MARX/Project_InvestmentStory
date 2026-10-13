@@ -59,7 +59,7 @@ public static class SecurityIdentityService
             BuildCanonicalKey(position),
             PositionIdentityService.NormalizeAssetType(position.Stock.AssetType),
             AccountTypeNormalizer.Normalize(position.Stock.AccountType),
-            PositionIdentityService.NormalizeCustodyType(position.Stock.CustodyType, position.Stock.AccountType),
+            PositionIdentityService.NormalizeCustodyForIdentity(position.Stock.CustodyType, position.Stock.AccountType),
             PositionIdentityService.NormalizeCurrency(position.Stock.Currency));
     }
 

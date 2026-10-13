@@ -35,7 +35,7 @@ public sealed class DividendPaymentRowViewModel
         "Replaced" => "置換済み",
         _ => Payment.DividendStatus
     };
-    public string DataQuality => _dataQuality ?? (Payment.DividendStatus switch
+    public string DataQuality => Payment.IsNetOnly ? "税引後のみ" : _dataQuality ?? (Payment.DividendStatus switch
     {
         "Actual" => "実績",
         "Estimated" => "推定",
@@ -46,18 +46,21 @@ public sealed class DividendPaymentRowViewModel
     public string Source => Payment.Source;
     public string Quantity => Payment.Quantity == 0m ? "-" : Payment.Quantity.ToString("N2");
     public string DividendPerShare => Payment.DividendPerShare == 0m ? "-" : Formatters.Money(Payment.DividendPerShare, Payment.Currency);
-    public string GrossAmount => Formatters.Money(Payment.GrossAmount, Payment.Currency);
-    public string ForeignTaxAmount => Formatters.Money(Payment.ForeignTaxAmount, Payment.Currency);
-    public string DomesticTaxAmount => Formatters.Money(Payment.DomesticTaxAmount, Payment.Currency);
-    public string TaxAmount => Formatters.Money(Payment.TotalTaxAmount > 0m ? Payment.TotalTaxAmount : Payment.TaxAmount, Payment.Currency);
+    public string GrossAmount => Payment.IsNetOnly ? "不明" : Formatters.Money(Payment.GrossAmount, Payment.Currency);
+    public string ForeignTaxAmount => Payment.IsNetOnly ? "不明" : Formatters.Money(Payment.ForeignTaxAmount, Payment.Currency);
+    public string DomesticTaxAmount => Payment.IsNetOnly ? "不明" : Formatters.Money(Payment.DomesticTaxAmount, Payment.Currency);
+    public string TaxAmount => Payment.IsNetOnly ? "不明" : Formatters.Money(Payment.TotalTaxAmount > 0m ? Payment.TotalTaxAmount : Payment.TaxAmount, Payment.Currency);
     public string NetAmount => Formatters.Money(Payment.NetAmount, Payment.Currency);
     public string Currency => Payment.Currency;
     public string DividendAmountUsd => Formatters.Money(Payment.DividendAmountUsd, "USD");
-    public string ExchangeRate => Payment.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "1.00" : $"{Payment.ExchangeRate:N2} JPY/USD";
-    public string ExchangeRateInfo => $"{Payment.ExchangeRateAcquiredAt:yyyy/MM/dd HH:mm} / {Payment.ExchangeRateSource} / {Payment.ExchangeRateInputType}";
-    public string GrossAmountJpy => Formatters.Jpy(Payment.GrossAmountJpy);
-    public string TaxAmountJpy => Formatters.Jpy(Payment.TotalTaxAmountJpy);
+    public string ExchangeRate => Payment.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+        ? "1.00" : Payment.ExchangeRate > 0m ? $"{Payment.ExchangeRate:N2} JPY/{Payment.Currency}" : "不明";
+    public string ExchangeRateInfo => Payment.ExchangeRate > 0m
+        ? $"{Payment.ExchangeRateAcquiredAt:yyyy/MM/dd HH:mm} / {Payment.ExchangeRateSource} / {Payment.ExchangeRateInputType}"
+        : "為替不明";
+    public string GrossAmountJpy => Payment.IsNetOnly ? "不明" : Formatters.Jpy(Payment.GrossAmountJpy);
+    public string TaxAmountJpy => Payment.IsNetOnly ? "不明" : Formatters.Jpy(Payment.TotalTaxAmountJpy);
     public string JpyAmount => Formatters.Jpy(Payment.NetAmountJpy > 0m ? Payment.NetAmountJpy : Payment.JpyAmount);
-    public string TaxNote => Payment.IsTaxEstimated ? "概算/参考値" : "CSV/実績";
+    public string TaxNote => Payment.IsNetOnly ? "税額不明" : Payment.IsTaxEstimated ? "概算/参考値" : "CSV/実績";
     public string Memo => Payment.Memo;
 }

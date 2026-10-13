@@ -7,24 +7,124 @@ public sealed class BrokerHoldingMergeService
     public BrokerMergeResult MergeHoldings(
         IReadOnlyList<StockPosition> existingPositions,
         IReadOnlyList<BrokerHoldingRecord> brokerHoldings,
-        DateTime acquiredAt)
+        DateTime acquiredAt,
+        string? mergePolicy = null,
+        IReadOnlyList<CompleteHoldingSnapshotScope>? completeScopes = null)
     {
         ArgumentNullException.ThrowIfNull(existingPositions);
         ArgumentNullException.ThrowIfNull(brokerHoldings);
 
-        var decisions = brokerHoldings
-            .Where(x => !string.IsNullOrWhiteSpace(x.Ticker))
-            .Select(x => BuildDecision(existingPositions, x, acquiredAt))
-            .ToList();
+        var candidates = existingPositions.ToList();
+        var decisions = new List<BrokerMergeDecision>();
+        foreach (var holding in brokerHoldings
+                     .Where(x => !string.IsNullOrWhiteSpace(x.Ticker))
+                     .OrderBy(x => x.SnapshotDate))
+        {
+            var decision = BuildDecision(candidates, holding, acquiredAt, mergePolicy);
+            decisions.Add(decision);
+            if (decision.Merged is not null)
+            {
+                if (decision.Existing is not null)
+                {
+                    candidates.Remove(decision.Existing);
+                }
+
+                candidates.Add(decision.Merged);
+            }
+        }
+
+        if (mergePolicy is not ("新規銘柄だけ追加" or "すべてプレビューして手動選択"))
+        {
+            foreach (var scopeGroup in (completeScopes ?? Array.Empty<CompleteHoldingSnapshotScope>())
+                         .Where(x => x.SnapshotDate != DateTime.MinValue)
+                         .GroupBy(BuildScopeKey, StringComparer.OrdinalIgnoreCase))
+            {
+                var latestDate = scopeGroup.Max(x => x.SnapshotDate.Date);
+                var latestScopes = scopeGroup.Where(x => x.SnapshotDate.Date == latestDate).ToList();
+                // Two independent files claiming the same scope/date cannot certify omissions.
+                if (latestScopes.Count != 1) continue;
+                var scope = latestScopes[0];
+                var presentKeys = brokerHoldings
+                    .Where(x => x.SnapshotDate.Date >= latestDate &&
+                                string.Equals(BuildScopeKey(x), scopeGroup.Key, StringComparison.OrdinalIgnoreCase))
+                    .Select(PositionIdentityService.BuildKey)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var group in candidates
+                             .Where(x => string.Equals(BuildScopeKey(x), scopeGroup.Key, StringComparison.OrdinalIgnoreCase) &&
+                                         x.CurrentHolding.CurrentShares > 0m &&
+                                         x.CurrentHolding.UpdatedAt.Date <= latestDate &&
+                                         x.Stock.DataSource.Contains("CSV", StringComparison.OrdinalIgnoreCase))
+                             .GroupBy(PositionIdentityService.BuildKey, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (presentKeys.Contains(group.Key)) continue;
+                    var existing = group.SingleOrDefault();
+                    if (existing is null) continue;
+                    var merged = CopyPosition(existing);
+                    merged.CurrentHolding.CurrentShares = 0m;
+                    merged.CurrentHolding.UpdatedAt = latestDate;
+                    var changedFields = new List<string> { "現在保有株数" };
+                    if (merged.IsMutualFund)
+                    {
+                        merged.MutualFund.UnitsHeld = 0m;
+                        merged.MutualFund.AcquisitionAmount = 0m;
+                        merged.MutualFund.MarketValue = 0m;
+                        merged.MutualFund.UnrealizedGainLoss = 0m;
+                        merged.MutualFund.NavDate = latestDate;
+                        changedFields.Add("投資信託の現在残高・評価額");
+                    }
+                    var source = new BrokerHoldingRecord
+                    {
+                        Broker = scope.Broker, Account = scope.Account, AssetType = scope.AssetType,
+                        Currency = scope.Currency, SnapshotDate = latestDate, Source = scope.Source,
+                        Ticker = existing.Stock.Ticker, Name = existing.Stock.Name,
+                        FundCode = existing.MutualFund.FundCode,
+                        AssociationCode = existing.MutualFund.AssociationCode,
+                        FundName = existing.MutualFund.FundName
+                    };
+                    decisions.Add(new BrokerMergeDecision
+                    {
+                        Action = BrokerMergeAction.Overwrite, Source = source, Existing = existing,
+                        Merged = merged,
+                        Reason = "確認済みの完全な口座残高スナップショットに掲載がないため、現在残高を0にします。",
+                        ChangedFields = changedFields
+                    });
+                    candidates.Remove(existing);
+                    candidates.Add(merged);
+                }
+            }
+        }
 
         return new BrokerMergeResult { Decisions = decisions };
     }
 
+    private static string BuildScopeKey(CompleteHoldingSnapshotScope scope) =>
+        PositionIdentityService.BuildKey(scope.Broker, "SCOPE", scope.AssetType,
+            scope.Account, scope.Account, scope.Currency);
+
+    private static string BuildScopeKey(BrokerHoldingRecord holding) =>
+        PositionIdentityService.BuildKey(holding.Broker, "SCOPE", holding.AssetType,
+            holding.Account, holding.Account, holding.Currency);
+
+    private static string BuildScopeKey(StockPosition position) =>
+        PositionIdentityService.BuildKey(position.Stock.Broker, "SCOPE", position.Stock.AssetType,
+            position.Stock.AccountType, position.Stock.CustodyType, position.Stock.Currency);
+
     private static BrokerMergeDecision BuildDecision(
         IReadOnlyList<StockPosition> existingPositions,
         BrokerHoldingRecord source,
-        DateTime acquiredAt)
+        DateTime acquiredAt,
+        string? mergePolicy)
     {
+        if (mergePolicy == "すべてプレビューして手動選択")
+        {
+            return NeedsReview(source, "手動選択方針のためDBには反映しません。");
+        }
+
+        if (source.SnapshotDate == DateTime.MinValue)
+        {
+            return NeedsReview(source, "CSVの保有基準日を確認できないため、自動反映しません。");
+        }
+
         var sourceKey = PositionIdentityService.BuildKey(source);
         var exactMatches = existingPositions
             .Where(x => string.Equals(PositionIdentityService.BuildKey(x), sourceKey, StringComparison.OrdinalIgnoreCase))
@@ -37,26 +137,60 @@ public sealed class BrokerHoldingMergeService
                 .Where(x => IsSameBroker(x.Stock.Broker, source.Broker) &&
                             IsSameTicker(x.Stock.Ticker, source.Ticker) &&
                             IsSameAccountType(x.Stock.AccountType, sourceAccountType) &&
-                            IsSameCustodyType(x.Stock.CustodyType, source.Account))
+                            IsSameCustodyType(x.Stock.CustodyType, source.Account) &&
+                            x.IsMutualFund == source.IsMutualFund &&
+                            string.Equals(PositionIdentityService.NormalizeCurrency(x.Stock.Currency),
+                                PositionIdentityService.NormalizeCurrency(source.Currency), StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
 
         if (exactMatches.Count > 1)
         {
-            exactMatches = exactMatches
-                .OrderByDescending(x => x.CurrentHolding.UpdatedAt)
-                .ThenByDescending(x => x.IsMutualFund ? x.MutualFund.MarketValue : x.CurrentHolding.CurrentShares * x.CurrentHolding.CurrentPrice)
-                .ThenByDescending(x => x.Stock.Id)
-                .Take(1)
-                .ToList();
+            return NeedsReview(source, $"同一保有の既存候補が{exactMatches.Count}件あります。自動更新せず確認してください。");
         }
 
         if (exactMatches.Count == 1)
         {
             var existing = exactMatches[0];
+            if (mergePolicy == "新規銘柄だけ追加")
+            {
+                return NeedsReview(source, "新規のみ追加する方針のため既存保有は更新しません。");
+            }
+
+            var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
+            if (existing.CurrentHolding.UpdatedAt.Date > snapshotAt.Date)
+            {
+                return NeedsReview(source, $"古い保有残高です（既存 {existing.CurrentHolding.UpdatedAt:yyyy/MM/dd}、CSV {snapshotAt:yyyy/MM/dd}）。");
+            }
             var changedFields = new List<string>();
             var merged = CopyPosition(existing);
-            ApplyBrokerHolding(merged, source, acquiredAt, changedFields);
+            if (mergePolicy == "現在株数・現在株価だけ証券会社データで更新")
+            {
+                SetIfChanged(merged.CurrentHolding.CurrentShares, source.Shares,
+                    value => merged.CurrentHolding.CurrentShares = value, "現在保有株数", changedFields);
+                if (source.CurrentPrice > 0m)
+                {
+                    SetIfChanged(merged.CurrentHolding.CurrentPrice, source.CurrentPrice,
+                        value => merged.CurrentHolding.CurrentPrice = value, "現在株価", changedFields);
+                }
+                merged.CurrentHolding.UpdatedAt = snapshotAt.Date;
+            }
+            else if (mergePolicy == "手入力を保護して不足分だけ補完" &&
+                     string.Equals(existing.Stock.DataSource, "手入力", StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(merged.Stock.Name))
+                    SetIfChanged(merged.Stock.Name, source.Name, value => merged.Stock.Name = value, "銘柄名", changedFields);
+                if (merged.CurrentHolding.CurrentShares <= 0m && source.Shares > 0m)
+                    SetIfChanged(merged.CurrentHolding.CurrentShares, source.Shares,
+                        value => merged.CurrentHolding.CurrentShares = value, "現在保有株数", changedFields);
+                if (merged.CurrentHolding.CurrentPrice <= 0m && source.CurrentPrice > 0m)
+                    SetIfChanged(merged.CurrentHolding.CurrentPrice, source.CurrentPrice,
+                        value => merged.CurrentHolding.CurrentPrice = value, "現在株価", changedFields);
+            }
+            else
+            {
+                ApplyBrokerHolding(merged, source, acquiredAt, changedFields);
+            }
             return new BrokerMergeDecision
             {
                 Action = BrokerMergeAction.Overwrite,
@@ -66,11 +200,6 @@ public sealed class BrokerHoldingMergeService
                 Reason = "同一証券会社・同一ティッカーのため、証券会社データを正として上書きします。",
                 ChangedFields = changedFields
             };
-        }
-
-        if (exactMatches.Count > 1)
-        {
-            return NeedsReview(source, $"同一証券会社・同一ティッカーの既存候補が{exactMatches.Count}件あります。口座区分や取引履歴で確認してください。");
         }
 
         var tickerMatches = existingPositions
@@ -85,6 +214,17 @@ public sealed class BrokerHoldingMergeService
         if (tickerMatches.Count > 0 && string.IsNullOrWhiteSpace(source.Broker))
         {
             return NeedsReview(source, "ティッカー一致の既存銘柄がありますが、証券会社が取得できていないため確認が必要です。");
+        }
+
+        if (source.Shares == 0m && (!source.IsMutualFund || source.UnitsHeld == 0m))
+        {
+            return NeedsReview(source, "数量0の行に対応する既存保有がありません。新規保有は作成しません。");
+        }
+
+        if (!source.IsMutualFund && NormalizeCurrency(source.Currency) != "JPY" &&
+            (source.PurchaseExchangeRate <= 0m || source.CurrentExchangeRate <= 0m))
+        {
+            return NeedsReview(source, "外貨保有の取得時為替または現在為替が不明なため、新規保有を自動作成しません。");
         }
 
         var created = CreatePosition(source, acquiredAt);
@@ -137,7 +277,10 @@ public sealed class BrokerHoldingMergeService
         if (!string.IsNullOrWhiteSpace(currency))
         {
             SetIfChanged(target.Stock.Currency, currency, value => target.Stock.Currency = value, "通貨", changedFields);
-            SetIfChanged(target.Stock.Country, currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本" : "米国", value => target.Stock.Country = value, "国", changedFields);
+            var country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本"
+                : currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "米国" : string.Empty;
+            if (country.Length > 0)
+                SetIfChanged(target.Stock.Country, country, value => target.Stock.Country = value, "国", changedFields);
         }
 
         var sourceLabel = string.IsNullOrWhiteSpace(source.Source) ? "証券会社データ" : source.Source.Trim();
@@ -155,11 +298,8 @@ public sealed class BrokerHoldingMergeService
             return;
         }
 
-        if (source.Shares > 0m)
-        {
-            SetIfChanged(target.Purchase.Shares, source.Shares, value => target.Purchase.Shares = value, "購入株数", changedFields);
-            SetIfChanged(target.CurrentHolding.CurrentShares, source.Shares, value => target.CurrentHolding.CurrentShares = value, "現在保有株数", changedFields);
-        }
+        SetIfChanged(target.Purchase.Shares, source.Shares, value => target.Purchase.Shares = value, "購入株数", changedFields);
+        SetIfChanged(target.CurrentHolding.CurrentShares, source.Shares, value => target.CurrentHolding.CurrentShares = value, "現在保有株数", changedFields);
 
         if (source.AverageAcquisitionPrice > 0m)
         {
@@ -213,7 +353,7 @@ public sealed class BrokerHoldingMergeService
         List<string> changedFields)
     {
         var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
-        var unitsHeld = source.UnitsHeld > 0m ? source.UnitsHeld : source.Shares;
+        var unitsHeld = source.UnitsHeld != 0m ? source.UnitsHeld : source.Shares;
         var unitBase = MutualFundCalculator.NormalizeUnitBase(source.UnitBase);
         var averageCostNav = source.AverageCostNav > 0m ? source.AverageCostNav : source.AverageAcquisitionPrice;
         var currentNav = source.CurrentNav > 0m ? source.CurrentNav : source.CurrentPrice;
@@ -304,7 +444,8 @@ public sealed class BrokerHoldingMergeService
                 AccountType = NormalizeSourceAccountType(source),
                 CustodyType = source.Account.Trim(),
                 Currency = currency,
-                Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本" : "米国",
+                Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本"
+                    : currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "米国" : string.Empty,
                 Sector = source.Product,
                 Market = source.Market,
                 DataSource = sourceLabel
@@ -314,7 +455,7 @@ public sealed class BrokerHoldingMergeService
                 PurchaseDate = snapshotAt.Date,
                 Shares = source.Shares,
                 UnitPrice = source.AverageAcquisitionPrice,
-                ExchangeRate = purchaseExchangeRate > 0m ? purchaseExchangeRate : 1m,
+                ExchangeRate = purchaseExchangeRate,
                 ExchangeRateAcquiredAt = snapshotAt,
                 ExchangeRateSource = sourceLabel,
                 ExchangeRateInputType = "CSV"
@@ -328,7 +469,7 @@ public sealed class BrokerHoldingMergeService
             {
                 CurrentShares = source.Shares,
                 CurrentPrice = currentPrice,
-                CurrentExchangeRate = currentExchangeRate > 0m ? currentExchangeRate : 1m,
+                CurrentExchangeRate = currentExchangeRate,
                 ExchangeRateAcquiredAt = snapshotAt,
                 ExchangeRateSource = sourceLabel,
                 ExchangeRateInputType = "CSV",
@@ -567,8 +708,8 @@ public sealed class BrokerHoldingMergeService
             return true;
         }
 
-        var existing = PositionIdentityService.NormalizeCustodyType(existingCustodyType, sourceCustodyType);
-        var source = PositionIdentityService.NormalizeCustodyType(sourceCustodyType, sourceCustodyType);
+        var existing = PositionIdentityService.NormalizeCustodyForIdentity(existingCustodyType, sourceCustodyType);
+        var source = PositionIdentityService.NormalizeCustodyForIdentity(sourceCustodyType, sourceCustodyType);
         return string.Equals(existing, source, StringComparison.OrdinalIgnoreCase);
     }
 

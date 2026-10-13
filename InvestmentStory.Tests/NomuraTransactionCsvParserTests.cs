@@ -77,6 +77,10 @@ public sealed class NomuraTransactionCsvParserTests
 
             Assert.Empty(statement.Dividends);
             Assert.Equal(3, statement.Trades.Count);
+            var audit = statement.SourceRowAudits[path];
+            Assert.True(audit.IsBalanced);
+            Assert.Equal(3, audit.InputRows);
+            Assert.Equal(3, audit.ParsedRows);
             var sell = statement.Trades[0];
             Assert.Equal("PG", sell.Ticker);
             Assert.Equal(-20m, sell.SignedQuantity);
@@ -94,5 +98,27 @@ public sealed class NomuraTransactionCsvParserTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public void UnknownForeignSecurityAndMissingFx_AreHeldForReview()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nomura_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, "取引履歴\n" +
+            "約定日,受渡日,商品,銘柄コード,銘柄名,摘要,取引区分,預り区分,発行通貨,数量,単価,受渡金額/決済損益,手数料（税込）,レート,決済通貨,売買損益（円）\n" +
+            "2026/07/01,2026/07/03,外株,,未知の外国銘柄,,現物買付,特定,EUR,2,10,3200,,160,JPY,\n" +
+            "2026/07/04,2026/07/04,外株,EXMP,Example,,入金（配当金）,特定,EUR,2,1,300,,,JPY,\n",
+            new UTF8Encoding(false));
+        try
+        {
+            var statement = new NomuraTransactionCsvParser().Parse(path);
+            Assert.Empty(statement.Trades);
+            Assert.Empty(statement.Dividends);
+            Assert.Single(statement.UnresolvedTrades);
+            Assert.Equal("EUR", statement.UnresolvedTrades[0].Currency);
+            Assert.Single(statement.UnresolvedDividends);
+            Assert.Contains("為替", statement.UnresolvedDividends[0].Reason);
+        }
+        finally { File.Delete(path); }
     }
 }

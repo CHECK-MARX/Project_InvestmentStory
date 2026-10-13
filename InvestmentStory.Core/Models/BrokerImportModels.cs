@@ -49,6 +49,29 @@ public sealed class BrokerHoldingRecord
     public bool IsMutualFund => AssetTypes.IsMutualFund(AssetType);
 }
 
+// Only an independently verified account/asset snapshot may close omitted holdings.
+public sealed class CompleteHoldingSnapshotScope
+{
+    public string Broker { get; init; } = string.Empty;
+    public string Account { get; init; } = string.Empty;
+    public string AssetType { get; init; } = AssetTypes.Stock;
+    public string Currency { get; init; } = "JPY";
+    public DateTime SnapshotDate { get; init; }
+    public string Source { get; init; } = string.Empty;
+}
+
+public sealed class CsvSourceRowAudit
+{
+    public int InputRows { get; init; }
+    public int ParsedRows { get; init; }
+    public int PendingRows { get; init; }
+    public int ExcludedRows { get; init; }
+    public IReadOnlyList<CsvRowIssue> Issues { get; init; } = Array.Empty<CsvRowIssue>();
+    public bool IsBalanced => InputRows == ParsedRows + PendingRows + ExcludedRows;
+}
+
+public sealed record CsvRowIssue(int RowNumber, string Category, string Reason);
+
 public sealed class BrokerDividendRecord
 {
     public DateTime PaymentDate { get; set; }
@@ -65,6 +88,8 @@ public sealed class BrokerDividendRecord
     public decimal ExchangeRate { get; set; } = 1m;
     public decimal NetAmountJpy { get; set; }
     public string Source { get; set; } = string.Empty;
+    public string SourceFile { get; set; } = string.Empty;
+    public int SourceRowNumber { get; set; }
 }
 
 public sealed class BrokerTradeRecord
@@ -88,15 +113,36 @@ public sealed class BrokerTradeRecord
     public string Source { get; set; } = string.Empty;
 }
 
+public sealed class BrokerUnresolvedDividend
+{
+    public DateTime PaymentDate { get; init; }
+    public string Broker { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string Product { get; init; } = string.Empty;
+    public decimal Quantity { get; init; }
+    public decimal GrossAmount { get; init; }
+    public decimal TaxAmount { get; init; }
+    public string Source { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+}
+
 public sealed class BrokerStatementImport
 {
     public string Broker { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public bool CanUpdateHoldings { get; init; }
     public IReadOnlyList<BrokerHoldingRecord> Holdings { get; init; } = Array.Empty<BrokerHoldingRecord>();
+    public IReadOnlyList<CompleteHoldingSnapshotScope> CompleteHoldingScopes { get; init; } = Array.Empty<CompleteHoldingSnapshotScope>();
     public IReadOnlyList<BrokerDividendRecord> Dividends { get; init; } = Array.Empty<BrokerDividendRecord>();
     public IReadOnlyList<BrokerTradeRecord> Trades { get; init; } = Array.Empty<BrokerTradeRecord>();
     public int IgnoredRowCount { get; init; }
+    public IReadOnlyList<string> ReviewMessages { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<BrokerHoldingRecord> UnresolvedHoldings { get; init; } = Array.Empty<BrokerHoldingRecord>();
+    public IReadOnlyList<BrokerUnresolvedDividend> UnresolvedDividends { get; init; } = Array.Empty<BrokerUnresolvedDividend>();
+    public IReadOnlyList<BrokerTradeRecord> UnresolvedTrades { get; init; } = Array.Empty<BrokerTradeRecord>();
+    public IReadOnlyDictionary<string, int> SourceRowCounts { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, CsvSourceRowAudit> SourceRowAudits { get; init; } =
+        new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class BrokerMergeResult

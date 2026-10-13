@@ -16,7 +16,7 @@ public sealed class SampleCsvFilesTests
         Assert.True(result.CanUpdateHoldings);
         Assert.Contains(result.Holdings, x => x.Ticker == "7203" && x.Shares == 300m);
         Assert.Contains(result.Holdings, x => x.AssetType == AssetTypes.MutualFund && x.UnitsHeld == 411_318m);
-        Assert.Equal(3, result.Dividends.Count);
+        Assert.Empty(result.Dividends);
     }
 
     [Fact]

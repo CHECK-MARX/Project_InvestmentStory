@@ -18,6 +18,7 @@ public sealed class DatabaseInitializer
         Execute(connection, "PRAGMA foreign_keys = ON;");
         BackupBeforeDividendPurchasePlanMigrationIfNeeded(connection, databasePath);
         BackupBeforeDividendCalendarMigrationIfNeeded(connection, databasePath);
+        BackupBeforeNetOnlyDividendMigrationIfNeeded(connection, databasePath);
         CreateTables(connection);
         BackupBeforeSecurityMigrationIfNeeded(connection, databasePath);
         DropCsvIdempotencyIndexesBeforeMigration(connection);
@@ -25,7 +26,6 @@ public sealed class DatabaseInitializer
         RepairCsvReimportDuplicates(connection, databasePath);
         BackfillInitialPositionTrades(connection, databasePath);
         CreateCsvIdempotencyIndexes(connection);
-        SeedSampleData(connection);
         BackfillCanonicalSecurityKeys(connection);
     }
 
@@ -179,6 +179,7 @@ public sealed class DatabaseInitializer
                 NetAmountJpy REAL NOT NULL DEFAULT 0,
                 JpyAmount REAL NOT NULL,
                 IsTaxEstimated INTEGER NOT NULL DEFAULT 0,
+                IsNetOnly INTEGER NOT NULL DEFAULT 0,
                 IsNisa INTEGER NOT NULL DEFAULT 0,
                 IsForeignStock INTEGER NOT NULL DEFAULT 0,
                 TaxProfileId INTEGER NULL,
@@ -431,6 +432,24 @@ public sealed class DatabaseInitializer
         }
     }
 
+    private static void BackupBeforeNetOnlyDividendMigrationIfNeeded(
+        SqliteConnection connection, string databasePath)
+    {
+        if (!TableExists(connection, "DividendPayments") ||
+            ColumnExists(connection, "DividendPayments", "IsNetOnly")) return;
+
+        using var count = connection.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM DividendPayments WHERE SourceFile LIKE 'SBI配当CSV%';";
+        if (Convert.ToInt32(count.ExecuteScalar()) == 0) return;
+
+        var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
+        var backupPath = Path.Combine(directory,
+            $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.Now:yyyyMMdd_HHmmss}_before_netonly{Path.GetExtension(databasePath)}");
+        using var destination = new SqliteConnection(CreateConnectionString(backupPath));
+        destination.Open();
+        connection.BackupDatabase(destination);
+    }
+
     private static void MigrateTables(SqliteConnection connection)
     {
         AddColumnIfMissing(connection, "Stocks", "AssetType", "TEXT NOT NULL DEFAULT 'Stock'");
@@ -479,6 +498,13 @@ public sealed class DatabaseInitializer
         AddColumnIfMissing(connection, "DividendPayments", "TotalTaxAmountJpy", "REAL NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "DividendPayments", "NetAmountJpy", "REAL NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "DividendPayments", "IsTaxEstimated", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "DividendPayments", "IsNetOnly", "INTEGER NOT NULL DEFAULT 0");
+        Execute(connection, """
+            UPDATE DividendPayments
+            SET IsNetOnly = 1, GrossAmount = 0, GrossAmountJpy = 0, DividendPerShare = 0
+            WHERE IsNetOnly = 0 AND SourceFile LIKE 'SBI配当CSV%'
+              AND TotalTaxAmount = 0 AND TaxAmount = 0;
+            """);
         AddColumnIfMissing(connection, "DividendPayments", "IsNisa", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "DividendPayments", "IsForeignStock", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "DividendPayments", "TaxProfileId", "INTEGER NULL");
@@ -672,14 +698,12 @@ public sealed class DatabaseInitializer
         BackfillCanonicalSecurityKeys(connection);
 
         var duplicatePositionGroups = ReadDuplicatePositionGroups(connection);
-        var duplicateDividendCount = CountDuplicateDividendRows(connection);
         var zeroPriceInboundCount = CountZeroPriceInboundEvents(connection);
-        if (duplicatePositionGroups.Count > 0 || duplicateDividendCount > 0 || zeroPriceInboundCount > 0)
+        if (duplicatePositionGroups.Count > 0 || zeroPriceInboundCount > 0)
         {
             BackupDatabase(databasePath);
         }
 
-        DeduplicateDividendPayments(connection);
         NormalizeZeroPriceInboundEvents(connection);
 
         foreach (var group in duplicatePositionGroups)
@@ -785,12 +809,11 @@ public sealed class DatabaseInitializer
             ON Stocks(Broker, Ticker, AssetType, AccountType, CustodyType, Currency);
             """);
 
+        Execute(connection, "DROP INDEX IF EXISTS UX_DividendPayments_ImportIdentity;");
         Execute(connection, """
-            CREATE UNIQUE INDEX IF NOT EXISTS UX_DividendPayments_ImportIdentity
-            ON DividendPayments(
-                StockId, Broker, AccountType, DividendStatus, PaymentDate, Currency,
-                Quantity, DividendPerShare, GrossAmount, TotalTaxAmount, NetAmount, NetAmountJpy
-            );
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_DividendPayments_SourceRow
+            ON DividendPayments(StockId, Broker, SourceFile, SourceRowNumber)
+            WHERE SourceRowNumber > 0 AND SourceFile <> '';
             """);
 
         Execute(connection, """
@@ -803,19 +826,82 @@ public sealed class DatabaseInitializer
                 CsvType TEXT NOT NULL DEFAULT '',
                 ImportedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 RowCount INTEGER NOT NULL DEFAULT 0,
+                ParsedRowCount INTEGER NOT NULL DEFAULT 0,
+                PendingRowCount INTEGER NOT NULL DEFAULT 0,
+                ExcludedRowCount INTEGER NOT NULL DEFAULT 0,
                 InsertedCount INTEGER NOT NULL DEFAULT 0,
                 UpdatedCount INTEGER NOT NULL DEFAULT 0,
                 SkippedCount INTEGER NOT NULL DEFAULT 0,
                 ConflictCount INTEGER NOT NULL DEFAULT 0,
                 Result TEXT NOT NULL DEFAULT '',
-                ErrorSummary TEXT NOT NULL DEFAULT ''
+                ErrorSummary TEXT NOT NULL DEFAULT '',
+                BatchId TEXT NOT NULL DEFAULT '',
+                ParserVersion TEXT NOT NULL DEFAULT ''
+            );
+            """);
+        AddColumnIfMissing(connection, "CsvImportLogs", "BatchId", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportLogs", "ParserVersion", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportLogs", "ParsedRowCount", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "CsvImportLogs", "PendingRowCount", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "CsvImportLogs", "ExcludedRowCount", "INTEGER NOT NULL DEFAULT 0");
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS CsvImportReviewRows (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Broker TEXT NOT NULL,
+                Account TEXT NOT NULL,
+                Ticker TEXT NOT NULL,
+                TradeDate TEXT NOT NULL,
+                TradeType TEXT NOT NULL,
+                Quantity REAL NOT NULL,
+                SignedQuantity REAL NOT NULL,
+                UnitPrice REAL NOT NULL,
+                Currency TEXT NOT NULL,
+                Source TEXT NOT NULL,
+                Reason TEXT NOT NULL,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity, UnitPrice, Currency, Source, Reason)
             );
             """);
 
         Execute(connection, """
-            CREATE UNIQUE INDEX IF NOT EXISTS UX_CsvImportLogs_FileHash
-            ON CsvImportLogs(FileHash, Broker, CsvType)
-            WHERE FileHash <> '';
+            CREATE TABLE IF NOT EXISTS CsvImportReviewHoldings (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Broker TEXT NOT NULL,
+                Account TEXT NOT NULL,
+                Ticker TEXT NOT NULL,
+                SecurityName TEXT NOT NULL,
+                AssetType TEXT NOT NULL,
+                Currency TEXT NOT NULL,
+                SnapshotDate TEXT NOT NULL,
+                Shares REAL NOT NULL,
+                Reason TEXT NOT NULL,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(Broker, Account, Ticker, AssetType, Currency, SnapshotDate, Shares, Reason)
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS CsvImportReviewDividends (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                PaymentDate TEXT NOT NULL,
+                Broker TEXT NOT NULL,
+                SecurityName TEXT NOT NULL,
+                Product TEXT NOT NULL,
+                Quantity REAL NOT NULL,
+                GrossAmount REAL NOT NULL,
+                TaxAmount REAL NOT NULL,
+                Source TEXT NOT NULL,
+                Reason TEXT NOT NULL,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(PaymentDate, Broker, SecurityName, Product, Quantity, GrossAmount, TaxAmount, Source, Reason)
+            );
+            """);
+
+        Execute(connection, "DROP INDEX IF EXISTS UX_CsvImportLogs_FileHash;");
+        Execute(connection, """
+            CREATE INDEX IF NOT EXISTS IX_CsvImportLogs_FileHash
+            ON CsvImportLogs(FileHash, Broker, CsvType);
             """);
     }
 
@@ -823,38 +909,8 @@ public sealed class DatabaseInitializer
     {
         Execute(connection, "DROP INDEX IF EXISTS UX_Stocks_PositionCanonicalIdentity;");
         Execute(connection, "DROP INDEX IF EXISTS UX_Stocks_PositionIdentity;");
-    }
-
-    private static void DeduplicateDividendPayments(SqliteConnection connection)
-    {
-        Execute(connection, """
-            DELETE FROM DividendPayments
-            WHERE Id NOT IN (
-                SELECT MAX(Id)
-                FROM DividendPayments
-                GROUP BY
-                    StockId, Broker, AccountType, DividendStatus, PaymentDate, Currency,
-                    Quantity, DividendPerShare, GrossAmount, TotalTaxAmount, NetAmount, NetAmountJpy
-            );
-            """);
-    }
-
-    private static int CountDuplicateDividendRows(SqliteConnection connection)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT COALESCE(SUM(RowCount - 1), 0)
-            FROM (
-                SELECT COUNT(*) AS RowCount
-                FROM DividendPayments
-                GROUP BY
-                    StockId, Broker, AccountType, DividendStatus, PaymentDate, Currency,
-                    Quantity, DividendPerShare, GrossAmount, TotalTaxAmount, NetAmount, NetAmountJpy
-                HAVING COUNT(*) > 1
-            );
-            """;
-
-        return Convert.ToInt32(command.ExecuteScalar());
+        Execute(connection, "DROP INDEX IF EXISTS UX_DividendPayments_ImportIdentity;");
+        Execute(connection, "DROP INDEX IF EXISTS UX_DividendPayments_SourceRow;");
     }
 
     private static int CountZeroPriceInboundEvents(SqliteConnection connection)
@@ -1191,6 +1247,9 @@ public sealed class DatabaseInitializer
                    AND t.TotalTaxAmount = d.TotalTaxAmount
                    AND t.NetAmount = d.NetAmount
                    AND t.NetAmountJpy = d.NetAmountJpy
+                   AND ((d.SourceRowNumber = 0 AND t.SourceRowNumber = 0)
+                        OR (d.SourceRowNumber > 0 AND t.SourceRowNumber = d.SourceRowNumber
+                            AND t.SourceFile = d.SourceFile))
                 WHERE d.StockId = $duplicateId
             );
             """,

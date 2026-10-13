@@ -108,6 +108,8 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
 
         CurrentMode = mode;
         SelectedMode = mode;
+        SelectedMergePolicy = MergePolicies.Contains(settings.CsvMergePolicy)
+            ? settings.CsvMergePolicy : MergePolicies[0];
 
         ExistingRows.Clear();
         foreach (var position in positions.OrderBy(x => NormalizeTicker(x.Stock.Ticker)).ThenBy(x => x.Stock.Broker))
@@ -139,6 +141,7 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
     {
         var settings = _getSettings();
         settings.BrokerDataMode = SelectedMode;
+        settings.CsvMergePolicy = SelectedMergePolicy;
         _saveSettings(settings);
         CurrentMode = SelectedMode;
         Message = $"連携方式を保存しました。既存手入力データの扱い: {SelectedMergePolicy}";

@@ -13,7 +13,7 @@ public sealed class NomuraHoldingsCsvParser
             throw new FileNotFoundException("CSVファイルが見つかりません。", filePath);
         }
 
-        var lines = File.ReadAllLines(filePath, Encoding.UTF8);
+        var lines = CsvFileEncoding.ReadAllRecords(filePath);
         var headerIndex = FindHeaderIndex(lines);
         if (headerIndex < 0)
         {
@@ -21,14 +21,34 @@ public sealed class NomuraHoldingsCsvParser
         }
 
         var headers = ParseCsvLine(lines[headerIndex]);
+        CsvRowValidation.ValidateHeaders(headers,
+            "商品", "銘柄コード", "ティッカー", "銘柄名", "保有数量", "基準日");
         var holdings = new List<BrokerHoldingRecord>();
-        foreach (var line in lines.Skip(headerIndex + 1).Where(x => !string.IsNullOrWhiteSpace(x)))
+        var unresolvedHoldings = new List<BrokerHoldingRecord>();
+        var rowAudit = new CsvSourceRowAuditBuilder();
+        for (var index = headerIndex + 1; index < lines.Length; index++)
         {
-            var row = ToDictionary(headers, ParseCsvLine(line));
-            var holding = CreateHolding(row);
-            if (!string.IsNullOrWhiteSpace(holding.Ticker) && holding.Shares > 0m)
+            if (string.IsNullOrWhiteSpace(lines[index])) continue;
+            rowAudit.Seen(index + 1);
+            var row = CsvRowValidation.ToDictionary(headers, ParseCsvLine(lines[index]), index + 1,
+                "商品", "銘柄コード", "ティッカー", "銘柄名", "保有数量", "基準日");
+            BrokerHoldingRecord holding;
+            try { holding = CreateHolding(row); }
+            catch (InvalidOperationException exception)
+            {
+                throw new InvalidOperationException($"CSV {index + 1}行目: {exception.Message}", exception);
+            }
+            if (holding.Shares < 0m)
+                throw new InvalidOperationException($"CSV {index + 1}行目・保有数量: 負の残高は取り込めません。");
+            if (string.IsNullOrWhiteSpace(holding.Ticker))
+            {
+                unresolvedHoldings.Add(holding);
+                rowAudit.Pending(index + 1, "銘柄コードを確定できません。");
+            }
+            else
             {
                 holdings.Add(holding);
+                rowAudit.Parsed();
             }
         }
 
@@ -37,7 +57,10 @@ public sealed class NomuraHoldingsCsvParser
             Broker = "野村証券",
             Source = "野村保有残高CSV",
             CanUpdateHoldings = holdings.Count > 0,
-            Holdings = holdings
+            Holdings = holdings,
+            UnresolvedHoldings = unresolvedHoldings,
+            SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase)
+            { [filePath] = rowAudit.Build() }
         };
     }
 
@@ -48,7 +71,7 @@ public sealed class NomuraHoldingsCsvParser
             return false;
         }
 
-        var lines = File.ReadLines(filePath, Encoding.UTF8).Take(30).ToList();
+        var lines = CsvFileEncoding.ReadLines(filePath).Take(30).ToList();
         return lines.Any(x => x.Contains("預り資産", StringComparison.Ordinal)) &&
                lines.Any(x => x.Contains("商品", StringComparison.Ordinal) &&
                               x.Contains("銘柄コード", StringComparison.Ordinal) &&
@@ -77,45 +100,35 @@ public sealed class NomuraHoldingsCsvParser
     {
         var product = Get(row, "商品");
         var currency = NormalizeCurrency(Get(row, "通貨"), product);
-        var shares = ParseDecimal(Get(row, "保有数量"));
-        var currentExchangeRate = currency == "JPY" ? 1m : ParseDecimal(Get(row, "評価レート"));
+        var shares = ParseDecimal(row, "保有数量");
+        var currentExchangeRate = currency == "JPY" ? 1m : ParseDecimal(row, "評価レート");
         if (currentExchangeRate <= 0m)
         {
             currentExchangeRate = currency == "JPY" ? 1m : 0m;
         }
 
-        var purchaseExchangeRate = currency == "JPY" ? 1m : ParseDecimal(Get(row, "取得為替レート"));
-        var acquisitionAmountJpy = ParseDecimal(Get(row, "取得金額（円）"));
+        var purchaseExchangeRate = currency == "JPY" ? 1m : ParseDecimal(row, "取得為替レート");
+        var acquisitionAmountJpy = ParseDecimal(row, "取得金額（円）");
         var averagePrice = ResolveAverageAcquisitionPrice(row, currency, shares, acquisitionAmountJpy, purchaseExchangeRate, currentExchangeRate);
         if (purchaseExchangeRate <= 0m && currency == "USD" && averagePrice > 0m && shares > 0m && acquisitionAmountJpy > 0m)
         {
             purchaseExchangeRate = acquisitionAmountJpy / (averagePrice * shares);
         }
 
-        if (purchaseExchangeRate <= 0m)
-        {
-            purchaseExchangeRate = currentExchangeRate > 0m ? currentExchangeRate : 1m;
-        }
-
         var currentPrice = currency == "JPY"
-            ? ParseDecimal(Get(row, "現在値"))
-            : ParseDecimal(Get(row, "参考時価"));
-        var marketValueJpy = ParseDecimal(Get(row, "評価額（円）"));
+            ? ParseDecimal(row, "現在値")
+            : ParseDecimal(row, "参考時価");
+        var marketValueJpy = ParseDecimal(row, "評価額（円）");
         var marketValue = currency == "JPY"
             ? marketValueJpy
-            : ParseDecimal(Get(row, "外貨評価額"));
+            : ParseDecimal(row, "外貨評価額");
         if (marketValue <= 0m && currentPrice > 0m && shares > 0m)
         {
             marketValue = currentPrice * shares;
         }
 
-        var snapshotDate = ParseDateOrDefault(Get(row, "基準日"), DateTime.Today);
+        var snapshotDate = ParseDateOrDefault(row, "基準日", DateTime.MinValue);
         var ticker = currency == "JPY" ? Get(row, "銘柄コード") : Get(row, "ティッカー");
-        if (string.IsNullOrWhiteSpace(ticker))
-        {
-            ticker = Get(row, "銘柄コード");
-        }
-
         ticker = SecuritySymbolNormalizer.NormalizeTicker(ticker);
         var name = SecuritySymbolNormalizer.NormalizeName(ticker, Get(row, "銘柄名").Replace("　", " ").Trim());
 
@@ -132,10 +145,10 @@ public sealed class NomuraHoldingsCsvParser
             AcquisitionAmount = currency == "JPY" ? acquisitionAmountJpy : averagePrice * shares,
             MarketValue = marketValue,
             MarketValueJpy = marketValueJpy,
-            UnrealizedGainLossJpy = ParseDecimal(Get(row, "評価損益（円）")),
+            UnrealizedGainLossJpy = ParseDecimal(row, "評価損益（円）"),
             Currency = currency,
             PurchaseExchangeRate = purchaseExchangeRate,
-            CurrentExchangeRate = currentExchangeRate > 0m ? currentExchangeRate : purchaseExchangeRate,
+            CurrentExchangeRate = currentExchangeRate,
             SnapshotDate = snapshotDate,
             Market = Get(row, "市場"),
             Source = "野村保有残高CSV"
@@ -152,7 +165,7 @@ public sealed class NomuraHoldingsCsvParser
     {
         if (currency == "JPY")
         {
-            var cost = ParseDecimal(Get(row, "取得コスト（円）"));
+            var cost = ParseDecimal(row, "取得コスト（円）");
             if (cost > 0m)
             {
                 return cost;
@@ -161,16 +174,15 @@ public sealed class NomuraHoldingsCsvParser
             return shares > 0m ? acquisitionAmountJpy / shares : 0m;
         }
 
-        var foreignPrice = ParseDecimal(Get(row, "買付単価（外貨）"));
+        var foreignPrice = ParseDecimal(row, "買付単価（外貨）");
         if (foreignPrice > 0m)
         {
             return foreignPrice;
         }
 
-        var rate = purchaseExchangeRate > 0m ? purchaseExchangeRate : currentExchangeRate;
-        if (shares > 0m && acquisitionAmountJpy > 0m && rate > 0m)
+        if (shares > 0m && acquisitionAmountJpy > 0m && purchaseExchangeRate > 0m)
         {
-            return acquisitionAmountJpy / shares / rate;
+            return acquisitionAmountJpy / shares / purchaseExchangeRate;
         }
 
         return 0m;
@@ -178,33 +190,30 @@ public sealed class NomuraHoldingsCsvParser
 
     private static string NormalizeCurrency(string currency, string product)
     {
-        if (string.Equals(currency.Trim(), "USD", StringComparison.OrdinalIgnoreCase) ||
-            product.Contains("外株", StringComparison.Ordinal))
-        {
-            return "USD";
-        }
-
-        return "JPY";
-    }
-
-    private static Dictionary<string, string> ToDictionary(IReadOnlyList<string> headers, IReadOnlyList<string> values)
-    {
-        var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < headers.Count; i++)
-        {
-            row[headers[i]] = i < values.Count ? values[i] : string.Empty;
-        }
-
-        return row;
+        var explicitCurrency = currency.Trim().ToUpperInvariant();
+        if (explicitCurrency is "円" or "YEN") return "JPY";
+        if (explicitCurrency.Length > 0) return explicitCurrency;
+        return product.Contains("外株", StringComparison.Ordinal) ? "USD" : "JPY";
     }
 
     private static string Get(IReadOnlyDictionary<string, string> row, string key) =>
         row.TryGetValue(key, out var value) ? value.Trim().Trim('"') : string.Empty;
 
+    private static DateTime ParseDateOrDefault(IReadOnlyDictionary<string, string> row, string column, DateTime fallback)
+    {
+        var value = Get(row, column);
+        try { return ParseDateOrDefault(value, fallback); }
+        catch (InvalidOperationException exception)
+        {
+            throw new InvalidOperationException($"{column}: {exception.Message}", exception);
+        }
+    }
+
     private static DateTime ParseDateOrDefault(string value, DateTime fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback :
         DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
             ? date
-            : fallback;
+            : throw new InvalidOperationException($"日付を読み取れません: {value}");
 
     private static decimal ParseDecimal(string value)
     {
@@ -213,9 +222,18 @@ public sealed class NomuraHoldingsCsvParser
             .Replace("+", string.Empty)
             .Replace("--", string.Empty)
             .Trim();
+        if (normalized.Length == 0) return 0m;
         return decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out var result)
-            ? result
-            : 0m;
+            ? result : throw new InvalidOperationException($"数値を読み取れません: {value}");
+    }
+
+    private static decimal ParseDecimal(IReadOnlyDictionary<string, string> row, string column)
+    {
+        try { return ParseDecimal(Get(row, column)); }
+        catch (InvalidOperationException exception)
+        {
+            throw new InvalidOperationException($"{column}: {exception.Message}", exception);
+        }
     }
 
     private static IReadOnlyList<string> ParseCsvLine(string line)

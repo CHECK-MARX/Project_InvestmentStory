@@ -22,9 +22,10 @@ public abstract class BrokerCsvImportServiceBase : IBrokerCsvImportService
         }
 
         var columns = rows[0];
+        CsvRowValidation.ValidateHeaders(columns);
         var previewRows = rows.Skip(1)
             .Take(20)
-            .Select(values => ToDictionary(columns, values))
+            .Select((values, index) => CsvRowValidation.ToDictionary(columns, values, index + 2))
             .Cast<IReadOnlyDictionary<string, string>>()
             .ToList();
 
@@ -38,91 +39,16 @@ public abstract class BrokerCsvImportServiceBase : IBrokerCsvImportService
 
     public BrokerCsvImportResult Import(string filePath, string csvType, IReadOnlyDictionary<string, string> columnMappings)
     {
-        if (!File.Exists(filePath))
-        {
-            return new BrokerCsvImportResult { IsSuccess = false, Logs = new[] { "CSVファイルが見つかりません。" } };
-        }
-
-        var rows = ReadCsv(filePath).ToList();
-        if (rows.Count <= 1)
-        {
-            return new BrokerCsvImportResult { IsSuccess = false, Logs = new[] { "取込対象データがありません。" } };
-        }
-
-        var columns = rows[0];
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var imported = 0;
-        var duplicates = 0;
-
-        foreach (var values in rows.Skip(1))
-        {
-            var row = ToDictionary(columns, values);
-            var key = BuildDuplicateKey(csvType, row, columnMappings);
-            if (!seen.Add(key))
-            {
-                duplicates++;
-                continue;
-            }
-
-            imported++;
-        }
-
         return new BrokerCsvImportResult
         {
-            IsSuccess = true,
-            ImportedCount = imported,
-            DuplicateCount = duplicates,
-            Logs = new[]
-            {
-                $"{ProviderName} / {csvType}: {imported}件を検証しました。",
-                $"重複候補: {duplicates}件。",
-                "この版ではCSVのプレビューと重複検証まで行います。DB反映は列マッピング確定後に拡張します。"
-            }
+            IsSuccess = false,
+            Logs = new[] { $"{ProviderName} / {csvType}: 汎用CSVのDB取込は未対応です。プレビューのみ利用できます。" }
         };
-    }
-
-    private static string BuildDuplicateKey(
-        string csvType,
-        IReadOnlyDictionary<string, string> row,
-        IReadOnlyDictionary<string, string> mappings)
-    {
-        var ticker = GetMappedValue(row, mappings, "銘柄コード");
-        var date = GetMappedValue(row, mappings, csvType == "配当履歴" ? "入金日" : "取引日");
-        var quantity = GetMappedValue(row, mappings, "数量");
-        var amount = GetMappedValue(row, mappings, "金額");
-        return $"{ticker}|{date}|{quantity}|{amount}";
-    }
-
-    private static string GetMappedValue(
-        IReadOnlyDictionary<string, string> row,
-        IReadOnlyDictionary<string, string> mappings,
-        string logicalName)
-    {
-        if (mappings.TryGetValue(logicalName, out var columnName) &&
-            row.TryGetValue(columnName, out var mappedValue))
-        {
-            return mappedValue;
-        }
-
-        var direct = row.FirstOrDefault(x => x.Key.Contains(logicalName, StringComparison.OrdinalIgnoreCase));
-        return direct.Value ?? string.Empty;
-    }
-
-    private static Dictionary<string, string> ToDictionary(IReadOnlyList<string> columns, IReadOnlyList<string> values)
-    {
-        var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < columns.Count; i++)
-        {
-            row[columns[i]] = i < values.Count ? values[i] : string.Empty;
-        }
-
-        return row;
     }
 
     private static IEnumerable<IReadOnlyList<string>> ReadCsv(string filePath)
     {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        foreach (var line in File.ReadLines(filePath, Encoding.GetEncoding(932)))
+        foreach (var line in CsvFileEncoding.ReadAllRecords(filePath))
         {
             yield return ParseCsvLine(line);
         }

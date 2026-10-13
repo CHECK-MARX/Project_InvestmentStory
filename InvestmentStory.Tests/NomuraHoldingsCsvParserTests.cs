@@ -44,4 +44,95 @@ public sealed class NomuraHoldingsCsvParserTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Parse_PreservesExplicitCurrencyAndUnknownSnapshotAndRates()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nomura_holdings_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            預り資産（預り証券）
+            商品,銘柄コード,ティッカー,銘柄名,保有数量,基準日,通貨,参考時価,買付単価（外貨）,取得為替レート,評価レート,取得金額（円）
+            外株,A0001,ABC,Example,10,,EUR,20,15,,,0
+            """, new UTF8Encoding(false));
+        try
+        {
+            var holding = Assert.Single(new NomuraHoldingsCsvParser().Parse(path).Holdings);
+            Assert.Equal("EUR", holding.Currency);
+            Assert.Equal(DateTime.MinValue, holding.SnapshotDate);
+            Assert.Equal(0m, holding.PurchaseExchangeRate);
+            Assert.Equal(0m, holding.CurrentExchangeRate);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Parse_RejectsMissingColumnsWithRecordNumber()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nomura_holdings_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            預り資産（預り証券）
+            商品,銘柄コード,ティッカー,銘柄名,保有数量,基準日,通貨
+            外株,A0001,ABC,Example,10,2026/07/01
+            """, new UTF8Encoding(false));
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(() => new NomuraHoldingsCsvParser().Parse(path));
+            Assert.Contains("3行目", error.Message);
+            Assert.Contains("列数", error.Message);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Parse_QueuesForeignHoldingWithoutTickerForReview()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nomura_holdings_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            預り資産（預り証券）
+            商品,銘柄コード,ティッカー,銘柄名,保有数量,基準日,通貨
+            外株,A0001,,Example,10,2026/07/01,USD
+            """, new UTF8Encoding(false));
+        try
+        {
+            var statement = new NomuraHoldingsCsvParser().Parse(path);
+            Assert.Empty(statement.Holdings);
+            Assert.Equal("Example", Assert.Single(statement.UnresolvedHoldings).Name);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void LooksLikeAndParse_AcceptCp932EncodedNomuraCsv()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var path = Path.Combine(Path.GetTempPath(), $"nomura_holdings_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            預り資産（預り証券）
+            商品,銘柄コード,ティッカー,銘柄名,保有数量,基準日,通貨
+            株式,8151,,東陽テクニカ,10,2026/07/01,JPY
+            """, Encoding.GetEncoding(932));
+        try
+        {
+            Assert.True(NomuraHoldingsCsvParser.LooksLikeNomuraHoldingsCsv(path));
+            Assert.Equal("8151", Assert.Single(new NomuraHoldingsCsvParser().Parse(path).Holdings).Ticker);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Parse_RejectsDuplicateHeader()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"nomura_holdings_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            預り資産（預り証券）
+            商品,銘柄コード,ティッカー,銘柄名,保有数量,基準日,保有数量
+            株式,8151,,東陽テクニカ,10,2026/07/01,10
+            """, new UTF8Encoding(false));
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(() => new NomuraHoldingsCsvParser().Parse(path));
+            Assert.Contains("重複列", error.Message);
+        }
+        finally { File.Delete(path); }
+    }
 }

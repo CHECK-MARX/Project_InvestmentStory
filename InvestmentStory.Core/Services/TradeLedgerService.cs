@@ -86,7 +86,7 @@ public sealed class TradeLedgerService
                 SignedQuantity = signedQuantity,
                 UnitPrice = trade.UnitPrice,
                 Currency = NormalizeCurrency(trade.Currency),
-                ExchangeRate = trade.ExchangeRate <= 0m ? 1m : trade.ExchangeRate,
+                ExchangeRate = NormalizeCurrency(trade.Currency) == "JPY" ? 1m : trade.ExchangeRate,
                 SettlementAmountJpy = trade.SettlementAmountJpy,
                 FeeJpy = trade.FeeJpy,
                 RealizedGainLoss = realized,

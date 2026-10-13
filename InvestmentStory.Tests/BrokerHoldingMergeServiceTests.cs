@@ -45,7 +45,8 @@ public sealed class BrokerHoldingMergeServiceTests
                 StockId = 10,
                 CurrentShares = 100m,
                 CurrentPrice = 1000m,
-                CurrentExchangeRate = 1m
+                CurrentExchangeRate = 1m,
+                UpdatedAt = new DateTime(2026, 1, 1)
             }
         };
         var brokerHolding = new BrokerHoldingRecord
@@ -56,7 +57,8 @@ public sealed class BrokerHoldingMergeServiceTests
             Shares = 200m,
             AverageAcquisitionPrice = 3039m,
             MarketValue = 620000m,
-            Currency = "JPY"
+            Currency = "JPY",
+            SnapshotDate = new DateTime(2026, 7, 7)
         };
 
         var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, new DateTime(2026, 7, 7, 15, 0, 0));
@@ -97,7 +99,10 @@ public sealed class BrokerHoldingMergeServiceTests
             Shares = 10m,
             AverageAcquisitionPrice = 60m,
             MarketValue = 650m,
-            Currency = "USD"
+            Currency = "USD",
+            PurchaseExchangeRate = 145m,
+            CurrentExchangeRate = 150m,
+            SnapshotDate = new DateTime(2026, 7, 2)
         };
 
         var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, DateTime.Now);
@@ -110,7 +115,7 @@ public sealed class BrokerHoldingMergeServiceTests
     }
 
     [Fact]
-    public void MergeHoldings_UsesSingleRepresentative_WhenDuplicateIdentityAlreadyExists()
+    public void MergeHoldings_RequiresReview_WhenDuplicateIdentityAlreadyExists()
     {
         var service = new BrokerHoldingMergeService();
         var older = CreateExistingPosition(
@@ -132,17 +137,16 @@ public sealed class BrokerHoldingMergeServiceTests
             Shares = 20m,
             AverageAcquisitionPrice = 45m,
             CurrentPrice = 60m,
-            Currency = "USD"
+            Currency = "USD",
+            SnapshotDate = new DateTime(2026, 7, 2)
         };
 
         var result = service.MergeHoldings(new[] { older, newer }, new[] { brokerHolding }, DateTime.Now);
 
         var decision = Assert.Single(result.Decisions);
-        Assert.Equal(BrokerMergeAction.Overwrite, decision.Action);
-        Assert.NotNull(decision.Existing);
-        Assert.Equal(2, decision.Existing.Stock.Id);
-        Assert.NotNull(decision.Merged);
-        Assert.Equal(60m, decision.Merged.CurrentHolding.CurrentPrice);
+        Assert.Equal(BrokerMergeAction.NeedsReview, decision.Action);
+        Assert.Null(decision.Merged);
+        Assert.Contains("2件", decision.Reason);
     }
 
     [Fact]
@@ -196,7 +200,8 @@ public sealed class BrokerHoldingMergeServiceTests
             MarketValue = 1_686_405m,
             MarketValueJpy = 1_686_405m,
             UnrealizedGainLossJpy = 473_059m,
-            Currency = "JPY"
+            Currency = "JPY",
+            SnapshotDate = DateTime.Today
         };
 
         var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, DateTime.Now);
@@ -208,6 +213,32 @@ public sealed class BrokerHoldingMergeServiceTests
         Assert.NotNull(decision.Merged);
         Assert.Equal(AccountTypes.NisaAccumulation, decision.Merged.Stock.AccountType);
         Assert.Equal(1_686_405m, decision.Merged.MutualFund.MarketValue);
+    }
+
+    [Theory]
+    [InlineData("新規銘柄だけ追加", BrokerMergeAction.NeedsReview, 10, 50)]
+    [InlineData("すべてプレビューして手動選択", BrokerMergeAction.NeedsReview, 10, 50)]
+    [InlineData("現在株数・現在株価だけ証券会社データで更新", BrokerMergeAction.Overwrite, 20, 60)]
+    [InlineData("手入力を保護して不足分だけ補完", BrokerMergeAction.Overwrite, 10, 50)]
+    public void MergeHoldings_AppliesSavedMergePolicy(string policy, BrokerMergeAction action,
+        int expectedShares, int expectedPrice)
+    {
+        var existing = CreateExistingPosition(1, 10m, 50m, new DateTime(2026, 1, 1));
+        existing.Stock.DataSource = "手入力";
+        var source = new BrokerHoldingRecord
+        {
+            Broker = "SBI", Ticker = "KO", Account = AccountTypes.Specific,
+            Currency = "USD", Shares = 20m, CurrentPrice = 60m,
+            SnapshotDate = new DateTime(2026, 8, 1)
+        };
+        var decision = Assert.Single(new BrokerHoldingMergeService()
+            .MergeHoldings(new[] { existing }, new[] { source }, DateTime.Today, policy).Decisions);
+        Assert.Equal(action, decision.Action);
+        if (decision.Merged is not null)
+        {
+            Assert.Equal(expectedShares, decision.Merged.CurrentHolding.CurrentShares);
+            Assert.Equal(expectedPrice, decision.Merged.CurrentHolding.CurrentPrice);
+        }
     }
 
     private static StockPosition CreateExistingPosition(int id, decimal shares, decimal currentPrice, DateTime updatedAt)

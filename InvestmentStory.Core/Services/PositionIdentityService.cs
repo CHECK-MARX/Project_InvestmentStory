@@ -49,7 +49,7 @@ public static class PositionIdentityService
             NormalizeSecurityId(securityId, normalizedAssetType),
             normalizedAssetType,
             normalizedAccountType,
-            NormalizeCustodyType(custodyType, accountType),
+            NormalizeCustodyForIdentity(custodyType, accountType),
             NormalizeCurrency(currency));
     }
 
@@ -131,6 +131,20 @@ public static class PositionIdentityService
         }
 
         return AccountTypeNormalizer.Normalize(accountType);
+    }
+
+    // Keep the broker's raw custody label in Stocks; collapse equivalent labels only in identity keys.
+    public static string NormalizeCustodyForIdentity(string custodyType, string accountType)
+    {
+        var normalizedAccount = AccountTypeNormalizer.Normalize(custodyType);
+        if (normalizedAccount == AccountTypes.Unknown)
+        {
+            normalizedAccount = AccountTypeNormalizer.Normalize(accountType);
+        }
+
+        return normalizedAccount == AccountTypes.Unknown
+            ? NormalizeCustodyType(custodyType, accountType)
+            : normalizedAccount;
     }
 
     public static string NormalizeCurrency(string currency)

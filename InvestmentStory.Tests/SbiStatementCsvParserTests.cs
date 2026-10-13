@@ -7,6 +7,68 @@ namespace InvestmentStory.Tests;
 public sealed class SbiStatementCsvParserTests
 {
     [Fact]
+    public void ParseFiles_UnknownForeignTickerIsPendingWithSourceRow()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_foreign_review_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, """
+            国内約定日,通貨,銘柄名,取引,預り区分,約定数量,約定単価,国内受渡日,受渡金額
+            2026年06月15日,米国ドル,銘柄不明,買付,NISA,20,10,26/06/17,200
+            """, Encoding.UTF8);
+        try
+        {
+            var statement = new SbiStatementCsvParser().ParseFiles(new[] { path });
+            Assert.Empty(statement.Trades);
+            Assert.Single(statement.UnresolvedTrades);
+            var audit = statement.SourceRowAudits[path];
+            Assert.True(audit.IsBalanced);
+            Assert.Equal(1, audit.PendingRows);
+            Assert.Equal(2, Assert.Single(audit.Issues).RowNumber);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ParseFiles_CertifiesOnlyDatedAccountSectionWithMatchingSubtotal()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var folder = Path.Combine(Path.GetTempPath(), $"SbiCompleteScope_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        var full = Path.Combine(folder, "SBI_SaveFile20260926.csv");
+        var partial = Path.Combine(folder, "SBI_Partial20260926.csv");
+        var empty = Path.Combine(folder, "SBI_Empty20260926.csv");
+        const string header = "銘柄コード,銘柄名称,保有株数,売却注文中,取得単価,現在値,取得金額,評価額,評価損益";
+        const string row = "8593,三菱ＨＣキャピタル,2,,100,150,200,300,+100";
+        try
+        {
+            File.WriteAllText(full, string.Join('\n',
+                "保有証券一覧", "", "株式（特定預り）合計", "", "評価額合計,評価損益合計",
+                "300,+100", "", "株式（特定預り）", "", header, row, ""), Encoding.GetEncoding(932));
+            File.WriteAllText(partial, string.Join('\n',
+                "保有証券一覧", "", "株式（特定預り）", "", header, row, ""), Encoding.GetEncoding(932));
+            File.WriteAllText(empty, string.Join('\n',
+                "保有証券一覧", "", "株式（特定預り）合計", "", "評価額合計,評価損益合計",
+                "0,0", "", "株式（特定預り）", "", header, ""), Encoding.GetEncoding(932));
+
+            var parser = new SbiStatementCsvParser();
+            var scope = Assert.Single(parser.ParseFiles(new[] { full }).CompleteHoldingScopes);
+            Assert.Equal(new DateTime(2026, 9, 26), scope.SnapshotDate);
+            Assert.Equal(AssetTypes.Stock, scope.AssetType);
+            Assert.Empty(parser.ParseFiles(new[] { partial }).CompleteHoldingScopes);
+            var emptyStatement = parser.ParseFiles(new[] { empty });
+            Assert.Empty(emptyStatement.Holdings);
+            Assert.True(emptyStatement.CanUpdateHoldings);
+            Assert.Single(emptyStatement.CompleteHoldingScopes);
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public void ParseFiles_ReadsSbiJapanStockHoldings()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -148,7 +210,7 @@ public sealed class SbiStatementCsvParserTests
     }
 
     [Fact]
-    public void ParseFromSeedFile_ReadsSbiFilesInSameFolder()
+    public void ParseFromSeedFile_ReadsOnlySelectedFile()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         var directory = Path.Combine(Path.GetTempPath(), $"sbi_csv_{Guid.NewGuid():N}");
@@ -191,12 +253,13 @@ public sealed class SbiStatementCsvParserTests
             var statement = parser.ParseFromSeedFile(foreignPath);
 
             Assert.Equal("SBI証券", statement.Broker);
-            Assert.Single(statement.Dividends);
-            Assert.Equal("JNJ", statement.Dividends[0].Ticker);
-            Assert.Equal(3, statement.Trades.Count);
+            Assert.Empty(statement.Dividends);
+            Assert.Equal(2, statement.Trades.Count);
             Assert.Contains(statement.Trades, x => x.Ticker == "PEP" && x.Currency == "USD" && x.SignedQuantity == 20m);
             Assert.Contains(statement.Trades, x => x.Ticker == "CMBT" && x.Name == "CMB テック" && x.Currency == "USD" && x.SignedQuantity == 40m);
-            Assert.Contains(statement.Trades, x => x.Ticker.StartsWith("FUND:", StringComparison.Ordinal) && x.Currency == "JPY");
+            var selectedTogether = parser.ParseFiles(new[] { domesticPath, distributionPath, foreignPath });
+            Assert.Single(selectedTogether.Dividends);
+            Assert.Equal(3, selectedTogether.Trades.Count);
         }
         finally
         {
