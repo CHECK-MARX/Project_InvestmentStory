@@ -249,7 +249,7 @@ public sealed class DividendTaxAndScheduleTests
     }
 
     [Fact]
-    public void ReconciliationService_CsvActualReplacesMatchingSchedule()
+    public void ReconciliationService_NearbyScheduleIsReviewCandidate()
     {
         var existing = new[]
         {
@@ -283,8 +283,31 @@ public sealed class DividendTaxAndScheduleTests
         var decision = new DividendReconciliationService().ReconcileActual(existing, actual);
 
         Assert.Null(decision.DuplicateActual);
-        Assert.Single(decision.ReplaceTargets);
-        Assert.Equal(1, decision.ReplaceTargets[0].Id);
+        Assert.Empty(decision.ReplaceTargets);
+        Assert.Equal(1, Assert.Single(decision.ReviewCandidates).Id);
+    }
+
+    [Fact]
+    public void ReconciliationService_ExactSingleScheduleCanBeReplaced()
+    {
+        var planned = new DividendPayment
+        {
+            Id = 1, StockId = 1, Broker = "SBI", AccountType = DividendConstants.AccountSpecific,
+            PaymentDate = new DateTime(2026, 6, 22), DividendStatus = DividendConstants.Planned,
+            Currency = "JPY", Quantity = 10m, NetAmount = 100m, NetAmountJpy = 100m
+        };
+        var actual = new DividendPayment
+        {
+            StockId = 1, Broker = "SBI", AccountType = DividendConstants.AccountSpecific,
+            PaymentDate = planned.PaymentDate, DividendStatus = DividendConstants.Actual,
+            Currency = "JPY", Quantity = 10m, NetAmount = 100m, NetAmountJpy = 100m,
+            Source = DividendConstants.SourceCsv
+        };
+
+        var decision = new DividendReconciliationService().ReconcileActual(new[] { planned }, actual);
+
+        Assert.Equal(planned.Id, Assert.Single(decision.ReplaceTargets).Id);
+        Assert.Empty(decision.ReviewCandidates);
     }
 
     private static StockPosition CreatePosition(

@@ -682,6 +682,87 @@ public sealed class CsvImportSafetyTests
     }
 
     [Fact]
+    public void OversizedCsv_IsRejectedBeforeMaterializingRecords()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_DISTRIBUTION_{Guid.NewGuid():N}.csv");
+        try
+        {
+            using (var stream = File.Create(path)) stream.SetLength(32L * 1024 * 1024 + 1);
+            var error = Assert.Throws<InvalidOperationException>(
+                () => new SbiDistributionCsvParser().ParseStatement(path));
+            Assert.Contains("32 MiB", error.Message);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void SavePosition_ReusesLegacyStockWithDifferentCanonicalKey()
+    {
+        WithRepository(repository =>
+        {
+            var id = repository.SavePosition(Position("CMBT", "USD", 10m, 150m));
+            using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                   { DataSource = repository.DatabasePath, Pooling = false }.ToString()))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE Stocks SET CanonicalSecurityKey = 'LEGACY' WHERE Id = $id;";
+                command.Parameters.AddWithValue("$id", id);
+                command.ExecuteNonQuery();
+            }
+
+            var newId = repository.SavePosition(Position("CMBT", "USD", 11m, 150m));
+            Assert.Equal(id, newId);
+            Assert.Single(repository.GetPositions());
+            Assert.Equal(11m, repository.GetPositions().Single().CurrentHolding.CurrentShares);
+        });
+    }
+
+    [Fact]
+    public void HistoricalTradeFromAnotherAccount_DoesNotChangeNisaPositionAccount()
+    {
+        var position = Position("CMBT", "USD", 30m, 150m);
+        position.Stock.Id = 104;
+        position.Stock.AccountType = AccountTypes.NisaGrowth;
+        position.Stock.CustodyType = "NISA";
+        StockPosition? saved = null;
+        var oldSpecificTrade = new BrokerTrade
+        {
+            Id = 1, StockId = 104, Broker = "SBI証券", AccountType = AccountTypes.Specific,
+            CustodyType = "特定", TradeDate = new DateTime(2023, 9, 12),
+            SettlementDate = new DateTime(2023, 9, 14), TradeType = "買付",
+            Quantity = 6m, SignedQuantity = 6m, UnitPrice = 10m, Currency = "USD",
+            Source = "SBI米国株約定CSV"
+        };
+        var statement = new BrokerStatementImport
+        {
+            CanUpdateHoldings = true,
+            Trades = new[]
+            {
+                new BrokerTradeRecord
+                {
+                    Broker = "SBI証券", Ticker = "CMBT", Name = "CMBT", Account = "NISA",
+                    Product = "米国株式", TradeDate = new DateTime(2024, 1, 30),
+                    SettlementDate = new DateTime(2024, 2, 1), TradeType = "買付",
+                    Quantity = 30m, SignedQuantity = 30m, UnitPrice = 10m,
+                    Currency = "USD", ExchangeRate = 150m, Source = "SBI米国株約定CSV"
+                }
+            }
+        };
+        var vm = new CsvImportViewModel(
+            () => new[] { position }, value => { saved = value; return 104; },
+            _ => 1, () => Array.Empty<DividendPayment>(), _ => { }, null,
+            _ => new[] { oldSpecificTrade });
+
+        typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(vm, new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+        Assert.NotNull(saved);
+        Assert.Equal(AccountTypes.NisaGrowth, saved.Stock.AccountType);
+        Assert.Equal("NISA", saved.Stock.CustodyType);
+    }
+
+    [Fact]
     public void FailedDividendBatch_DoesNotReuseRolledBackPreparedCommand()
     {
         WithRepository(repository =>
@@ -707,7 +788,7 @@ public sealed class CsvImportSafetyTests
     }
 
     [Fact]
-    public void ImportedDividend_ReplacesPlannedPaymentNineDaysLater()
+    public void ImportedDividend_NineDayScheduleCandidateRemainsForReview()
     {
         var path = Path.Combine(Path.GetTempPath(), $"SBI_DISTRIBUTION_{Guid.NewGuid():N}.csv");
         try
@@ -728,14 +809,67 @@ public sealed class CsvImportSafetyTests
                 var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
                     repository.SaveDividendPayment, repository.GetDividendPayments,
                     repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
-                    repository.RunImportAtomically) { FilePath = path };
+                    repository.RunImportAtomically, null, null, repository.SaveCsvImportReviewDividend)
+                { FilePath = path };
                 vm.PreviewCommand.Execute(null);
                 vm.ImportCommand.Execute(null);
 
                 var payments = repository.GetDividendPayments();
-                var actual = Assert.Single(payments, x => x.DividendStatus == DividendConstants.Actual);
-                var planned = Assert.Single(payments, x => x.DividendStatus == DividendConstants.Replaced);
-                Assert.Equal(actual.Id, planned.ReplacedByDividendId);
+                Assert.Single(payments, x => x.DividendStatus == DividendConstants.Actual);
+                var planned = Assert.Single(payments, x => x.DividendStatus == DividendConstants.Planned);
+                Assert.Null(planned.ReplacedByDividendId);
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT Reason FROM CsvImportReviewDividends LIMIT 1;";
+                Assert.Contains("近似一致", (string)command.ExecuteScalar()!);
+            });
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void ImportedDividend_DoesNotReplaceMultipleScheduleCandidates()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_DISTRIBUTION_{Guid.NewGuid():N}.csv");
+        try
+        {
+            File.WriteAllText(path,
+                "受渡日,口座,商品,銘柄名,数量,受取額(税引後・円)\n" +
+                "2026/08/01,特定,米国株式,Example Corp EXMP,10,100\n", Encoding.UTF8);
+            WithRepository(repository =>
+            {
+                var stockId = repository.SavePosition(Position("EXMP", "USD", 0m, 150m));
+                foreach (var date in new[] { new DateTime(2026, 8, 1), new DateTime(2026, 8, 2) })
+                    repository.SaveDividendPayment(new DividendPayment
+                    {
+                        StockId = stockId, Broker = "SBI証券", PaymentDate = date,
+                        AccountType = AccountTypes.Specific, TaxAccountType = AccountTypes.Specific,
+                        Currency = "JPY", NetAmount = 100m, NetAmountJpy = 100m,
+                        DividendStatus = DividendConstants.Planned, Source = DividendConstants.SourceManual
+                    });
+
+                var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                    repository.SaveDividendPayment, repository.GetDividendPayments,
+                    repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                    repository.RunImportAtomically, null, null, repository.SaveCsvImportReviewDividend)
+                { FilePath = path };
+                vm.PreviewCommand.Execute(null);
+                vm.ImportCommand.Execute(null);
+                Assert.Equal(2, repository.GetDividendPayments().Count(x => x.DividendStatus == DividendConstants.Planned));
+                Assert.Single(repository.GetDividendPayments(), x => x.DividendStatus == DividendConstants.Actual);
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM CsvImportReviewDividends;";
+                Assert.Equal(1L, (long)command.ExecuteScalar()!);
+
+                vm.PreviewCommand.Execute(null);
+                vm.ImportCommand.Execute(null);
+                Assert.Equal(3, repository.GetDividendPayments().Count);
+                Assert.Equal(1L, (long)command.ExecuteScalar()!);
             });
         }
         finally { if (File.Exists(path)) File.Delete(path); }

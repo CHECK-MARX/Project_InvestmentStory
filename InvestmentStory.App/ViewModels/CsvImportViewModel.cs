@@ -866,6 +866,10 @@ public sealed class CsvImportViewModel : ObservableObject
                         imported++;
                         replaced++;
                         break;
+                    case DividendImportAction.CreatedNeedsReview:
+                        imported++;
+                        reviewCount++;
+                        break;
                     case DividendImportAction.NeedsReview:
                         skipped++;
                         reviewCount++;
@@ -1034,7 +1038,7 @@ public sealed class CsvImportViewModel : ObservableObject
                     positionByKey.TryGetValue(tradeGroup.Key, out var positionForHistory);
                     var fullHistory = positionForHistory is null || _getBrokerTrades is null
                         ? tradeGroup.ToList()
-                        : TradeHistoryService.Merge(_getBrokerTrades(positionForHistory.Stock.Id), tradeGroup,
+                        : TradeHistoryService.Merge(GetAccountTrades(positionForHistory.Stock.Id, tradeGroup.First()), tradeGroup,
                             positionForHistory.Stock.Ticker);
                     if (TradeReconstructionService.Reconstruct(fullHistory).IncompleteSellCount > 0)
                     {
@@ -1114,7 +1118,7 @@ public sealed class CsvImportViewModel : ObservableObject
                     {
                         var completeHistory = _getBrokerTrades is null
                             ? tradeGroup.ToList()
-                            : TradeHistoryService.Merge(_getBrokerTrades(position.Stock.Id), tradeGroup, position.Stock.Ticker);
+                            : TradeHistoryService.Merge(GetAccountTrades(position.Stock.Id, tradeGroup.First()), tradeGroup, position.Stock.Ticker);
                         ApplyTradeSummary(position, completeHistory, relatedDividends);
                         position.Stock.Id = _savePosition(position);
                         updatedStocks++;
@@ -1175,6 +1179,10 @@ public sealed class CsvImportViewModel : ObservableObject
                     case DividendImportAction.ReplacedSchedule:
                         importedDividends++;
                         replacedDividends++;
+                        break;
+                    case DividendImportAction.CreatedNeedsReview:
+                        importedDividends++;
+                        reviewDividends++;
                         break;
                     case DividendImportAction.NeedsReview:
                         skippedDividends++;
@@ -1898,6 +1906,26 @@ public sealed class CsvImportViewModel : ObservableObject
         payment.Id = newId;
         existingDividends.Add(payment);
 
+        if (decision.ReviewCandidates.Count > 0)
+        {
+            var candidateIds = string.Join(", ", decision.ReviewCandidates.Select(x => x.Id));
+            var reason = $"予定・手入力の配当候補ID {candidateIds} と近似一致します。CSV実績ID {newId} は登録済みです。候補の置換は明細を確認して判断してください。";
+            _saveReviewDividend?.Invoke(new BrokerUnresolvedDividend
+            {
+                PaymentDate = payment.PaymentDate,
+                Broker = payment.Broker,
+                Name = string.IsNullOrWhiteSpace(payment.StockName) ? payment.Ticker : payment.StockName,
+                Product = payment.Source,
+                Quantity = payment.Quantity,
+                GrossAmount = payment.GrossAmount,
+                TaxAmount = payment.TaxAmount,
+                Source = $"{payment.SourceFile}:{payment.SourceRowNumber}",
+                Reason = reason
+            });
+            AddImportLog($"要確認: {payment.PaymentDate:yyyy/MM/dd} {payment.Ticker} / {reason}");
+            return DividendImportAction.CreatedNeedsReview;
+        }
+
         foreach (var target in decision.ReplaceTargets)
         {
             target.DividendStatus = DividendConstants.Replaced;
@@ -2096,6 +2124,7 @@ public sealed class CsvImportViewModel : ObservableObject
         Skipped,
         NeedsReview,
         Created,
+        CreatedNeedsReview,
         UpdatedExistingActual,
         ReplacedSchedule
     }
@@ -2108,6 +2137,19 @@ public sealed class CsvImportViewModel : ObservableObject
             normalizedTicker = normalizedTicker[5..];
         var normalizedAccount = AccountTypeNormalizer.Normalize(account);
         return $"{normalizedBroker}|{normalizedTicker}|{normalizedAccount}";
+    }
+
+    private IReadOnlyList<BrokerTrade> GetAccountTrades(int stockId, BrokerTradeRecord incoming)
+    {
+        if (_getBrokerTrades is null) return Array.Empty<BrokerTrade>();
+        var broker = SecuritySymbolNormalizer.NormalizeBroker(incoming.Broker);
+        var account = AccountTypeNormalizer.Normalize(incoming.Account);
+        return _getBrokerTrades(stockId)
+            .Where(x => string.Equals(SecuritySymbolNormalizer.NormalizeBroker(x.Broker), broker,
+                StringComparison.OrdinalIgnoreCase))
+            .Where(x => AccountTypeNormalizer.Normalize(string.IsNullOrWhiteSpace(x.CustodyType)
+                ? x.AccountType : x.CustodyType) == account)
+            .ToList();
     }
 
     private static IReadOnlyList<StockPosition> FindDividendPositionCandidates(

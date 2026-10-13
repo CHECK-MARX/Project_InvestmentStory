@@ -1731,6 +1731,27 @@ public sealed class InvestmentStoryRepository
             return Convert.ToInt32(value);
         }
 
+        // Legacy rows may carry a different canonical key while the database's unique
+        // identity (broker/ticker/asset/account/custody/currency) is already occupied.
+        // Reuse that row instead of attempting an insert that must fail.
+        command.Parameters.Clear();
+        command.CommandText = """
+            SELECT Id FROM Stocks
+            WHERE Broker = $broker AND Ticker = $ticker AND AssetType = $assetType
+              AND AccountType = $accountType AND CustodyType = $custodyType
+              AND Currency = $currency
+            ORDER BY Id DESC LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$broker", stock.Broker);
+        command.Parameters.AddWithValue("$ticker", stock.Ticker);
+        command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
+        command.Parameters.AddWithValue("$accountType", NormalizeAccountTypeForStock(stock));
+        command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
+        command.Parameters.AddWithValue("$currency", NormalizeCurrency(stock.Currency));
+        value = command.ExecuteScalar();
+        if (value is not null && value != DBNull.Value)
+            return Convert.ToInt32(value);
+
         return AssetTypes.IsMutualFund(stock.AssetType)
             ? FindMutualFundStockIdByComputedCanonicalKey(connection, transaction, stock)
             : 0;

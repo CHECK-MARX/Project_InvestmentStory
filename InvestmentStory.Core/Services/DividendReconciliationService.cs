@@ -19,7 +19,7 @@ public sealed class DividendReconciliationService
             .ThenByDescending(x => x.UpdatedAt)
             .FirstOrDefault();
 
-        var replaceTargets = existing
+        var scheduleCandidates = existing
             .Where(x => x.Id != duplicateActual?.Id)
             .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus) || IsManualActual(x))
             .Where(x => IsSameDividendIdentity(x, actualPayment))
@@ -27,11 +27,31 @@ public sealed class DividendReconciliationService
             .ThenByDescending(x => x.UpdatedAt)
             .ToList();
 
+        var replaceTargets = scheduleCandidates.Count == 1 &&
+                             IsExactScheduleMatch(scheduleCandidates[0], actualPayment)
+            ? scheduleCandidates
+            : new List<DividendPayment>();
+
         return new DividendReconciliationDecision
         {
             DuplicateActual = duplicateActual,
-            ReplaceTargets = replaceTargets
+            ReplaceTargets = replaceTargets,
+            ReviewCandidates = replaceTargets.Count == 0 ? scheduleCandidates : Array.Empty<DividendPayment>()
         };
+    }
+
+    private static bool IsExactScheduleMatch(DividendPayment planned, DividendPayment actual)
+    {
+        if (planned.PaymentDate.Date != actual.PaymentDate.Date ||
+            (planned.Quantity > 0m && actual.Quantity > 0m && planned.Quantity != actual.Quantity))
+            return false;
+
+        var plannedJpy = planned.NetAmountJpy > 0m ? planned.NetAmountJpy : planned.JpyAmount;
+        var actualJpy = actual.NetAmountJpy > 0m ? actual.NetAmountJpy : actual.JpyAmount;
+        return plannedJpy > 0m && actualJpy > 0m
+            ? plannedJpy == actualJpy
+            : planned.NetAmount > 0m && actual.NetAmount > 0m &&
+              planned.NetAmount == actual.NetAmount;
     }
 
     private static bool IsManualActual(DividendPayment payment) =>
@@ -114,4 +134,5 @@ public sealed class DividendReconciliationDecision
 {
     public DividendPayment? DuplicateActual { get; init; }
     public IReadOnlyList<DividendPayment> ReplaceTargets { get; init; } = Array.Empty<DividendPayment>();
+    public IReadOnlyList<DividendPayment> ReviewCandidates { get; init; } = Array.Empty<DividendPayment>();
 }
