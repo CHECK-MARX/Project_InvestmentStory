@@ -75,6 +75,8 @@ public sealed class NomuraTransactionCsvParser
             if (IsPortfolioTradeType(tradeType))
             {
                 var trade = CreateTradeRecord(row);
+                trade.SourceFile = Path.GetFullPath(filePath);
+                trade.SourceRowNumber = rowNumber;
                 if (!string.IsNullOrWhiteSpace(trade.Ticker))
                 {
                     trades.Add(trade);

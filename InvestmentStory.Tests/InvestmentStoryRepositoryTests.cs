@@ -8,6 +8,65 @@ namespace InvestmentStory.Tests;
 public sealed class InvestmentStoryRepositoryTests
 {
     [Fact]
+    public void SavePosition_RoundTripsUnknownPurchaseDateWithoutInventingToday()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_unknown_purchase_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+            repository.SavePosition(new StockPosition
+            {
+                Stock = new Stock { Ticker = "EX", Name = "Example", Currency = "USD" },
+                Purchase = new Purchase { PurchaseDate = DateTime.MinValue, Shares = 10m, UnitPrice = 20m },
+                CurrentHolding = new CurrentHolding { CurrentShares = 10m, CurrentPrice = 25m, CurrentExchangeRate = 150m }
+            });
+
+            var position = Assert.Single(new InvestmentStoryRepository(databasePath).GetPositions());
+            Assert.Equal(DateTime.MinValue, position.Purchase.PurchaseDate);
+            Assert.False(new InvestmentCalculator().CreateSnapshot(position).HasKnownPurchaseCostJpy);
+        }
+        finally
+        {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public void SavePosition_RoundTripsSeparateReferenceAcquisitionCost()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_reference_cost_{Guid.NewGuid():N}.db");
+        try
+        {
+            var repository = new InvestmentStoryRepository(databasePath);
+            repository.Initialize();
+            repository.SavePosition(new StockPosition
+            {
+                Stock = new Stock { Ticker = "CMBT", Name = "CMBT", Broker = "SBI", Currency = "USD" },
+                Purchase = new Purchase
+                {
+                    PurchaseDate = new DateTime(2023, 9, 12), Shares = 10m, UnitPrice = 15.81m,
+                    ExchangeRate = 0m, AcquisitionAmountJpy = 0m,
+                    ReferenceAcquisitionForeignAmount = 158.10m,
+                    ReferenceAcquisitionAmountJpy = 23_262.267m,
+                    ReferenceAcquisitionSource = "FRED DEXJPUS / 約定日"
+                },
+                CurrentHolding = new CurrentHolding { CurrentShares = 10m, CurrentPrice = 20m, CurrentExchangeRate = 158m }
+            });
+
+            var purchase = Assert.Single(new InvestmentStoryRepository(databasePath).GetPositions()).Purchase;
+            Assert.Equal(0m, purchase.AcquisitionAmountJpy);
+            Assert.Equal(23_262.267m, purchase.ReferenceAcquisitionAmountJpy);
+            Assert.Equal(158.10m, purchase.ReferenceAcquisitionForeignAmount);
+            Assert.Equal("FRED DEXJPUS / 約定日", purchase.ReferenceAcquisitionSource);
+        }
+        finally
+        {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public void Initialize_LeavesNormalDatabaseEmpty()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"investment_story_test_{Guid.NewGuid():N}.db");

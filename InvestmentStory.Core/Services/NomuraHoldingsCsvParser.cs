@@ -38,6 +38,8 @@ public sealed class NomuraHoldingsCsvParser
             {
                 throw new InvalidOperationException($"CSV {index + 1}行目: {exception.Message}", exception);
             }
+            holding.SourceFile = Path.GetFullPath(filePath);
+            holding.SourceRowNumber = index + 1;
             if (holding.Shares < 0m)
                 throw new InvalidOperationException($"CSV {index + 1}行目・保有数量: 負の残高は取り込めません。");
             if (string.IsNullOrWhiteSpace(holding.Ticker))
@@ -143,6 +145,7 @@ public sealed class NomuraHoldingsCsvParser
             AverageAcquisitionPrice = averagePrice,
             CurrentPrice = currentPrice,
             AcquisitionAmount = currency == "JPY" ? acquisitionAmountJpy : averagePrice * shares,
+            AcquisitionAmountJpy = acquisitionAmountJpy,
             MarketValue = marketValue,
             MarketValueJpy = marketValueJpy,
             UnrealizedGainLossJpy = ParseDecimal(row, "評価損益（円）"),

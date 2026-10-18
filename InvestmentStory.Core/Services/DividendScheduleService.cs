@@ -30,6 +30,14 @@ public sealed class DividendScheduleService
 
         foreach (var position in positions.Where(IsScheduleTarget))
         {
+            // An unknown FX rate cannot produce a trustworthy yen forecast.
+            if (!IsJpy(position.Stock.Currency) && position.CurrentHolding.CurrentExchangeRate <= 0m)
+            {
+                foreach (var prior in existing.Where(x => x.StockId == position.Stock.Id && IsGeneratedSchedule(x)))
+                    generatedKeys.Add(new ScheduleKey(prior.StockId, prior.PaymentDate.Year, prior.PaymentDate.Month));
+                continue;
+            }
+
             var actualHistory = GetActualHistory(position, existing, asOf);
             var positionCalendar = calendar
                 .Where(x => x.StockId == position.Stock.Id)
@@ -60,6 +68,13 @@ public sealed class DividendScheduleService
                     paymentYear,
                     month,
                     calendarEvent);
+                // A purchase date reconstructed from the broker trade ledger is evidence
+                // that this position did not exist for earlier payments. Holding CSVs use
+                // their snapshot date here, so do not treat those dates as acquisition dates.
+                if (position.Purchase.PurchaseDate != default &&
+                    position.Purchase.Memo.Contains("時系列集計", StringComparison.Ordinal) &&
+                    paymentDate.Date < position.Purchase.PurchaseDate.Date)
+                    continue;
                 if (HasActualPaymentNearDate(position, existing, paymentDate))
                 {
                     continue;
@@ -85,6 +100,12 @@ public sealed class DividendScheduleService
                     .Where(IsGeneratedSchedule)
                     .OrderBy(x => Math.Abs((x.PaymentDate.Date - paymentDate.Date).TotalDays))
                     .FirstOrDefault(x => x.PaymentDate.Year == paymentDate.Year && x.PaymentDate.Month == paymentDate.Month);
+                // A new historical estimate cannot establish that shares were held on
+                // the record date. Retain older overdue plans for review, but do not
+                // create retrospective obligations without a published calendar date.
+                if (paymentDate.Date < asOf.Date && existingSchedule is null &&
+                    !hasConfirmedCalendar && actualHistory.Count == 0)
+                    continue;
 
                 var schedule = existingSchedule ?? new DividendPayment();
                 var calculation = _taxCalculator.Calculate(new DividendTaxInput
@@ -172,6 +193,8 @@ public sealed class DividendScheduleService
             .Where(IsGeneratedSchedule)
             .Where(x => x.PaymentDate.Year == asOf.Year)
             .Where(x => !generatedKeys.Contains(new ScheduleKey(x.StockId, x.PaymentDate.Year, x.PaymentDate.Month)))
+            .Where(x => x.PaymentDate.Date >= asOf.Date ||
+                        !string.Equals(x.DividendStatus, DividendConstants.PaymentDue, StringComparison.OrdinalIgnoreCase))
             .Select(x => x.Id)
             .Where(x => x > 0)
             .Distinct()
@@ -496,11 +519,10 @@ public sealed class DividendScheduleService
     private static TaxProfile ResolveTaxProfile(StockPosition position, IReadOnlyList<TaxProfile> taxProfiles, string accountType)
     {
         var currency = NormalizeCurrency(position.Stock.Currency);
+        var normalizedAccount = AccountTypeNormalizer.Normalize(accountType);
         return taxProfiles.FirstOrDefault(x =>
                    string.Equals(x.Currency, currency, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(x.AccountType, accountType, StringComparison.OrdinalIgnoreCase)) ??
-               taxProfiles.FirstOrDefault(x =>
-                   string.Equals(x.Currency, currency, StringComparison.OrdinalIgnoreCase)) ??
+                   AccountTypeNormalizer.Normalize(x.AccountType) == normalizedAccount) ??
                new TaxProfile
                {
                    Currency = currency,
@@ -568,7 +590,7 @@ public sealed class DividendScheduleService
     }
 
     private static decimal NormalizeExchangeRate(string currency, decimal exchangeRate) =>
-        IsJpy(currency) ? 1m : exchangeRate <= 0m ? 1m : exchangeRate;
+        IsJpy(currency) ? 1m : exchangeRate;
 
     private static string NormalizeCurrency(string currency)
     {

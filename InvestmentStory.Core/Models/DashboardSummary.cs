@@ -4,6 +4,9 @@ public sealed class DashboardSummary
 {
     public decimal TotalCurrentMarketValueJpy { get; init; }
     public decimal TotalPurchaseAmountJpy { get; init; }
+    public int UnknownPurchaseCostPositionCount { get; init; }
+    public int ReferencePurchaseCostPositionCount { get; init; }
+    public int UnknownCurrentMarketValuePositionCount { get; init; }
     public decimal TotalUnrealizedGainJpy { get; init; }
     public decimal TotalUnrealizedGainRate { get; init; }
     public decimal ForeignAssetTotalUsd { get; init; }
@@ -17,12 +20,15 @@ public sealed class DashboardSummary
     public decimal ThisYearPassiveIncomeJpy { get; init; }
     public decimal ThisMonthPlannedIncomeJpy { get; init; }
     public decimal ThisYearPlannedIncomeJpy { get; init; }
+    public int PastDueUnconfirmedCount { get; init; }
+    public decimal PastDueUnconfirmedAmountJpy { get; init; }
     public decimal ThisYearForecastIncludingPlannedJpy { get; init; }
     public decimal AnnualPassiveIncomeForecastJpy { get; init; }
     public decimal AnnualGrossDividendForecastJpy { get; init; }
     public decimal AnnualNetDividendForecastJpy { get; init; }
     public decimal MonthlyAveragePassiveIncomeForecastJpy { get; init; }
     public decimal ForeignTaxActualJpy { get; init; }
+    public int TaxUnknownActualCount { get; init; }
     public decimal DomesticTaxActualJpy { get; init; }
     public decimal TotalTaxActualJpy { get; init; }
     public decimal NisaDividendActualJpy { get; init; }
@@ -36,8 +42,6 @@ public sealed class DashboardSummary
     public decimal RealizedGainLossJpy { get; init; }
     public decimal CumulativeDividendJpy { get; init; }
     public decimal TotalReturnJpy { get; init; }
-    public decimal TotalReturnRate { get; init; }
-    public decimal CapitalRecoveryRate { get; init; }
     public decimal Top5ConcentrationRate { get; init; }
     public decimal? TotalAssetDayChangeJpy { get; init; }
     public decimal? TotalAssetMonthChangeJpy { get; init; }

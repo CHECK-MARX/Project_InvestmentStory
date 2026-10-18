@@ -1,0 +1,95 @@
+<UserControl x:Class="InvestmentStory.App.Views.CashLedgerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="CashCellTextStyle" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellTextStyle}">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="TextTrimming" Value="None" />
+            <Setter Property="Margin" Value="4,6" />
+        </Style>
+        <Style x:Key="CashReviewTextStyle" TargetType="TextBlock" BasedOn="{StaticResource CashCellTextStyle}">
+            <Setter Property="ToolTip" Value="{Binding ReviewDetails}" />
+        </Style>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <DockPanel>
+                <Button Content="再読込" Command="{Binding ReloadCommand}" DockPanel.Dock="Right" Style="{StaticResource SecondaryButtonStyle}" />
+                <TextBlock Text="現金台帳" Style="{StaticResource SectionTitleStyle}" />
+            </DockPanel>
+            <TextBlock Text="口座・通貨別に現金の動きを記録し、証券会社の明細と残高を照合します。当日まで照合した現金は、ダッシュボードの『株・投信＋現金』の参考合計に反映されます。"
+                       TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,8,0,12" />
+            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,12" />
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="取引を記録" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="実際の現金増減を正の金額で入力してください。口座名は証券会社と口座区分を含めて統一します（例: SBI証券 / 特定）。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,12" />
+                    <UniformGrid Columns="3">
+                        <StackPanel><TextBlock Text="決済日・入出金日" Style="{StaticResource LabelTextStyle}" /><DatePicker SelectedDate="{Binding EntryDate}" /></StackPanel>
+                        <StackPanel><TextBlock Text="取引種類" Style="{StaticResource LabelTextStyle}" /><ComboBox ItemsSource="{Binding Kinds}" SelectedItem="{Binding SelectedKind}" DisplayMemberPath="Label" HorizontalAlignment="Stretch" /></StackPanel>
+                        <StackPanel><TextBlock Text="口座（振替・両替は出金元）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding EntryAccount, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="通貨（JPY / USD など）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding EntryCurrency, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="取引金額（正の数）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding EntryAmount, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel IsEnabled="{Binding IsPaired}"><TextBlock Text="振替先・両替の入金先口座" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding DestinationAccount, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                    </UniformGrid>
+                    <UniformGrid Columns="2" IsEnabled="{Binding IsExchange}">
+                        <StackPanel><TextBlock Text="両替後の通貨" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding DestinationCurrency, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="両替後の入金額（正の数）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding DestinationAmount, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                    </UniformGrid>
+                    <TextBlock Text="根拠（明細名・行番号・取引番号など）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding Evidence, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Text="配当・売買決済は実際の入出金額を記録します。税・手数料を別明細にする場合、決済額との重複控除に注意してください。配当一覧への自動登録は行いません。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,8" />
+                    <Button Content="取引を記録" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+            <TextBlock Text="記録済みの取引（新しい順）" Style="{StaticResource SectionTitleStyle}" Margin="0,12,0,8" />
+            <DataGrid ItemsSource="{Binding Operations}" SelectedItem="{Binding SelectedOperation}" AutoGenerateColumns="False" IsReadOnly="True" Height="240" CanUserAddRows="False" RowHeight="NaN" MinRowHeight="42">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="日付" Binding="{Binding Date}" Width="110" />
+                    <DataGridTextColumn Header="種類" Binding="{Binding Kind}" Width="100" />
+                    <DataGridTextColumn Header="口座・増減額・通貨" Binding="{Binding Details}" Width="*" MinWidth="200" ElementStyle="{StaticResource CashCellTextStyle}" />
+                    <DataGridTextColumn Header="根拠" Binding="{Binding Evidence}" Width="180" ElementStyle="{StaticResource CashCellTextStyle}" />
+                    <DataGridTextColumn Header="状態・取消理由" Binding="{Binding Status}" Width="180" ElementStyle="{StaticResource CashCellTextStyle}" />
+                </DataGrid.Columns>
+            </DataGrid>
+            <DockPanel Margin="0,8,0,16">
+                <Button Content="選択した取引を取消" Command="{Binding CancelCommand}" DockPanel.Dock="Right" Style="{StaticResource SecondaryButtonStyle}" />
+                <StackPanel><TextBlock Text="取消理由（履歴は残り、振替・両替は両側を取り消します）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding CancellationReason, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+            </DockPanel>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="期間残高を照合" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="期首残高＋期間内の増減＝期末残高を確認します。残高不明は空欄、残高なしは0を入力してください。外部入出金には口座間振替・両替・配当・売買を含めません。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,12" />
+                    <UniformGrid Columns="2">
+                        <StackPanel><TextBlock Text="照合する口座" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding ReviewAccount, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="通貨" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding ReviewCurrency, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="開始日（当日を含む）" Style="{StaticResource LabelTextStyle}" /><DatePicker SelectedDate="{Binding StartDate}" /></StackPanel>
+                        <StackPanel><TextBlock Text="終了日（当日を含む）" Style="{StaticResource LabelTextStyle}" /><DatePicker SelectedDate="{Binding EndDate}" /></StackPanel>
+                        <StackPanel><TextBlock Text="期首残高（開始日の前日末）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding OpeningBalance, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="期末残高（終了日末）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding ClosingBalance, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                    </UniformGrid>
+                    <CheckBox Content="この口座・通貨・期間のすべての現金明細を確認した" IsChecked="{Binding AllEntriesConfirmed}" Margin="0,6" />
+                    <CheckBox Content="この期間の外部入出金に記録漏れがないことを確認した" IsChecked="{Binding ExternalFlowsConfirmed}" Margin="0,6" />
+                    <TextBlock Text="照合根拠（残高明細・対象期間など）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding ReviewEvidence, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Content="照合を保存" Command="{Binding ReconcileCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+            <TextBlock Text="照合結果（選択すると入力欄へ読み込みます）" Style="{StaticResource SectionTitleStyle}" Margin="0,12,0,8" />
+            <TextBlock Text="照合済みは表示された口座・通貨・期間に限ります。全資産の履歴完成や期間利回りの算出を意味しません。期間内の台帳変更後は再確認が必要です。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <DataGrid ItemsSource="{Binding Periods}" SelectedItem="{Binding SelectedPeriod}" AutoGenerateColumns="False" IsReadOnly="True" Height="220" CanUserAddRows="False" RowHeight="NaN" MinRowHeight="42">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="口座・通貨" Binding="{Binding Scope}" Width="160" ElementStyle="{StaticResource CashCellTextStyle}" />
+                    <DataGridTextColumn Header="期間" Binding="{Binding Dates}" Width="200" />
+                    <DataGridTextColumn Header="計算上の期末残高" Binding="{Binding Expected}" Width="130" ElementStyle="{StaticResource CashCellTextStyle}" />
+                    <DataGridTextColumn Header="差異（明細－計算）" Binding="{Binding Difference}" Width="130" ElementStyle="{StaticResource CashCellTextStyle}" />
+                    <DataGridTextColumn Header="照合状態・不足理由" Binding="{Binding Status}" Width="*" MinWidth="160" ElementStyle="{StaticResource CashReviewTextStyle}" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

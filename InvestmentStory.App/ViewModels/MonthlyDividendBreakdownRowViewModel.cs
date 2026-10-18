@@ -15,7 +15,8 @@ public sealed class MonthlyDividendBreakdownRowViewModel
         ForecastJpy = value.ForecastJpy;
         PreviousYearActualJpy = value.PreviousYearActualJpy;
         MonthlyGoalJpy = value.MonthlyGoalJpy;
-        Actual = Formatters.Jpy(ActualJpy);
+        Actual = Year > DateTime.Today.Year || Year == DateTime.Today.Year && Month > DateTime.Today.Month
+            ? "—" : Formatters.Jpy(ActualJpy);
         Planned = Formatters.Jpy(PlannedJpy);
         Forecast = Formatters.Jpy(ForecastJpy);
         PreviousYear = Formatters.Jpy(PreviousYearActualJpy);

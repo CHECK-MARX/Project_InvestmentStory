@@ -24,5 +24,6 @@ public sealed class BrokerTrade
     public decimal AfterTradeAverageCost { get; set; }
     public string Source { get; set; } = string.Empty;
     public string SourceFile { get; set; } = string.Empty;
+    public int SourceRowNumber { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }

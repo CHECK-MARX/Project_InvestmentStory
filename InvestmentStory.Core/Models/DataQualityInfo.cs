@@ -44,8 +44,8 @@ public static class DataQualityStates
     public static string DisplayName(string state) =>
         state switch
         {
-            Confirmed => "CSV確定",
-            Reliable => "API更新済",
+            Confirmed => "確認済み",
+            Reliable => "取得済み",
             Estimated => "推定",
             Stale => "期限切れ",
             Failed => "取得失敗",

@@ -7,6 +7,37 @@ namespace InvestmentStory.Tests;
 public sealed class SbiStatementCsvParserTests
 {
     [Fact]
+    public void ParseFiles_ConflictingSameDateHoldingsRemainReviewableWithSourceRows()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"SbiConflict_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        var first = Path.Combine(folder, "SBI_SaveFile20260926_a.csv");
+        var second = Path.Combine(folder, "SBI_SaveFile20260926_b.csv");
+        try
+        {
+            static string Csv(int shares) =>
+                "保有証券一覧\n株式（特定預り）\n" +
+                "銘柄コード,銘柄名称,保有株数,売却注文中,取得単価,現在値,取得金額,評価額,評価損益\n" +
+                $"8593,三菱ＨＣキャピタル,{shares},,100,150,{shares * 100},{shares * 150},{shares * 50}\n";
+            File.WriteAllText(first, Csv(10), Encoding.UTF8);
+            File.WriteAllText(second, Csv(20), Encoding.UTF8);
+
+            var statement = new SbiStatementCsvParser().ParseFiles(new[] { first, second });
+
+            Assert.Empty(statement.Holdings);
+            Assert.Equal(2, statement.UnresolvedHoldings.Count);
+            Assert.All(statement.UnresolvedHoldings, row =>
+            {
+                Assert.Contains("食い違います", row.ReviewReason);
+                Assert.Equal(4, row.SourceRowNumber);
+                Assert.True(row.SourceFile == Path.GetFullPath(first) || row.SourceFile == Path.GetFullPath(second));
+            });
+            Assert.All(statement.SourceRowAudits.Values, audit => Assert.True(audit.IsBalanced));
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
     public void ParseFiles_UnknownForeignTickerIsPendingWithSourceRow()
     {
         var path = Path.Combine(Path.GetTempPath(), $"SBI_foreign_review_{Guid.NewGuid():N}.csv");
@@ -18,7 +49,9 @@ public sealed class SbiStatementCsvParserTests
         {
             var statement = new SbiStatementCsvParser().ParseFiles(new[] { path });
             Assert.Empty(statement.Trades);
-            Assert.Single(statement.UnresolvedTrades);
+            var unresolved = Assert.Single(statement.UnresolvedTrades);
+            Assert.Equal(2, unresolved.SourceRowNumber);
+            Assert.Equal(Path.GetFullPath(path), unresolved.SourceFile);
             var audit = statement.SourceRowAudits[path];
             Assert.True(audit.IsBalanced);
             Assert.Equal(1, audit.PendingRows);

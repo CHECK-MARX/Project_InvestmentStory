@@ -46,8 +46,8 @@
             <TextBlock Text="購入情報" Style="{StaticResource SectionTitleStyle}" Margin="0,14,0,12" />
             <WrapPanel>
                 <StackPanel Width="180">
-                    <TextBlock Text="購入日" Style="{StaticResource LabelTextStyle}" />
-                    <DatePicker SelectedDate="{Binding PurchaseDate, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                    <TextBlock Text="取得日（不明なら空欄）" Style="{StaticResource LabelTextStyle}" />
+                    <DatePicker SelectedDate="{Binding PurchaseDateSelection, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
                 </StackPanel>
                 <StackPanel Width="160">
                     <TextBlock Text="購入株数" Style="{StaticResource LabelTextStyle}" />
@@ -58,11 +58,25 @@
                     <TextBox Text="{Binding PurchaseUnitPrice, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                 </StackPanel>
                 <StackPanel Width="180">
-                    <TextBlock Text="購入時為替レート" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="購入時為替レート（新規・変更は参考）" Style="{StaticResource LabelTextStyle}" />
                     <TextBox Text="{Binding PurchaseExchangeRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                 </StackPanel>
+                <StackPanel Width="220">
+                    <TextBlock Text="確定した円決済額" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding ConfirmedAcquisitionAmountJpy, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                </StackPanel>
+                <StackPanel Width="310">
+                    <TextBlock Text="円決済額の根拠" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding AcquisitionEvidence, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}"
+                             ToolTip="例: 証券会社の取引報告書・取引日・口座" />
+                </StackPanel>
+                <StackPanel Width="600">
+                    <TextBlock Text="参考換算（確定額とは区別）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding ReferenceAcquisitionSummary}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding ReferenceDifference}" TextWrapping="Wrap" />
+                </StackPanel>
                 <StackPanel Width="210">
-                    <TextBlock Text="為替取得日時" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="参考為替の基準日" Style="{StaticResource LabelTextStyle}" />
                     <DatePicker SelectedDate="{Binding PurchaseExchangeRateAcquiredAt, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
                 </StackPanel>
                 <StackPanel Width="180">
@@ -83,6 +97,9 @@
                              Height="54" TextWrapping="Wrap" AcceptsReturn="True" />
                 </StackPanel>
             </WrapPanel>
+
+            <TextBlock Text="外貨の参考換算には、取得日と同じ基準日の為替レートと取得元（過去日は資料名など具体的な根拠）を入力してください。今日の為替を過去の取得原価に流用しません。日付・根拠が不明なら円換算の取得原価と含み損益は算出不可で保存します。確定した円決済額を入力する場合は取引報告書などの根拠も記入してください。"
+                       TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" Margin="0,4,0,4" />
 
             <TextBlock Text="株式分割情報" Style="{StaticResource SectionTitleStyle}" Margin="0,14,0,12" />
             <WrapPanel>

@@ -18,15 +18,37 @@ public sealed class InvestmentCalculator
         var purchase = position.Purchase;
         var current = position.CurrentHolding;
         var stock = position.Stock;
+        var hasOpenHolding = current.CurrentShares > 0m;
         var purchaseExchangeRate = NormalizeExchangeRate(stock.Currency, purchase.ExchangeRate);
         var currentExchangeRate = NormalizeExchangeRate(stock.Currency, current.CurrentExchangeRate);
         var purchaseTotal = CalculatePurchaseTotal(purchase.Shares, purchase.UnitPrice);
+        // A rate of 1 is the legacy default for an unentered foreign-currency rate.
+        // It is only an actual conversion rate for a JPY-denominated position.
+        var hasPurchaseBasis = purchaseTotal > 0m;
+        var hasVerifiedPurchaseCostJpy = purchase.AcquisitionAmountJpy > 0m ||
+            (hasPurchaseBasis && (IsJpyCurrency(stock.Currency) ||
+                PositionEvidenceService.HasUsableForeignExchangeRate(purchase.ExchangeRate)));
+        var hasReferencePurchaseCostJpy = !hasVerifiedPurchaseCostJpy &&
+            hasPurchaseBasis &&
+            purchase.ReferenceAcquisitionAmountJpy > 0m &&
+            purchase.ReferenceAcquisitionForeignAmount > 0m &&
+            Math.Abs(purchase.ReferenceAcquisitionForeignAmount - purchaseTotal) <= 0.01m &&
+            purchase.Shares == current.CurrentShares;
+        var hasKnownPurchaseCostJpy = hasVerifiedPurchaseCostJpy || hasReferencePurchaseCostJpy;
+        var hasKnownNativeMarketValue = current.CurrentShares <= 0m || current.CurrentPrice > 0m;
+        var hasKnownCurrentMarketValueJpy = current.CurrentShares <= 0m || hasKnownNativeMarketValue &&
+            (IsJpyCurrency(stock.Currency) || PositionEvidenceService.HasUsableForeignExchangeRate(current.CurrentExchangeRate));
         var currentMarketValue = CalculateCurrentMarketValue(current.CurrentShares, current.CurrentPrice);
-        var unrealizedGain = currentMarketValue - purchaseTotal;
+        var unrealizedGain = hasOpenHolding && hasKnownNativeMarketValue && hasPurchaseBasis
+            ? currentMarketValue - purchaseTotal : 0m;
         var annualDividend = CalculateAnnualDividendForecast(current.CurrentShares, current.AnnualDividendPerShare);
-        var purchaseTotalJpy = CalculateJpyAmount(purchaseTotal, purchaseExchangeRate);
-        var currentMarketValueJpy = CalculateJpyAmount(currentMarketValue, currentExchangeRate);
-        var unrealizedGainJpy = currentMarketValueJpy - purchaseTotalJpy;
+        var purchaseTotalJpy = purchase.AcquisitionAmountJpy > 0m
+            ? purchase.AcquisitionAmountJpy
+            : hasVerifiedPurchaseCostJpy ? CalculateJpyAmount(purchaseTotal, purchaseExchangeRate)
+            : hasReferencePurchaseCostJpy ? purchase.ReferenceAcquisitionAmountJpy : 0m;
+        var currentMarketValueJpy = hasKnownCurrentMarketValueJpy ? CalculateJpyAmount(currentMarketValue, currentExchangeRate) : 0m;
+        var unrealizedGainJpy = hasOpenHolding && hasKnownPurchaseCostJpy && hasKnownCurrentMarketValueJpy
+            ? currentMarketValueJpy - purchaseTotalJpy : 0m;
         var annualDividendJpy = CalculateJpyAmount(annualDividend, currentExchangeRate);
 
         return new StockSnapshot
@@ -36,8 +58,8 @@ public sealed class InvestmentCalculator
             EffectiveAcquisitionPrice = DivideOrZero(purchaseTotal, current.CurrentShares),
             CurrentMarketValue = currentMarketValue,
             UnrealizedGain = unrealizedGain,
-            UnrealizedGainRate = CalculateRate(unrealizedGain, purchaseTotal),
-            UnrealizedGainRateJpy = CalculateRate(unrealizedGainJpy, purchaseTotalJpy),
+            UnrealizedGainRate = hasOpenHolding && hasKnownNativeMarketValue && hasPurchaseBasis ? CalculateRate(unrealizedGain, purchaseTotal) : 0m,
+            UnrealizedGainRateJpy = hasOpenHolding && hasKnownPurchaseCostJpy && hasKnownCurrentMarketValueJpy ? CalculateRate(unrealizedGainJpy, purchaseTotalJpy) : 0m,
             Multiple = DivideOrZero(currentMarketValue, purchaseTotal),
             AnnualDividendForecast = annualDividend,
             AnnualDividendForecastJpy = annualDividendJpy,
@@ -47,9 +69,13 @@ public sealed class InvestmentCalculator
             CurrentDividendYield = CalculateRate(current.AnnualDividendPerShare, current.CurrentPrice),
             ShareChangeRatio = DivideOrZero(current.CurrentShares, purchase.Shares),
             PurchaseTotalJpy = purchaseTotalJpy,
+            HasKnownPurchaseCostJpy = hasKnownPurchaseCostJpy,
+            IsReferencePurchaseCostJpy = hasReferencePurchaseCostJpy,
+            HasKnownCurrentMarketValueJpy = hasKnownCurrentMarketValueJpy,
             CurrentMarketValueJpy = currentMarketValueJpy,
             UnrealizedGainJpy = unrealizedGainJpy,
-            CurrencyImpactJpy = unrealizedGainJpy - CalculateJpyAmount(unrealizedGain, currentExchangeRate)
+            CurrencyImpactJpy = hasOpenHolding && hasKnownPurchaseCostJpy && hasKnownCurrentMarketValueJpy
+                ? unrealizedGainJpy - CalculateJpyAmount(unrealizedGain, currentExchangeRate) : 0m
         };
     }
 
@@ -57,9 +83,12 @@ public sealed class InvestmentCalculator
     {
         var fund = position.MutualFund;
         var calculation = _mutualFundCalculator.Calculate(fund);
-        var marketValue = calculation.MarketValue;
+        var hasOpenHolding = fund.UnitsHeld > 0m;
+        var marketValue = hasOpenHolding ? calculation.MarketValue : 0m;
         var acquisitionAmount = calculation.AcquisitionAmount;
-        var unrealizedGain = calculation.UnrealizedGainLoss;
+        var unrealizedGain = hasOpenHolding ? calculation.UnrealizedGainLoss : 0m;
+        var hasKnownCost = acquisitionAmount > 0m;
+        var hasKnownMarketValue = !hasOpenHolding || marketValue > 0m;
 
         return new StockSnapshot
         {
@@ -67,9 +96,9 @@ public sealed class InvestmentCalculator
             PurchaseTotal = acquisitionAmount,
             EffectiveAcquisitionPrice = calculation.AverageCostNav,
             CurrentMarketValue = marketValue,
-            UnrealizedGain = unrealizedGain,
-            UnrealizedGainRate = calculation.UnrealizedGainLossRate,
-            UnrealizedGainRateJpy = calculation.UnrealizedGainLossRate,
+            UnrealizedGain = hasKnownCost && hasKnownMarketValue ? unrealizedGain : 0m,
+            UnrealizedGainRate = hasOpenHolding && hasKnownCost && hasKnownMarketValue ? calculation.UnrealizedGainLossRate : 0m,
+            UnrealizedGainRateJpy = hasOpenHolding && hasKnownCost && hasKnownMarketValue ? calculation.UnrealizedGainLossRate : 0m,
             Multiple = DivideOrZero(marketValue, acquisitionAmount),
             AnnualDividendForecast = 0m,
             AnnualDividendForecastJpy = 0m,
@@ -79,8 +108,10 @@ public sealed class InvestmentCalculator
             CurrentDividendYield = 0m,
             ShareChangeRatio = 1m,
             PurchaseTotalJpy = acquisitionAmount,
+            HasKnownPurchaseCostJpy = hasKnownCost,
+            HasKnownCurrentMarketValueJpy = hasKnownMarketValue,
             CurrentMarketValueJpy = marketValue,
-            UnrealizedGainJpy = unrealizedGain,
+            UnrealizedGainJpy = hasKnownCost && hasKnownMarketValue ? unrealizedGain : 0m,
             CurrencyImpactJpy = 0m
         };
     }
@@ -95,25 +126,40 @@ public sealed class InvestmentCalculator
         SnapshotComparison? comparison = null)
     {
         var snapshotList = snapshots.ToList();
+        var activeSnapshots = snapshotList.Where(x => PositionEvidenceService.IsActiveHolding(x.Position)).ToList();
         var dividendList = dividendPayments.ToList();
+        var foreignStockIds = snapshotList
+            .Where(x => !IsJpyCurrency(x.Position.Stock.Currency))
+            .Select(x => x.Position.Stock.Id)
+            .Where(x => x > 0)
+            .ToHashSet();
         var actualDividends = dividendList
             .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
+            .Where(x => x.PaymentDate.Date <= asOf.Date)
             .ToList();
         var plannedDividends = dividendList
             .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus))
             .ToList();
+        var upcomingPlanned = plannedDividends.Where(x => x.PaymentDate.Date >= asOf.Date).ToList();
+        var pastDuePlanned = plannedDividends
+            .Where(x => x.PaymentDate.Year == asOf.Year && x.PaymentDate.Date < asOf.Date)
+            .ToList();
 
-        var totalCurrentMarketValueJpy = snapshotList.Sum(x => x.CurrentMarketValueJpy);
-        var totalPurchaseAmountJpy = snapshotList.Sum(x => x.PurchaseTotalJpy);
-        var totalGainJpy = totalCurrentMarketValueJpy - totalPurchaseAmountJpy;
-        var foreignSnapshots = snapshotList
+        var totalCurrentMarketValueJpy = activeSnapshots.Sum(x => x.CurrentMarketValueJpy);
+        var totalPurchaseAmountJpy = activeSnapshots.Sum(x => x.PurchaseTotalJpy);
+        var totalGainJpy = activeSnapshots.Where(x => x.HasKnownPurchaseCostJpy).Sum(x => x.UnrealizedGainJpy);
+        var foreignSnapshots = activeSnapshots
             .Where(x => x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var latestExchangeInfo = foreignSnapshots
+            .Where(x => PositionEvidenceService.HasUsableForeignExchangeRate(x.Position.CurrentHolding.CurrentExchangeRate))
             .OrderByDescending(x => x.Position.CurrentHolding.ExchangeRateAcquiredAt)
             .FirstOrDefault();
-        var annualForecastJpy = snapshotList.Sum(x => x.AnnualDividendForecastJpy);
+        var annualForecastJpy = activeSnapshots.Sum(x => x.AnnualDividendForecastJpy);
         var actualGrossThisYear = actualDividends
+            .Where(x => x.PaymentDate.Year == asOf.Year)
+            .Sum(x => x.GrossAmountJpy > 0m ? x.GrossAmountJpy : x.GrossAmount * NormalizeExchangeRate(x.Currency, x.ExchangeRate));
+        var plannedGrossThisYear = upcomingPlanned
             .Where(x => x.PaymentDate.Year == asOf.Year)
             .Sum(x => x.GrossAmountJpy > 0m ? x.GrossAmountJpy : x.GrossAmount * NormalizeExchangeRate(x.Currency, x.ExchangeRate));
         var thisMonthActual = actualDividends
@@ -122,10 +168,10 @@ public sealed class InvestmentCalculator
         var thisYearActual = actualDividends
             .Where(x => x.PaymentDate.Year == asOf.Year)
             .Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount);
-        var thisMonthPlanned = plannedDividends
+        var thisMonthPlanned = upcomingPlanned
             .Where(x => x.PaymentDate.Year == asOf.Year && x.PaymentDate.Month == asOf.Month)
             .Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount);
-        var thisYearPlanned = plannedDividends
+        var thisYearPlanned = upcomingPlanned
             .Where(x => x.PaymentDate.Year == asOf.Year)
             .Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount);
 
@@ -133,6 +179,9 @@ public sealed class InvestmentCalculator
         {
             TotalCurrentMarketValueJpy = totalCurrentMarketValueJpy,
             TotalPurchaseAmountJpy = totalPurchaseAmountJpy,
+            UnknownPurchaseCostPositionCount = activeSnapshots.Count(x => !x.HasKnownPurchaseCostJpy),
+            ReferencePurchaseCostPositionCount = activeSnapshots.Count(x => x.IsReferencePurchaseCostJpy),
+            UnknownCurrentMarketValuePositionCount = activeSnapshots.Count(x => !x.HasKnownCurrentMarketValueJpy),
             TotalUnrealizedGainJpy = totalGainJpy,
             TotalUnrealizedGainRate = CalculateRate(totalGainJpy, totalPurchaseAmountJpy),
             ForeignAssetTotalUsd = foreignSnapshots.Sum(x => x.CurrentMarketValueUsd),
@@ -154,14 +203,17 @@ public sealed class InvestmentCalculator
             ThisYearPassiveIncomeJpy = thisYearActual,
             ThisMonthPlannedIncomeJpy = thisMonthPlanned,
             ThisYearPlannedIncomeJpy = thisYearPlanned,
+            PastDueUnconfirmedCount = pastDuePlanned.Count,
+            PastDueUnconfirmedAmountJpy = pastDuePlanned.Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
             ThisYearForecastIncludingPlannedJpy = thisYearActual + thisYearPlanned,
             AnnualPassiveIncomeForecastJpy = annualForecastJpy,
-            AnnualGrossDividendForecastJpy = actualGrossThisYear > 0m ? actualGrossThisYear + thisYearPlanned : annualForecastJpy,
+            AnnualGrossDividendForecastJpy = actualGrossThisYear + plannedGrossThisYear,
             AnnualNetDividendForecastJpy = thisYearActual + thisYearPlanned,
             MonthlyAveragePassiveIncomeForecastJpy = annualForecastJpy / 12m,
             ForeignTaxActualJpy = actualDividends
                 .Where(x => x.PaymentDate.Year == asOf.Year)
                 .Sum(x => x.ForeignTaxAmountJpy),
+            TaxUnknownActualCount = actualDividends.Count(x => x.PaymentDate.Year == asOf.Year && x.IsNetOnly),
             DomesticTaxActualJpy = actualDividends
                 .Where(x => x.PaymentDate.Year == asOf.Year)
                 .Sum(x => x.DomesticTaxAmountJpy > 0m ? x.DomesticTaxAmountJpy : x.TaxAmount * NormalizeExchangeRate(x.Currency, x.ExchangeRate)),
@@ -175,10 +227,10 @@ public sealed class InvestmentCalculator
                 .Where(x => x.PaymentDate.Year == asOf.Year && !x.IsNisa)
                 .Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
             DomesticStockDividendActualJpy = actualDividends
-                .Where(x => x.PaymentDate.Year == asOf.Year && IsJpyCurrency(x.Currency))
+                .Where(x => x.PaymentDate.Year == asOf.Year && !x.IsForeignStock && !foreignStockIds.Contains(x.StockId))
                 .Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
             ForeignStockDividendActualJpy = actualDividends
-                .Where(x => x.PaymentDate.Year == asOf.Year && !IsJpyCurrency(x.Currency))
+                .Where(x => x.PaymentDate.Year == asOf.Year && (x.IsForeignStock || foreignStockIds.Contains(x.StockId)))
                 .Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
             AnnualGoalAchievementRate = goal is null ? 0m : CalculateRate(thisYearActual, goal.AnnualPassiveIncomeGoal),
             MonthlyGoalAchievementRate = goal is null ? 0m : CalculateRate(thisMonthActual, goal.MonthlyPassiveIncomeGoal),
@@ -187,8 +239,6 @@ public sealed class InvestmentCalculator
             RealizedGainLossJpy = returnSummary?.RealizedGainLossJpy ?? 0m,
             CumulativeDividendJpy = returnSummary?.CumulativeDividendJpy ?? actualDividends.Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
             TotalReturnJpy = returnSummary?.TotalReturnJpy ?? totalGainJpy,
-            TotalReturnRate = returnSummary?.TotalReturnRate ?? CalculateRate(totalGainJpy, totalPurchaseAmountJpy),
-            CapitalRecoveryRate = returnSummary?.CapitalRecoveryRate ?? 0m,
             Top5ConcentrationRate = returnSummary?.Top5ConcentrationRate ?? 0m,
             TotalAssetDayChangeJpy = comparison?.TotalAssetDayChangeJpy,
             TotalAssetMonthChangeJpy = comparison?.TotalAssetMonthChangeJpy
@@ -394,7 +444,7 @@ public sealed class InvestmentCalculator
         return IsJpyCurrency(currency) ? 1m : NormalizeExchangeRate(exchangeRate);
     }
 
-    private static decimal NormalizeExchangeRate(decimal exchangeRate) => exchangeRate == 0m ? 1m : exchangeRate;
+    private static decimal NormalizeExchangeRate(decimal exchangeRate) => exchangeRate > 0m ? exchangeRate : 0m;
 
     private static bool IsJpyCurrency(string currency)
     {

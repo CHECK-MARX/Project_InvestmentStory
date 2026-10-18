@@ -22,13 +22,13 @@ public sealed class DividendReconciliationService
         var scheduleCandidates = existing
             .Where(x => x.Id != duplicateActual?.Id)
             .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus) || IsManualActual(x))
-            .Where(x => IsSameDividendIdentity(x, actualPayment))
+            .Where(x => IsLikelySamePlannedEvent(x, actualPayment))
             .OrderByDescending(x => x.SourcePriority)
             .ThenByDescending(x => x.UpdatedAt)
             .ToList();
 
         var replaceTargets = scheduleCandidates.Count == 1 &&
-                             IsExactScheduleMatch(scheduleCandidates[0], actualPayment)
+                             CanReplaceAutomatically(scheduleCandidates[0], actualPayment)
             ? scheduleCandidates
             : new List<DividendPayment>();
 
@@ -40,18 +40,43 @@ public sealed class DividendReconciliationService
         };
     }
 
-    private static bool IsExactScheduleMatch(DividendPayment planned, DividendPayment actual)
+    private static bool IsLikelySamePlannedEvent(DividendPayment planned, DividendPayment actual)
     {
-        if (planned.PaymentDate.Date != actual.PaymentDate.Date ||
+        if (!IsSameSecurity(planned, actual) ||
+            !string.Equals(Normalize(planned.Broker), Normalize(actual.Broker), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var plannedAccount = NormalizeAccount(planned.AccountType);
+        var actualAccount = NormalizeAccount(actual.AccountType);
+        if (plannedAccount != DividendConstants.AccountUnknown &&
+            actualAccount != DividendConstants.AccountUnknown && plannedAccount != actualAccount)
+            return false;
+
+        if (Math.Abs((planned.PaymentDate.Date - actual.PaymentDate.Date).TotalDays) > 10 ||
             (planned.Quantity > 0m && actual.Quantity > 0m && planned.Quantity != actual.Quantity))
             return false;
 
         var plannedJpy = planned.NetAmountJpy > 0m ? planned.NetAmountJpy : planned.JpyAmount;
         var actualJpy = actual.NetAmountJpy > 0m ? actual.NetAmountJpy : actual.JpyAmount;
-        return plannedJpy > 0m && actualJpy > 0m
-            ? plannedJpy == actualJpy
-            : planned.NetAmount > 0m && actual.NetAmount > 0m &&
-              planned.NetAmount == actual.NetAmount;
+        if (plannedJpy <= 0m || actualJpy <= 0m)
+            return false;
+        return Math.Abs(plannedJpy - actualJpy) / Math.Max(plannedJpy, actualJpy) <= 0.30m;
+    }
+
+    private static bool CanReplaceAutomatically(DividendPayment planned, DividendPayment actual)
+    {
+        var plannedJpy = planned.NetAmountJpy > 0m ? planned.NetAmountJpy : planned.JpyAmount;
+        var actualJpy = actual.NetAmountJpy > 0m ? actual.NetAmountJpy : actual.JpyAmount;
+        if (planned.PaymentDate.Date == actual.PaymentDate.Date && plannedJpy == actualJpy)
+            return true;
+
+        // Broker settlement dates and converted yen amounts can differ from a generated
+        // estimate. Manual plans and records without quantities still need review.
+        var generated = planned.Source == DividendConstants.SourceEstimatedFromHistory ||
+                        planned.Source == DividendConstants.SourceEstimatedFromAnnualDividend ||
+                        planned.Source.StartsWith(DividendConstants.SourcePublicCalendar, StringComparison.OrdinalIgnoreCase);
+        return generated && DividendConstants.IsUnconfirmed(planned.DividendStatus) &&
+               planned.Quantity > 0m && actual.Quantity > 0m;
     }
 
     private static bool IsManualActual(DividendPayment payment) =>

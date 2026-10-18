@@ -27,6 +27,7 @@ public sealed class BrokerHoldingRecord
     public decimal AverageAcquisitionPrice { get; set; }
     public decimal CurrentPrice { get; set; }
     public decimal AcquisitionAmount { get; set; }
+    public decimal AcquisitionAmountJpy { get; set; }
     public decimal MarketValue { get; set; }
     public decimal MarketValueJpy { get; set; }
     public decimal UnrealizedGainLossJpy { get; set; }
@@ -36,6 +37,9 @@ public sealed class BrokerHoldingRecord
     public DateTime SnapshotDate { get; set; } = DateTime.MinValue;
     public string Market { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+    public string SourceFile { get; set; } = string.Empty;
+    public int SourceRowNumber { get; set; }
+    public string ReviewReason { get; set; } = string.Empty;
     public string FundName { get; set; } = string.Empty;
     public string FundCode { get; set; } = string.Empty;
     public string AssociationCode { get; set; } = string.Empty;
@@ -111,6 +115,11 @@ public sealed class BrokerTradeRecord
     public string Currency { get; set; } = "JPY";
     public decimal ProfitLossJpy { get; set; }
     public string Source { get; set; } = string.Empty;
+    public string SourceFile { get; set; } = string.Empty;
+    public int SourceRowNumber { get; set; }
+    public string ReviewReason { get; set; } = string.Empty;
+    public bool ApprovedAsDistinctTrade { get; set; }
+    public bool ApprovedAsExistingTrade { get; set; }
 }
 
 public sealed class BrokerUnresolvedDividend
@@ -140,6 +149,7 @@ public sealed class BrokerStatementImport
     public IReadOnlyList<BrokerHoldingRecord> UnresolvedHoldings { get; init; } = Array.Empty<BrokerHoldingRecord>();
     public IReadOnlyList<BrokerUnresolvedDividend> UnresolvedDividends { get; init; } = Array.Empty<BrokerUnresolvedDividend>();
     public IReadOnlyList<BrokerTradeRecord> UnresolvedTrades { get; init; } = Array.Empty<BrokerTradeRecord>();
+    public IReadOnlyList<BrokerTradeRecord> ResolvedDuplicateTrades { get; init; } = Array.Empty<BrokerTradeRecord>();
     public IReadOnlyDictionary<string, int> SourceRowCounts { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, CsvSourceRowAudit> SourceRowAudits { get; init; } =
         new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase);

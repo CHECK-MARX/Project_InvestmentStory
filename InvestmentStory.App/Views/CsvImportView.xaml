@@ -64,21 +64,153 @@
                 <ColumnDefinition Width="360" />
             </Grid.ColumnDefinitions>
             <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}" Margin="0,0,16,0">
-                <StackPanel>
-                    <TextBlock Text="プレビュー" Style="{StaticResource SectionTitleStyle}" />
-                    <DataGrid ItemsSource="{Binding PreviewRows}" IsReadOnly="True">
+                <TabControl>
+                    <TabItem Header="今回のプレビュー">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Margin="0,0,0,8"
+                                    Visibility="{Binding HasPreviewAudits, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="CSV入力明細の分類（入力＝解析＋要確認＋対象外）"
+                                       Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,0,4" />
+                            <DataGrid ItemsSource="{Binding PreviewAudits}" IsReadOnly="True" AutoGenerateColumns="False"
+                                      Height="104" EnableRowVirtualization="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="CSV" Binding="{Binding FileName}" Width="*" />
+                                    <DataGridTextColumn Header="入力" Binding="{Binding InputRows}" Width="65" />
+                                    <DataGridTextColumn Header="解析" Binding="{Binding ParsedRows}" Width="65" />
+                                    <DataGridTextColumn Header="要確認" Binding="{Binding PendingRows}" Width="70" />
+                                    <DataGridTextColumn Header="対象外" Binding="{Binding ExcludedRows}" Width="70" />
+                                    <DataGridTextColumn Header="照合" Binding="{Binding Balance}" Width="65" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Margin="0,6,0,0" Text="手動選択方針では、反映したい行だけ「この行を反映」を選びます。競合する保有残高・取引は「競合時の選択」で採用する行を指定します。"
+                                       TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" />
+                        </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding PreviewRows}" IsReadOnly="True" AutoGenerateColumns="False"
+                              EnableRowVirtualization="True" EnableColumnVirtualization="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="#" Binding="{Binding RowNumber}" Width="60" />
-                            <DataGridTextColumn Header="内容" Binding="{Binding Values}" Width="*" />
+                            <DataGridTextColumn Header="判定" Binding="{Binding Status}" Width="90" />
+                            <DataGridTextColumn Header="内容" Binding="{Binding Values}" Width="270" />
+                            <DataGridTemplateColumn Header="競合時の選択" Width="155">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel>
+                                        <ComboBox ItemsSource="{Binding AvailableConflictChoices}"
+                                                  SelectedItem="{Binding ConflictChoice, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                            <ComboBox.Style>
+                                                <Style TargetType="ComboBox">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CanChooseConflict}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ComboBox.Style>
+                                        </ComboBox>
+                                        <ComboBox ItemsSource="{Binding AvailableTradeChoices}"
+                                                  SelectedItem="{Binding TradeChoice, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                            <ComboBox.Style>
+                                                <Style TargetType="ComboBox">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CanChooseTrade}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ComboBox.Style>
+                                        </ComboBox>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="手動反映" Width="140">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding AvailableManualChoices}"
+                                                  SelectedItem="{Binding ManualChoice, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                            <ComboBox.Style>
+                                                <Style TargetType="ComboBox">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CanChooseManual}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ComboBox.Style>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="取込前" Binding="{Binding Before}" Width="180" />
+                            <DataGridTextColumn Header="取込後（見込）" Binding="{Binding After}" Width="180" />
+                            <DataGridTextColumn Header="理由" Binding="{Binding Reason}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
-                </StackPanel>
+                    </Grid>
+                    </TabItem>
+                    <TabItem Header="選択した取込の変更内容">
+                        <DataGrid ItemsSource="{Binding ImportChanges}" IsReadOnly="True" AutoGenerateColumns="False"
+                                  EnableRowVirtualization="True" EnableColumnVirtualization="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="区分" Binding="{Binding RecordKind}" Width="72" />
+                                <DataGridTextColumn Header="判定" Binding="{Binding Action}" Width="72" />
+                                <DataGridTextColumn Header="日付" Binding="{Binding EventDate}" Width="100" />
+                                <DataGridTextColumn Header="元CSV行" Binding="{Binding SourceRowNumber}" Width="75" />
+                                <DataGridTextColumn Header="元CSV" Binding="{Binding SourceDisplay}" Width="170" />
+                                <DataGridTextColumn Header="銘柄" Binding="{Binding Ticker}" Width="90" />
+                                <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="110" />
+                                <DataGridTextColumn Header="口座" Binding="{Binding Account}" Width="100" />
+                                <DataGridTextColumn Header="取込前" Binding="{Binding BeforeDisplay}" Width="210" />
+                                <DataGridTextColumn Header="取込後" Binding="{Binding AfterDisplay}" Width="210" />
+                                <DataGridTextColumn Header="理由" Binding="{Binding Reason}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+                </TabControl>
             </Border>
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" Margin="0">
-                <StackPanel>
-                    <TextBlock Text="取込ログ" Style="{StaticResource SectionTitleStyle}" />
-                    <ListBox ItemsSource="{Binding ImportLogs}" Height="420" />
-                </StackPanel>
+                <TabControl>
+                    <TabItem Header="今回のログ">
+                        <ListBox ItemsSource="{Binding ImportLogs}" />
+                    </TabItem>
+                    <TabItem Header="取込履歴">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Top" Content="履歴を更新" Command="{Binding ReloadImportHistoryCommand}"
+                                    Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Right" Margin="0,6,0,8" />
+                            <DataGrid ItemsSource="{Binding ImportHistory}" SelectedItem="{Binding SelectedImportHistory, Mode=TwoWay}" IsReadOnly="True" AutoGenerateColumns="False"
+                                      SelectionMode="Single" RowDetailsVisibilityMode="VisibleWhenSelected">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="日時" Binding="{Binding ImportedAtText}" Width="100" />
+                                    <DataGridTextColumn Header="ファイル" Binding="{Binding FileName}" Width="100" />
+                                    <DataGridTextColumn Header="結果" Binding="{Binding ResultLabel}" Width="74" />
+                                    <DataGridTextColumn Header="行数" Binding="{Binding RowCount}" Width="46" />
+                                </DataGrid.Columns>
+                                <DataGrid.RowDetailsTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="8" TextElement.FontSize="12">
+                                            <TextBlock Text="{Binding FileName}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding BatchId, StringFormat=取込ID: {0}}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding CsvType, StringFormat=形式: {0}}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ParsedRowCount, StringFormat=解析行: {0}}" />
+                                            <TextBlock Text="{Binding PendingRowCount, StringFormat=要確認行: {0}}" />
+                                            <TextBlock Text="{Binding InsertedCount, StringFormat=追加: {0}}" />
+                                            <TextBlock Text="{Binding UpdatedCount, StringFormat=更新: {0}}" />
+                                            <TextBlock Text="{Binding FileHash, StringFormat=SHA256: {0}}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ErrorSummary}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGrid.RowDetailsTemplate>
+                            </DataGrid>
+                        </DockPanel>
+                    </TabItem>
+                </TabControl>
             </Border>
         </Grid>
     </Grid>

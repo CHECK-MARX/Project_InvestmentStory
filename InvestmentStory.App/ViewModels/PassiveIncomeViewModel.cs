@@ -30,6 +30,11 @@ public sealed class PassiveIncomeViewModel : ObservableObject
     public string ThisMonthPlannedIncome => Formatters.Jpy(_summary.ThisMonthPlannedIncomeJpy);
     public string ThisYearPlannedIncome => Formatters.Jpy(_summary.ThisYearPlannedIncomeJpy);
     public string ThisYearForecastIncludingPlanned => Formatters.Jpy(_summary.ThisYearForecastIncludingPlannedJpy);
+    public string PastDueWarning => _summary.PastDueUnconfirmedCount == 0 ? string.Empty
+        : $"過去日付の未照合予定 {_summary.PastDueUnconfirmedCount}件（{Formatters.Jpy(_summary.PastDueUnconfirmedAmountJpy)}）は見込みから除外し、確認待ちとして扱っています。";
+    public string TaxDataNote => _summary.TaxUnknownActualCount == 0 ? string.Empty
+        : $"税額が不明な入金実績 {_summary.TaxUnknownActualCount}件があります。外国税・国内税は判明分のみの合計です。";
+    public string MonthlyBreakdownAsOf => $"{DateTime.Today:yyyy年M月d日}時点。入金日を基準に集計し、過去日付の未照合予定は見込みに含めていません。点にカーソルを合わせると内訳を確認できます。";
     public string AnnualPassiveIncomeForecast => Formatters.Jpy(_summary.AnnualPassiveIncomeForecastJpy);
     public string AnnualNetDividendForecast => Formatters.Jpy(_summary.AnnualNetDividendForecastJpy);
     public string MonthlyAveragePassiveIncome => Formatters.Jpy(_summary.MonthlyAveragePassiveIncomeForecastJpy);

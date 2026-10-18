@@ -11,6 +11,9 @@ public sealed class NisaDashboardSummaryViewModel
         Title = ResolveTitle(accountType);
         Subtitle = ResolveSubtitle(accountType);
         PositionCount = snapshots.Count;
+        HasUnknownPurchaseCost = snapshots.Any(x => !x.HasKnownPurchaseCostJpy);
+        HasUnknownMarketValue = snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy);
+        HasReferencePurchaseCost = snapshots.Any(x => x.IsReferencePurchaseCostJpy);
         MarketValueJpyValue = snapshots.Sum(x => x.CurrentMarketValueJpy);
         PurchaseAmountJpyValue = snapshots.Sum(x => x.PurchaseTotalJpy);
         GainLossJpyValue = snapshots.Sum(x => x.UnrealizedGainJpy);
@@ -25,12 +28,16 @@ public sealed class NisaDashboardSummaryViewModel
     public decimal PurchaseAmountJpyValue { get; }
     public decimal GainLossJpyValue { get; }
     public decimal GainLossRateValue { get; }
-    public bool HasPositiveGain => GainLossJpyValue > 0m;
-    public bool HasNegativeGain => GainLossJpyValue < 0m;
-    public string MarketValueJpy => Formatters.Jpy(MarketValueJpyValue);
-    public string PurchaseAmountJpy => Formatters.Jpy(PurchaseAmountJpyValue);
-    public string GainLossJpy => Formatters.SignedJpy(GainLossJpyValue);
-    public string GainLossRate => Formatters.SignedPercent(GainLossRateValue);
+    public bool HasUnknownPurchaseCost { get; }
+    public bool HasUnknownMarketValue { get; }
+    public bool HasReferencePurchaseCost { get; }
+    private string ReferencePrefix => HasReferencePurchaseCost ? "概算 " : string.Empty;
+    public bool HasPositiveGain => !HasUnknownPurchaseCost && !HasUnknownMarketValue && GainLossJpyValue > 0m;
+    public bool HasNegativeGain => !HasUnknownPurchaseCost && !HasUnknownMarketValue && GainLossJpyValue < 0m;
+    public string MarketValueJpy => HasUnknownMarketValue ? "算出不可" : Formatters.Jpy(MarketValueJpyValue);
+    public string PurchaseAmountJpy => HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.Jpy(PurchaseAmountJpyValue);
+    public string GainLossJpy => HasUnknownPurchaseCost || HasUnknownMarketValue ? "算出不可" : ReferencePrefix + Formatters.SignedJpy(GainLossJpyValue);
+    public string GainLossRate => HasUnknownPurchaseCost || HasUnknownMarketValue ? "算出不可" : ReferencePrefix + Formatters.SignedPercent(GainLossRateValue);
     public string PositionCountText => $"{PositionCount:N0}件";
 
     private static string ResolveTitle(string accountType) =>

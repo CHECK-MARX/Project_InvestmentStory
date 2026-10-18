@@ -11,7 +11,11 @@ public sealed class PortfolioAnalyticsService
         decimal usdJpyRate,
         DateTime snapshotDate)
     {
-        var snapshotList = snapshots.ToList();
+        var snapshotList = snapshots.Where(x => PositionEvidenceService.IsActiveHolding(x.Position)).ToList();
+        if (snapshotList.Any(x => !x.HasKnownCurrentMarketValueJpy || !x.HasKnownPurchaseCostJpy))
+        {
+            throw new InvalidOperationException("取得額・評価額・現在為替に未確認の保有銘柄を含むため、資産履歴を確定値として記録できません。");
+        }
         var actualDividends = dividends
             .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
             .ToList();
@@ -24,7 +28,7 @@ public sealed class PortfolioAnalyticsService
             .Where(x => x.Position.IsMutualFund)
             .Sum(x => x.CurrentMarketValueJpy);
         var totalCost = snapshotList.Sum(x => x.PurchaseTotalJpy);
-        var unrealized = totalMarketValue - totalCost;
+        var unrealized = snapshotList.Where(x => x.HasKnownPurchaseCostJpy).Sum(x => x.UnrealizedGainJpy);
 
         return new PortfolioSnapshot
         {
@@ -45,7 +49,8 @@ public sealed class PortfolioAnalyticsService
     public IReadOnlyList<MonthlyDividendBreakdown> BuildMonthlyDividendBreakdown(
         IEnumerable<DividendPayment> dividends,
         int year,
-        decimal monthlyGoalJpy)
+        decimal monthlyGoalJpy,
+        DateTime? asOf = null)
     {
         var dividendList = dividends
             .Where(x => !string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
@@ -56,6 +61,7 @@ public sealed class PortfolioAnalyticsService
             .ToDictionary(x => x.Key, x => x.Sum(NetDividendJpy));
         var planned = dividendList
             .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus) && x.PaymentDate.Year == year)
+            .Where(x => asOf is null || x.PaymentDate.Date >= asOf.Value.Date)
             .Where(x => !HasActualReplacement(dividendList, x))
             .GroupBy(x => x.PaymentDate.Month)
             .ToDictionary(x => x.Key, x => x.Sum(NetDividendJpy));
@@ -239,14 +245,14 @@ public sealed class PortfolioAnalyticsService
         decimal realizedGainLossJpy)
     {
         var snapshotList = snapshots.ToList();
-        var totalCost = snapshotList.Sum(x => x.PurchaseTotalJpy);
-        var totalMarket = snapshotList.Sum(x => x.CurrentMarketValueJpy);
-        var unrealized = totalMarket - totalCost;
+        var activeSnapshots = snapshotList.Where(x => PositionEvidenceService.IsActiveHolding(x.Position)).ToList();
+        var totalMarket = activeSnapshots.Sum(x => x.CurrentMarketValueJpy);
+        var unrealized = activeSnapshots.Where(x => x.HasKnownPurchaseCostJpy).Sum(x => x.UnrealizedGainJpy);
         var cumulativeDividend = dividends
             .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
             .Sum(NetDividendJpy);
         var totalReturn = unrealized + realizedGainLossJpy + cumulativeDividend;
-        var weights = snapshotList
+        var weights = activeSnapshots
             .Where(x => x.CurrentMarketValueJpy > 0m && totalMarket > 0m)
             .Select(x => x.CurrentMarketValueJpy / totalMarket * 100m)
             .OrderByDescending(x => x)
@@ -258,8 +264,6 @@ public sealed class PortfolioAnalyticsService
             RealizedGainLossJpy = realizedGainLossJpy,
             CumulativeDividendJpy = cumulativeDividend,
             TotalReturnJpy = totalReturn,
-            TotalReturnRate = totalCost <= 0m ? 0m : totalReturn / totalCost * 100m,
-            CapitalRecoveryRate = totalCost <= 0m ? 0m : cumulativeDividend / totalCost * 100m,
             Top1ConcentrationRate = weights.Take(1).Sum(),
             Top3ConcentrationRate = weights.Take(3).Sum(),
             Top5ConcentrationRate = weights.Take(5).Sum(),
@@ -293,15 +297,19 @@ public sealed class PortfolioAnalyticsService
         decimal currentUsdJpyRate)
     {
         var snapshotList = snapshots.ToList();
-        if (currentUsdJpyRate <= 0m)
+        if (snapshotList.Any(x => !x.HasKnownCurrentMarketValueJpy))
+        {
+            return Array.Empty<FxSensitivityPoint>();
+        }
+        if (!PositionEvidenceService.HasUsableForeignExchangeRate(currentUsdJpyRate))
         {
             currentUsdJpyRate = snapshotList
                 .Where(x => x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
                 .Select(x => x.Position.CurrentHolding.CurrentExchangeRate)
-                .FirstOrDefault(x => x > 0m);
+                .FirstOrDefault(PositionEvidenceService.HasUsableForeignExchangeRate);
         }
 
-        if (currentUsdJpyRate <= 0m)
+        if (!PositionEvidenceService.HasUsableForeignExchangeRate(currentUsdJpyRate))
         {
             return Array.Empty<FxSensitivityPoint>();
         }

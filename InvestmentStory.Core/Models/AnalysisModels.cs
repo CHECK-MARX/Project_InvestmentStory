@@ -29,8 +29,6 @@ public sealed class PortfolioReturnSummary
     public decimal RealizedGainLossJpy { get; init; }
     public decimal CumulativeDividendJpy { get; init; }
     public decimal TotalReturnJpy { get; init; }
-    public decimal TotalReturnRate { get; init; }
-    public decimal CapitalRecoveryRate { get; init; }
     public decimal Top1ConcentrationRate { get; init; }
     public decimal Top3ConcentrationRate { get; init; }
     public decimal Top5ConcentrationRate { get; init; }

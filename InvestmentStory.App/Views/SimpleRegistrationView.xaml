@@ -46,12 +46,16 @@
                             <TextBlock Text="購入株数" Style="{StaticResource LabelTextStyle}" />
                             <TextBox Text="{Binding PurchaseShares, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                         </StackPanel>
+                        <StackPanel Width="170">
+                            <TextBlock Text="取得日（不明なら空欄）" Style="{StaticResource LabelTextStyle}" />
+                            <DatePicker SelectedDate="{Binding PurchaseDate, Mode=TwoWay}" Margin="0,0,14,10" Height="30" />
+                        </StackPanel>
                         <StackPanel Width="150">
                             <TextBlock Text="購入単価（未確定なら0）" Style="{StaticResource LabelTextStyle}" />
                             <TextBox Text="{Binding PurchaseUnitPrice, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                         </StackPanel>
                         <StackPanel Width="170">
-                            <TextBlock Text="購入時為替レート" Style="{StaticResource LabelTextStyle}" />
+                            <TextBlock Text="購入時為替レート（参考）" Style="{StaticResource LabelTextStyle}" />
                             <TextBox Text="{Binding PurchaseExchangeRate, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                         </StackPanel>
                         <StackPanel Width="170">
@@ -87,6 +91,9 @@
                             <TextBox Text="{Binding Memo, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
                         </StackPanel>
                     </WrapPanel>
+
+                    <TextBlock Text="入力した為替で参考換算するのは取得日が今日の外貨株だけです。取得日が不明・過去日の場合、円換算の取得原価と含み損益は算出不可になります。過去日の参考為替や確定した円決済額は、保存後に詳細編集で日付・根拠とともに登録してください。"
+                               TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" Margin="0,4,0,0" />
 
                     <TextBlock Text="{Binding ShareChangeRatio, StringFormat=参考：株数変化倍率 {0} 倍}"
                                Foreground="{DynamicResource AccentBlueBrush}" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,0" />

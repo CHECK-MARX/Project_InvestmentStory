@@ -18,6 +18,7 @@ public sealed class AppSettings
     public string ThemeMode { get; set; } = "Light";
     public bool IsSidebarCollapsed { get; set; }
     public string StockListDisplayMode { get; set; } = "基本";
+    public string StockListFilterJson { get; set; } = string.Empty;
     public string LastDashboardCompositionMode { get; set; } = "Country";
     public string LastOpenedPage { get; set; } = "Dashboard";
     public string MutualFundSimulationScopeKey { get; set; } = MutualFundSimulationScopeKeys.AllAccounts;

@@ -20,25 +20,25 @@
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="今年の予定配当（概算）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="今日以降の予定配当（年内・概算）" Style="{StaticResource LabelTextStyle}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding ThisYearPlannedIncome}" FontSize="22" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="今年の実績＋予定" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="年初からの実績＋今日以降の予定" Style="{StaticResource LabelTextStyle}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding ThisYearForecastIncludingPlanned}" FontSize="22" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="年間不労所得見込み（概算）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="現在の保有株の年間配当換算（概算）" Style="{StaticResource LabelTextStyle}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding AnnualPassiveIncomeForecast}" FontSize="22" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="月平均不労所得見込み（概算）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="月平均不労所得見込み（概算）" Style="{StaticResource LabelTextStyle}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding MonthlyAveragePassiveIncome}" FontSize="22" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
@@ -68,13 +68,13 @@
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="外国税（今年実績）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="外国税（今年実績・判明分）" Style="{StaticResource LabelTextStyle}" />
                         <TextBlock Text="{Binding ForeignTaxActual}" FontSize="22" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
-                        <TextBlock Text="国内税（今年実績）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBlock Text="国内税（今年実績・判明分）" Style="{StaticResource LabelTextStyle}" />
                         <TextBlock Text="{Binding DomesticTaxActual}" FontSize="22" FontWeight="SemiBold" />
                     </StackPanel>
                 </Border>
@@ -110,6 +110,11 @@
                 </Border>
             </UniformGrid>
 
+            <TextBlock Text="{Binding PastDueWarning}" Foreground="{DynamicResource SecondaryTextBrush}"
+                       TextWrapping="Wrap" Margin="8,0,8,14" />
+            <TextBlock Text="{Binding TaxDataNote}" Foreground="{DynamicResource SecondaryTextBrush}"
+                       TextWrapping="Wrap" Margin="8,0,8,10" />
+
             <Grid Margin="0,8,0,16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -136,9 +141,23 @@
                                 <TextBlock Text="月間目標" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </StackPanel>
                         </UniformGrid>
-                        <TextBlock Text="入金日を基準に集計。点にカーソルを合わせると実績・予定・見込みを確認できます。"
+                        <TextBlock Text="{Binding MonthlyBreakdownAsOf}"
                                    Margin="0,2,0,6" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap"/>
-                        <controls:MonthlyDividendLineChartControl Items="{Binding MonthlyBreakdownRows}" Height="340" />
+                        <TextBlock Text="グラフをクリック後、左右キーで月を選択できます。" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,4" />
+                        <controls:MonthlyDividendLineChartControl Items="{Binding MonthlyBreakdownRows}" Height="340"
+                                                                  AutomationProperties.Name="月別配当の折れ線グラフ" />
+                        <Expander Header="月別の数値を表で確認" Margin="0,8,0,0">
+                            <DataGrid ItemsSource="{Binding MonthlyBreakdownRows}" Height="250" IsReadOnly="True" AutoGenerateColumns="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="月" Binding="{Binding Label}" Width="55" />
+                                    <DataGridTextColumn Header="今年の入金実績" Binding="{Binding Actual}" Width="*" />
+                                    <DataGridTextColumn Header="入金予定" Binding="{Binding Planned}" Width="*" />
+                                    <DataGridTextColumn Header="見込み" Binding="{Binding Forecast}" Width="*" />
+                                    <DataGridTextColumn Header="前年実績" Binding="{Binding PreviousYear}" Width="*" />
+                                    <DataGridTextColumn Header="月間目標" Binding="{Binding Goal}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Expander>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">

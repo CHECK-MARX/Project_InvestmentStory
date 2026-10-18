@@ -8,6 +8,12 @@ public sealed class Purchase
     public decimal Shares { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal ExchangeRate { get; set; } = 1m;
+    public decimal AcquisitionAmountJpy { get; set; }
+    public string AcquisitionAmountSource { get; set; } = string.Empty;
+    public DateTime AcquisitionAmountConfirmedAt { get; set; } = DateTime.MinValue;
+    public decimal ReferenceAcquisitionAmountJpy { get; set; }
+    public decimal ReferenceAcquisitionForeignAmount { get; set; }
+    public string ReferenceAcquisitionSource { get; set; } = string.Empty;
     public DateTime ExchangeRateAcquiredAt { get; set; } = DateTime.Today;
     public string ExchangeRateSource { get; set; } = "手入力";
     public string ExchangeRateInputType { get; set; } = "手入力";

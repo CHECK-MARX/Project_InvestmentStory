@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
@@ -18,13 +19,21 @@ public sealed class StockListViewModel : ObservableObject
     private readonly Action _refreshAll;
     private readonly Action _refreshMissing;
     private readonly Action<string> _displayModeChanged;
+    private readonly Action<string> _saveFilterState;
     private readonly List<StockSnapshot> _allSnapshots = new();
     private readonly HashSet<int> _dividendStockIds = new();
+    private readonly HashSet<int> _acquisitionDateReviewStockIds = new();
     private StockRowViewModel? _selectedRow;
     private string _selectedFilter = "現在保有のみ";
     private string _selectedGroupingMode = "ポジション別";
     private string _selectedDisplayMode = "基本";
     private string _message = string.Empty;
+    private string _searchText = string.Empty;
+    private string _selectedBroker = "すべて";
+    private string _selectedAccount = "すべて";
+    private string _selectedSector = "すべて";
+    private string _selectedQuality = "すべて";
+    private string _visibleSummary = string.Empty;
 
     public StockListViewModel(
         Action createNew,
@@ -35,7 +44,9 @@ public sealed class StockListViewModel : ObservableObject
         Action refreshAll,
         Action refreshMissing,
         Action<string>? displayModeChanged = null,
-        Action<StockRowViewModel>? showDetailRow = null)
+        Action<StockRowViewModel>? showDetailRow = null,
+        string? savedFilterJson = null,
+        Action<string>? saveFilterState = null)
     {
         _createNew = createNew;
         _edit = edit;
@@ -46,6 +57,7 @@ public sealed class StockListViewModel : ObservableObject
         _refreshAll = refreshAll;
         _refreshMissing = refreshMissing;
         _displayModeChanged = displayModeChanged ?? (_ => { });
+        _saveFilterState = saveFilterState ?? (_ => { });
         NewCommand = new RelayCommand(_createNew);
         EditCommand = new RelayCommand(() => ExecuteSelected(_edit), HasSelection);
         DetailCommand = new RelayCommand(ExecuteDetail, HasSelection);
@@ -53,6 +65,26 @@ public sealed class StockListViewModel : ObservableObject
         RefreshSelectedCommand = new RelayCommand(() => ExecuteSelected(_refreshSelected), HasSelection);
         RefreshAllCommand = new RelayCommand(_refreshAll);
         RefreshMissingCommand = new RelayCommand(_refreshMissing);
+        ResetFiltersCommand = new RelayCommand(ResetFilters);
+        SaveFiltersCommand = new RelayCommand(SaveFilters);
+        if (!string.IsNullOrWhiteSpace(savedFilterJson))
+        {
+            try
+            {
+                var saved = JsonSerializer.Deserialize<StockListFilterState>(savedFilterJson);
+                if (saved is not null)
+                {
+                    _searchText = saved.SearchText ?? string.Empty;
+                    _selectedBroker = saved.Broker ?? "すべて";
+                    _selectedAccount = saved.Account ?? "すべて";
+                    _selectedSector = saved.Sector ?? "すべて";
+                    _selectedQuality = saved.Quality ?? "すべて";
+                    if (Filters.Contains(saved.Filter)) _selectedFilter = saved.Filter;
+                    if (GroupingModes.Contains(saved.Grouping)) _selectedGroupingMode = saved.Grouping;
+                }
+            }
+            catch (JsonException) { /* Ignore obsolete filter settings. */ }
+        }
     }
 
     public ObservableCollection<StockRowViewModel> Rows { get; } = new();
@@ -66,6 +98,48 @@ public sealed class StockListViewModel : ObservableObject
     public RelayCommand RefreshSelectedCommand { get; }
     public ICommand RefreshAllCommand { get; }
     public ICommand RefreshMissingCommand { get; }
+    public ICommand ResetFiltersCommand { get; }
+    public ICommand SaveFiltersCommand { get; }
+    public IReadOnlyList<string> BrokerFilters { get; private set; } = new[] { "すべて" };
+    public IReadOnlyList<string> AccountFilters { get; private set; } = new[] { "すべて" };
+    public IReadOnlyList<string> SectorFilters { get; private set; } = new[] { "すべて" };
+    public IReadOnlyList<string> QualityFilters { get; } = new[] { "すべて", "確定", "概算", "未確認", "取得日要確認" };
+
+    public string SearchText
+    {
+        get => _searchText;
+        set { if (SetProperty(ref _searchText, value)) RebuildRows(); }
+    }
+
+    public string SelectedBroker
+    {
+        get => _selectedBroker;
+        set { if (SetProperty(ref _selectedBroker, value)) RebuildRows(); }
+    }
+
+    public string SelectedAccount
+    {
+        get => _selectedAccount;
+        set { if (SetProperty(ref _selectedAccount, value)) RebuildRows(); }
+    }
+
+    public string SelectedSector
+    {
+        get => _selectedSector;
+        set { if (SetProperty(ref _selectedSector, value)) RebuildRows(); }
+    }
+
+    public string SelectedQuality
+    {
+        get => _selectedQuality;
+        set { if (SetProperty(ref _selectedQuality, value)) RebuildRows(); }
+    }
+
+    public string VisibleSummary
+    {
+        get => _visibleSummary;
+        private set => SetProperty(ref _visibleSummary, value);
+    }
 
     public string SelectedFilter
     {
@@ -150,10 +224,32 @@ public sealed class StockListViewModel : ObservableObject
         }
     }
 
-    public void Update(IEnumerable<StockSnapshot> snapshots, IEnumerable<DividendPayment>? dividendPayments = null)
+    public void Update(
+        IEnumerable<StockSnapshot> snapshots,
+        IEnumerable<DividendPayment>? dividendPayments = null,
+        IEnumerable<BrokerTrade>? trades = null)
     {
         _allSnapshots.Clear();
         _allSnapshots.AddRange(snapshots);
+        var tradesByStockId = (trades ?? Array.Empty<BrokerTrade>())
+            .GroupBy(x => x.StockId)
+            .ToDictionary(x => x.Key, x => (IReadOnlyList<BrokerTrade>)x.ToList());
+        _acquisitionDateReviewStockIds.Clear();
+        foreach (var snapshot in _allSnapshots)
+        {
+            if (PositionEvidenceService.AcquisitionDateNeedsReview(
+                snapshot.Position, tradesByStockId.GetValueOrDefault(snapshot.Position.Stock.Id) ?? Array.Empty<BrokerTrade>()))
+                _acquisitionDateReviewStockIds.Add(snapshot.Position.Stock.Id);
+        }
+        BrokerFilters = BuildOptions(_allSnapshots.Select(x => x.Position.Stock.Broker));
+        AccountFilters = BuildOptions(_allSnapshots.Select(x => AccountOf(x.Position)));
+        SectorFilters = BuildOptions(_allSnapshots.Select(x => SectorOf(x.Position)));
+        OnPropertyChanged(nameof(BrokerFilters));
+        OnPropertyChanged(nameof(AccountFilters));
+        OnPropertyChanged(nameof(SectorFilters));
+        if (!BrokerFilters.Contains(SelectedBroker)) _selectedBroker = "すべて";
+        if (!AccountFilters.Contains(SelectedAccount)) _selectedAccount = "すべて";
+        if (!SectorFilters.Contains(SelectedSector)) _selectedSector = "すべて";
         _dividendStockIds.Clear();
         if (dividendPayments is not null)
         {
@@ -186,11 +282,26 @@ public sealed class StockListViewModel : ObservableObject
         }
 
         SelectedRow = Rows.FirstOrDefault(x => x.DetailKey == selectedKey) ?? Rows.FirstOrDefault();
+        var knownMarketValue = visibleSnapshots.Where(x => x.HasKnownCurrentMarketValueJpy)
+            .Sum(x => x.CurrentMarketValueJpy);
+        var unknownMarketValueCount = visibleSnapshots.Count(x => !x.HasKnownCurrentMarketValueJpy);
+        var marketValueSummary = unknownMarketValueCount == 0
+            ? $"評価額 {Formatters.Jpy(knownMarketValue)}"
+            : $"評価額合計 算出不可（確認済み {Formatters.Jpy(knownMarketValue)} / 未確認 {unknownMarketValueCount:N0} 件）";
+        VisibleSummary = $"表示 {Rows.Count:N0} 行（口座別 {visibleSnapshots.Count:N0} 件） / 全 {_allSnapshots.Count:N0} 件 ・ {marketValueSummary} ・ 取得日要確認（全件） {_acquisitionDateReviewStockIds.Count:N0} 件";
     }
 
     private bool ShouldShow(StockSnapshot snapshot)
     {
         var position = snapshot.Position;
+        if (!string.IsNullOrWhiteSpace(SearchText) &&
+            !new[] { position.Stock.Ticker, position.Stock.Name, position.MutualFund.FundName }
+                .Any(x => x.Contains(SearchText.Trim(), StringComparison.OrdinalIgnoreCase))) return false;
+        if (SelectedBroker != "すべて" && !string.Equals(position.Stock.Broker, SelectedBroker, StringComparison.Ordinal)) return false;
+        if (SelectedAccount != "すべて" && AccountOf(position) != SelectedAccount) return false;
+        if (SelectedSector != "すべて" && SectorOf(position) != SelectedSector) return false;
+        if (SelectedQuality == "取得日要確認" && !_acquisitionDateReviewStockIds.Contains(position.Stock.Id)) return false;
+        if (SelectedQuality != "すべて" && SelectedQuality != "取得日要確認" && QualityOf(snapshot) != SelectedQuality) return false;
         var isDividendOnly = IsDividendOnly(position);
         if (IsMode("投資信託") && !position.IsMutualFund)
         {
@@ -248,6 +359,46 @@ public sealed class StockListViewModel : ObservableObject
 
     private static decimal CurrentQuantity(StockPosition position) =>
         position.IsMutualFund ? position.MutualFund.UnitsHeld : position.CurrentHolding.CurrentShares;
+
+    private static string SectorOf(StockPosition position) =>
+        string.IsNullOrWhiteSpace(position.Stock.Sector) ? "未分類" : position.Stock.Sector;
+
+    private static string AccountOf(StockPosition position) => AccountTypes.DisplayName(
+        position.IsMutualFund && !string.IsNullOrWhiteSpace(position.MutualFund.AccountType)
+            ? position.MutualFund.AccountType : position.Stock.AccountType);
+
+    private static string QualityOf(StockSnapshot snapshot) => PositionEvidenceService.CostQuality(snapshot) switch
+    {
+        AcquisitionCostQuality.Unconfirmed => "未確認",
+        AcquisitionCostQuality.Estimated => "概算",
+        _ => "確定"
+    };
+
+    private static IReadOnlyList<string> BuildOptions(IEnumerable<string> values) =>
+        new[] { "すべて" }.Concat(values.Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.CurrentCulture)).ToArray();
+
+    private void ResetFilters()
+    {
+        SearchText = string.Empty;
+        SelectedBroker = "すべて";
+        SelectedAccount = "すべて";
+        SelectedSector = "すべて";
+        SelectedQuality = "すべて";
+        SelectedFilter = Filters[0];
+        RebuildRows();
+    }
+
+    private void SaveFilters()
+    {
+        _saveFilterState(JsonSerializer.Serialize(new StockListFilterState(
+            SearchText, SelectedBroker, SelectedAccount, SelectedSector, SelectedQuality,
+            SelectedFilter, SelectedGroupingMode)));
+        Message = "検索条件を保存しました。";
+    }
+
+    private sealed record StockListFilterState(string SearchText, string Broker, string Account,
+        string Sector, string Quality, string Filter, string Grouping);
 
     private static string AggregateKey(StockSnapshot snapshot)
     {

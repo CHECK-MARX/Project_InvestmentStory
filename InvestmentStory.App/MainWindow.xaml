@@ -43,6 +43,9 @@
         <DataTemplate DataType="{x:Type vm:CsvImportViewModel}">
             <views:CsvImportView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:CashLedgerViewModel}">
+            <views:CashLedgerView />
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:BrokerIntegrationViewModel}">
             <views:BrokerIntegrationView />
         </DataTemplate>
@@ -70,8 +73,13 @@
                     </Style.Triggers>
                 </Style>
             </Border.Style>
-            <DockPanel Margin="16">
-                <StackPanel DockPanel.Dock="Top">
+            <Grid Margin="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
                     <DockPanel Margin="0,0,0,16">
                         <Button DockPanel.Dock="Right"
                                 Content="{Binding SidebarToggleText}"
@@ -146,6 +154,13 @@
                         </StackPanel>
                     </Button>
 
+                    <Button Command="{Binding ShowCashLedgerCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="現金台帳">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="¥" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="現金台帳" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+
                     <TextBlock Text="設定" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
                     <Button Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="設定">
                         <StackPanel Orientation="Horizontal">
@@ -155,14 +170,15 @@
                     </Button>
                 </StackPanel>
 
-                <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Visibility="{Binding SidebarFooterVisibility}">
+                </ScrollViewer>
+                <StackPanel Grid.Row="1" Margin="0,8,0,0" VerticalAlignment="Bottom" Visibility="{Binding SidebarFooterVisibility}">
                     <TextBlock Text="DB" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" />
                     <TextBlock Text="{Binding DatabasePath}"
                                TextWrapping="Wrap"
                                Foreground="{DynamicResource MutedTextBrush}"
                                FontSize="11" />
                 </StackPanel>
-            </DockPanel>
+            </Grid>
         </Border>
 
         <Grid Grid.Column="1">

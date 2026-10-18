@@ -7,6 +7,126 @@ namespace InvestmentStory.Tests;
 public sealed class DatabaseInitializerTests
 {
     [Fact]
+    public void Initialize_AddsTradeSourceRowsToExistingDatabaseAfterBackup()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_trade_rows_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, "ALTER TABLE BrokerTrades DROP COLUMN SourceRowNumber;");
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info(BrokerTrades);";
+                using var reader = command.ExecuteReader();
+                var found = false;
+                while (reader.Read())
+                    found |= reader.GetString(1) == "SourceRowNumber";
+                Assert.True(found);
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_trade_source_rows.db"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void Initialize_MigratesLegacyTradeReviewRowsWithoutLosingDecisions()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_review_rows_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, "DROP TABLE CsvImportReviewRows;");
+                Execute(connection, """
+                    CREATE TABLE CsvImportReviewRows (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Broker TEXT NOT NULL, Account TEXT NOT NULL, Ticker TEXT NOT NULL,
+                        TradeDate TEXT NOT NULL, TradeType TEXT NOT NULL,
+                        Quantity REAL NOT NULL, SignedQuantity REAL NOT NULL,
+                        UnitPrice REAL NOT NULL, Currency TEXT NOT NULL,
+                        Source TEXT NOT NULL, Reason TEXT NOT NULL,
+                        CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(Broker, Account, Ticker, TradeDate, TradeType, Quantity,
+                               SignedQuantity, UnitPrice, Currency, Source, Reason)
+                    );
+                    INSERT INTO CsvImportReviewRows
+                        (Broker, Account, Ticker, TradeDate, TradeType, Quantity,
+                         SignedQuantity, UnitPrice, Currency, Source, Reason)
+                    VALUES ('SBI証券', 'Specific', 'KO', '2026-01-01', '現物買付',
+                            10, 10, 50, 'USD', 'CSV', '要確認');
+                    """);
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT COUNT(*), MIN(SourceFile), MIN(SourceRowNumber) FROM CsvImportReviewRows;";
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal(1L, reader.GetInt64(0));
+                Assert.Equal(string.Empty, reader.GetString(1));
+                Assert.Equal(0, reader.GetInt32(2));
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_trade_review_source_rows.db"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void Initialize_AddsTradeReviewResolutionAfterBackup()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_review_resolution_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, "ALTER TABLE CsvImportReviewRows DROP COLUMN ResolutionBatchId;");
+                Execute(connection, "ALTER TABLE CsvImportReviewRows DROP COLUMN ResolvedAt;");
+                Execute(connection, "ALTER TABLE CsvImportReviewRows DROP COLUMN Resolution;");
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info(CsvImportReviewRows);";
+                using var reader = command.ExecuteReader();
+                var columns = new HashSet<string>();
+                while (reader.Read()) columns.Add(reader.GetString(1));
+                Assert.Contains("Resolution", columns);
+                Assert.Contains("ResolvedAt", columns);
+                Assert.Contains("ResolutionBatchId", columns);
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_trade_review_resolution.db"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
     public void Initialize_BackfillsKnownSectorsOnceAndPreservesManualClassification()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"investment_story_sectors_{Guid.NewGuid():N}");

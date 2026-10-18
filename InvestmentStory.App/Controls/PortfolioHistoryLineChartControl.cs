@@ -24,6 +24,9 @@ public sealed class PortfolioHistoryLineChartControl : FrameworkElement
 
     public PortfolioHistoryLineChartControl()
     {
+        Focusable = true;
+        MouseDown += (_, _) => Focus();
+        KeyDown += HandleKeyDown;
         MouseMove += HandleMouseMove;
         MouseLeave += (_, _) => ClearHover();
     }
@@ -115,7 +118,7 @@ public sealed class PortfolioHistoryLineChartControl : FrameworkElement
             new Pen(ResourceBrush("BorderBrush", Brushes.DimGray), 1), card, 7, 7);
         var textBrush = ResourceBrush("PrimaryTextBrush", Brushes.White);
         DrawText(dc, row.Date, 12, left + 12, top + 8, textBrush);
-        DrawCardValue(dc, "総資産", row.TotalMarketValue, left, top + 34, totalBrush, textBrush);
+        DrawCardValue(dc, "証券評価額", row.TotalMarketValue, left, top + 34, totalBrush, textBrush);
         DrawCardValue(dc, "投資元本", row.TotalCostBasis, left, top + 57, costBrush, textBrush);
         DrawCardValue(dc, "含み損益", row.UnrealizedGainLoss, left, top + 80, gainBrush, textBrush);
     }
@@ -184,6 +187,24 @@ public sealed class PortfolioHistoryLineChartControl : FrameworkElement
         if (closest == _hoverIndex) return;
         _hoverIndex = closest;
         InvalidateVisual();
+    }
+
+    private void HandleKeyDown(object sender, KeyEventArgs e)
+    {
+        if (_rows.Count == 0) return;
+        _hoverIndex = e.Key switch
+        {
+            Key.Left => Math.Max(0, _hoverIndex < 0 ? 0 : _hoverIndex - 1),
+            Key.Right => Math.Min(_rows.Count - 1, _hoverIndex + 1),
+            Key.Home => 0,
+            Key.End => _rows.Count - 1,
+            _ => _hoverIndex
+        };
+        if (e.Key is Key.Left or Key.Right or Key.Home or Key.End)
+        {
+            e.Handled = true;
+            InvalidateVisual();
+        }
     }
 
     private void ClearHover()

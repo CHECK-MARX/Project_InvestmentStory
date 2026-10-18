@@ -23,6 +23,9 @@ public sealed class MonthlyDividendLineChartControl : FrameworkElement
     public MonthlyDividendLineChartControl()
     {
         Cursor = Cursors.Cross;
+        Focusable = true;
+        MouseDown += (_, _) => Focus();
+        KeyDown += HandleKeyDown;
         MouseMove += HandleMouseMove;
         MouseLeave += (_, _) => ClearHover();
     }
@@ -163,6 +166,24 @@ public sealed class MonthlyDividendLineChartControl : FrameworkElement
         if (closest == _hoverIndex) return;
         _hoverIndex = closest;
         InvalidateVisual();
+    }
+
+    private void HandleKeyDown(object sender, KeyEventArgs e)
+    {
+        if (_rows.Count == 0) return;
+        _hoverIndex = e.Key switch
+        {
+            Key.Left => Math.Max(0, _hoverIndex < 0 ? 0 : _hoverIndex - 1),
+            Key.Right => Math.Min(_rows.Count - 1, _hoverIndex + 1),
+            Key.Home => 0,
+            Key.End => _rows.Count - 1,
+            _ => _hoverIndex
+        };
+        if (e.Key is Key.Left or Key.Right or Key.Home or Key.End)
+        {
+            e.Handled = true;
+            InvalidateVisual();
+        }
     }
 
     private void ClearHover()

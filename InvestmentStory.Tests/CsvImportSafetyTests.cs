@@ -122,6 +122,335 @@ public sealed class CsvImportSafetyTests
     }
 
     [Fact]
+    public void EqualTradesFromSeparateRowsOfSameCsv_RemainDistinctAcrossImports()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "same.csv";
+            first.SourceRowNumber = 2;
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { first } });
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "same.csv";
+            second.SourceRowNumber = 3;
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { second } });
+
+            var position = Assert.Single(repository.GetPositions());
+            Assert.Equal(20m, position.CurrentHolding.CurrentShares);
+            Assert.Equal(new[] { 2, 3 }, repository.GetBrokerTrades(position.Stock.Id)
+                .Select(x => x.SourceRowNumber).OrderBy(x => x));
+
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { first } });
+            Assert.Equal(20m, repository.GetPositions().Single().CurrentHolding.CurrentShares);
+            Assert.Equal(2, repository.GetBrokerTrades(position.Stock.Id).Count);
+        });
+    }
+
+    [Fact]
+    public void EqualTradeFromDifferentCsv_IsHeldWithoutChangingLedger()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "first.csv";
+            first.SourceRowNumber = 2;
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { first } });
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "second.csv";
+            second.SourceRowNumber = 2;
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewTrade: repository.SaveCsvImportReviewTrade,
+                saveImportChange: repository.SaveCsvImportChange);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() =>
+                    new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { second } }), "test" });
+
+            var position = Assert.Single(repository.GetPositions());
+            Assert.Equal(10m, position.CurrentHolding.CurrentShares);
+            Assert.Single(repository.GetBrokerTrades(position.Stock.Id));
+            Assert.Contains("元CSV行を照合できません", second.ReviewReason);
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var review = connection.CreateCommand();
+            review.CommandText = "SELECT COUNT(*) FROM CsvImportReviewRows;";
+            Assert.Equal(1L, review.ExecuteScalar());
+        });
+    }
+
+    [Fact]
+    public void EqualTradesFromTwoCsvFiles_KeepBothSourceRowsInReview()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "first.csv";
+            first.SourceRowNumber = 2;
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "second.csv";
+            second.SourceRowNumber = 3;
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewTrade: repository.SaveCsvImportReviewTrade);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => new BrokerStatementImport
+                    { CanUpdateHoldings = true, Trades = new[] { first, second } }), "test" });
+
+            Assert.Empty(repository.GetPositions());
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var review = connection.CreateCommand();
+            review.CommandText = "SELECT SourceFile, SourceRowNumber FROM CsvImportReviewRows ORDER BY SourceFile;";
+            using var reader = review.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal("first.csv", reader.GetString(0));
+            Assert.Equal(2, reader.GetInt32(1));
+            Assert.True(reader.Read());
+            Assert.Equal("second.csv", reader.GetString(0));
+            Assert.Equal(3, reader.GetInt32(1));
+            Assert.False(reader.Read());
+        });
+    }
+
+    [Fact]
+    public void EqualTradesFromTwoCsvFiles_PreviewShowsBothAsPending()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "first.csv";
+            first.SourceRowNumber = 2;
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "second.csv";
+            second.SourceRowNumber = 3;
+            var statement = new BrokerStatementImport
+                { CanUpdateHoldings = true, Trades = new[] { first, second } };
+            var vm = new CsvImportViewModel(repository.GetPositions,
+                getBrokerTrades: repository.GetBrokerTrades);
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+
+            Assert.Equal(new[] { "要確認", "要確認" }, vm.PreviewRows.Select(x => x.Status));
+            Assert.All(vm.PreviewRows, row => Assert.Contains("別CSV", row.Reason));
+        });
+    }
+
+    [Fact]
+    public void ExplicitlyApprovedDifferentCsvTrade_IsAddedOnceAndAudited()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "first.csv";
+            first.SourceRowNumber = 2;
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { first } });
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "second.csv";
+            second.SourceRowNumber = 2;
+            var statement = new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { second } };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewTrade: repository.SaveCsvImportReviewTrade,
+                saveImportChange: repository.SaveCsvImportChange,
+                resolveReviewTrade: repository.ResolveCsvImportReviewTrade,
+                getTradeResolution: repository.GetCsvImportReviewTradeResolution);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            var row = Assert.Single(vm.PreviewRows);
+            Assert.True(row.CanChooseTrade);
+            row.TradeChoice = "別取引として追加";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            var position = Assert.Single(repository.GetPositions());
+            Assert.Equal(20m, position.CurrentHolding.CurrentShares);
+            Assert.Equal(new[] { "first.csv", "second.csv" }, repository.GetBrokerTrades(position.Stock.Id)
+                .Select(x => x.SourceFile).OrderBy(x => x));
+            using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                   { DataSource = repository.DatabasePath, Pooling = false }.ToString()))
+            {
+                connection.Open();
+                using var batch = connection.CreateCommand();
+                batch.CommandText = "SELECT BatchId FROM CsvImportChangeRows WHERE Source = 'second.csv' AND Action = '新規' LIMIT 1;";
+                var changes = repository.GetCsvImportChanges(Assert.IsType<string>(batch.ExecuteScalar()));
+                Assert.Contains(changes, x => x.Source == "second.csv" && x.Action == "新規" &&
+                    x.Reason.Contains("別取引として採用"));
+                using var review = connection.CreateCommand();
+                review.CommandText = "SELECT Resolution FROM CsvImportReviewRows WHERE SourceFile = 'second.csv';";
+                Assert.Equal("別取引として追加", review.ExecuteScalar());
+            }
+
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { second } });
+            Assert.Equal(20m, repository.GetPositions().Single().CurrentHolding.CurrentShares);
+            Assert.Equal(2, repository.GetBrokerTrades(position.Stock.Id).Count);
+        });
+    }
+
+    [Fact]
+    public void DifferentCsvTrade_CanBeResolvedAsExistingWithoutAddingLedgerRow()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "first.csv";
+            first.SourceRowNumber = 2;
+            Import(repository, new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { first } });
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "second.csv";
+            second.SourceRowNumber = 2;
+            var statement = new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { second } };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewTrade: repository.SaveCsvImportReviewTrade,
+                saveImportChange: repository.SaveCsvImportChange,
+                resolveReviewTrade: repository.ResolveCsvImportReviewTrade,
+                getTradeResolution: repository.GetCsvImportReviewTradeResolution);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            var row = Assert.Single(vm.PreviewRows);
+            Assert.True(row.CanMatchExistingTrade);
+            row.TradeChoice = "既存と同一";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            var position = Assert.Single(repository.GetPositions());
+            Assert.Equal(10m, position.CurrentHolding.CurrentShares);
+            Assert.Single(repository.GetBrokerTrades(position.Stock.Id));
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var review = connection.CreateCommand();
+            review.CommandText = "SELECT Resolution, ResolutionBatchId FROM CsvImportReviewRows WHERE SourceFile = 'second.csv';";
+            using var reader = review.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal("既存と同一", reader.GetString(0));
+            var batchId = reader.GetString(1);
+            Assert.NotEmpty(batchId);
+            reader.Close();
+            Assert.Contains(repository.GetCsvImportChanges(batchId), change =>
+                change.RecordKind == "取引" && change.Action == "同一" &&
+                change.Reason.Contains("プレビューで既存取引と同一"));
+            vm.PreviewRows.Clear();
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            Assert.Equal("同一", Assert.Single(vm.PreviewRows).Status);
+
+            var changed = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            changed.SourceFile = "second.csv";
+            changed.SourceRowNumber = 2;
+            changed.SettlementAmountJpy += 100m;
+            vm.PreviewRows.Clear();
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new BrokerStatementImport { CanUpdateHoldings = true, Trades = new[] { changed } }, 1 });
+            var changedPreview = Assert.Single(vm.PreviewRows);
+            Assert.Equal("要確認", changedPreview.Status);
+            Assert.Contains("取引内容が変わりました", changedPreview.Reason);
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => new BrokerStatementImport
+                    { CanUpdateHoldings = true, Trades = new[] { changed } }), "test" });
+            Assert.Equal(10m, repository.GetPositions().Single().CurrentHolding.CurrentShares);
+            Assert.Single(repository.GetBrokerTrades(position.Stock.Id));
+
+            var feeChanged = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            feeChanged.SourceFile = "second.csv";
+            feeChanged.SourceRowNumber = 2;
+            feeChanged.FeeJpy = 1m;
+            Assert.Equal("内容変更", repository.GetCsvImportReviewTradeResolution(feeChanged));
+
+            vm.PreviewRows.Clear();
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            var priorDecision = Assert.Single(vm.PreviewRows);
+            Assert.True(priorDecision.CanChooseTrade);
+            Assert.Equal("既存と同一", priorDecision.TradeChoice);
+            priorDecision.TradeChoice = "別取引として追加";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            Assert.Equal(20m, repository.GetPositions().Single().CurrentHolding.CurrentShares);
+            Assert.Equal("別取引として追加", repository.GetCsvImportReviewTradeResolution(second));
+            using var changedReview = connection.CreateCommand();
+            changedReview.CommandText = "SELECT COUNT(*) FROM CsvImportReviewRows WHERE SourceFile = 'second.csv' AND Resolution = '';";
+            Assert.Equal(1L, changedReview.ExecuteScalar());
+        });
+    }
+
+    [Fact]
+    public void TwoCsvTradeConflict_OnlySelectedRowIsImportedThenOtherCanBeAddedLater()
+    {
+        WithRepository(repository =>
+        {
+            var first = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            first.SourceFile = "first.csv";
+            first.SourceRowNumber = 2;
+            var second = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            second.SourceFile = "second.csv";
+            second.SourceRowNumber = 3;
+            var statement = new BrokerStatementImport
+                { CanUpdateHoldings = true, Trades = new[] { first, second } };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewTrade: repository.SaveCsvImportReviewTrade);
+            var preview = typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var capture = typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var import = typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            preview.Invoke(vm, new object[] { statement, 1 });
+            Assert.All(vm.PreviewRows, row => Assert.True(row.CanChooseTrade));
+            Assert.All(vm.PreviewRows, row => Assert.False(row.CanMatchExistingTrade));
+            Assert.DoesNotContain("既存と同一", vm.PreviewRows[0].AvailableTradeChoices);
+            vm.PreviewRows.Single(row => row.Values.Contains("first.csv")).TradeChoice = "別取引として追加";
+            capture.Invoke(vm, null);
+            import.Invoke(vm, new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            Assert.Equal(10m, repository.GetPositions().Single().CurrentHolding.CurrentShares);
+
+            vm.PreviewRows.Clear();
+            preview.Invoke(vm, new object[] { statement, 1 });
+            vm.PreviewRows.Single(row => row.Values.Contains("second.csv")).TradeChoice = "別取引として追加";
+            capture.Invoke(vm, null);
+            import.Invoke(vm, new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            var position = Assert.Single(repository.GetPositions());
+            Assert.Equal(20m, position.CurrentHolding.CurrentShares);
+            Assert.Equal(2, repository.GetBrokerTrades(position.Stock.Id).Count);
+        });
+    }
+
+    [Fact]
     public void TradeWithoutSettlementDate_DoesNotDuplicateAfterLedgerRoundTrip()
     {
         var tradeDate = new DateTime(2026, 1, 1);
@@ -139,6 +468,25 @@ public sealed class CsvImportSafetyTests
         saved.SettlementAmountJpy = 1000.00m;
 
         Assert.Single(TradeHistoryService.Merge(new[] { saved }, new[] { incoming }, "EXMP"));
+    }
+
+    [Fact]
+    public void ChangedTradeAtSameSourceRow_IsHeldForReview()
+    {
+        var original = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+        original.SourceFile = "same.csv";
+        original.SourceRowNumber = 2;
+        var existing = new TradeLedgerService().BuildLedger(1, new[] { original });
+        var corrected = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+        corrected.SourceFile = "same.csv";
+        corrected.SourceRowNumber = 2;
+        corrected.UnitPrice = 51m;
+        corrected.SettlementAmountJpy = 76500m;
+
+        var result = TradeHistoryService.Reconcile(existing, new[] { corrected }, "KO");
+        Assert.Empty(result.Accepted);
+        Assert.Same(corrected, Assert.Single(result.NeedsReview));
+        Assert.Contains("同じCSV行", corrected.ReviewReason);
     }
 
     [Fact]
@@ -942,6 +1290,511 @@ public sealed class CsvImportSafetyTests
             }));
             Assert.Equal(200m, Assert.Single(repository.GetDividendPayments()).NetAmountJpy);
         });
+    }
+
+    [Fact]
+    public void ConflictingHoldingRows_AreHeldAndRecordedWithoutChangingPositions()
+    {
+        WithRepository(repository =>
+        {
+            var statement = new BrokerStatementImport
+            {
+                CanUpdateHoldings = true,
+                UnresolvedHoldings = new[]
+                {
+                    new BrokerHoldingRecord
+                    {
+                        Broker = "SBI証券", Account = AccountTypes.Specific,
+                        Ticker = "8593", Name = "Example", Shares = 10m,
+                        SnapshotDate = new DateTime(2026, 9, 26),
+                        SourceFile = "first.csv", SourceRowNumber = 4,
+                        ReviewReason = "同一日時の保有残高が食い違います。"
+                    },
+                    new BrokerHoldingRecord
+                    {
+                        Broker = "SBI証券", Account = AccountTypes.Specific,
+                        Ticker = "8593", Name = "Example", Shares = 20m,
+                        SnapshotDate = new DateTime(2026, 9, 26),
+                        SourceFile = "second.csv", SourceRowNumber = 4,
+                        ReviewReason = "同一日時の保有残高が食い違います。"
+                    }
+                }
+            };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewHolding: repository.SaveCsvImportReviewHolding,
+                saveImportChange: repository.SaveCsvImportChange);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            Assert.Empty(repository.GetPositions());
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var review = connection.CreateCommand();
+            review.CommandText = "SELECT COUNT(*) FROM CsvImportReviewHoldings WHERE Reason LIKE '%食い違います%';";
+            Assert.Equal(2L, review.ExecuteScalar());
+            using var batch = connection.CreateCommand();
+            batch.CommandText = "SELECT BatchId FROM CsvImportChangeRows LIMIT 1;";
+            var changes = repository.GetCsvImportChanges(Assert.IsType<string>(batch.ExecuteScalar()));
+            Assert.Equal(2, changes.Count);
+            Assert.All(changes, x =>
+            {
+                Assert.Equal("要確認", x.Action);
+                Assert.Equal(4, x.SourceRowNumber);
+                Assert.Contains("食い違います", x.Reason);
+            });
+        });
+    }
+
+    [Fact]
+    public void ConflictingHoldingRows_OnlyExplicitlyChosenRowIsApplied()
+    {
+        WithRepository(repository =>
+        {
+            var first = ConflictHolding("first.csv", 10m);
+            var second = ConflictHolding("second.csv", 20m);
+            var statement = new BrokerStatementImport
+            {
+                CanUpdateHoldings = true,
+                UnresolvedHoldings = new[] { first, second }
+            };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveReviewHolding: repository.SaveCsvImportReviewHolding,
+                saveImportChange: repository.SaveCsvImportChange);
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            Assert.All(vm.PreviewRows, row => Assert.True(row.CanChooseConflict));
+            vm.PreviewRows[1].ConflictChoice = "この行を採用";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            Assert.Equal(20m, Assert.Single(repository.GetPositions()).CurrentHolding.CurrentShares);
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var review = connection.CreateCommand();
+            review.CommandText = "SELECT COUNT(*) FROM CsvImportReviewHoldings;";
+            Assert.Equal(1L, review.ExecuteScalar());
+            using var batch = connection.CreateCommand();
+            batch.CommandText = "SELECT BatchId FROM CsvImportChangeRows LIMIT 1;";
+            var changes = repository.GetCsvImportChanges(Assert.IsType<string>(batch.ExecuteScalar()));
+            Assert.Contains(changes, row => row.Action == "新規" &&
+                row.SourceDisplay.Contains("second.csv", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(changes, row => row.Action == "要確認" &&
+                row.SourceDisplay.Contains("first.csv", StringComparison.OrdinalIgnoreCase));
+        });
+    }
+
+    [Fact]
+    public void ConflictingHoldingRows_MultipleChoicesRollBackEntireImport()
+    {
+        WithRepository(repository =>
+        {
+            var statement = new BrokerStatementImport
+            {
+                CanUpdateHoldings = true,
+                UnresolvedHoldings = new[]
+                {
+                    ConflictHolding("first.csv", 10m), ConflictHolding("second.csv", 20m)
+                }
+            };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically);
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            foreach (var row in vm.PreviewRows) row.ConflictChoice = "この行を採用";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            Assert.Empty(repository.GetPositions());
+            Assert.Contains("複数選択", vm.Message);
+        });
+    }
+
+    [Fact]
+    public void ConflictingHoldingRows_CanChooseUnderManualMergePolicy()
+    {
+        var statement = new BrokerStatementImport
+        {
+            UnresolvedHoldings = new[]
+            {
+                ConflictHolding("first.csv", 10m), ConflictHolding("second.csv", 20m)
+            }
+        };
+        var vm = new CsvImportViewModel(getMergePolicy: () => "すべてプレビューして手動選択");
+        typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+
+        Assert.All(vm.PreviewRows, row => Assert.True(row.CanChooseConflict));
+    }
+
+    [Fact]
+    public void ManualMergePolicy_AppliesOnlyChosenHoldingAndDividend_WithoutClosingOtherHoldings()
+    {
+        WithRepository(repository =>
+        {
+            repository.SavePosition(Position("KO", "USD", 10m, 150m));
+            var chosen = ConflictHolding("chosen.csv", 5m);
+            chosen.ReviewReason = string.Empty;
+            var skipped = ConflictHolding("skipped.csv", 8m);
+            skipped.Ticker = "7203";
+            skipped.ReviewReason = string.Empty;
+            var dividend = new BrokerDividendRecord
+            {
+                Broker = "SBI証券", Account = AccountTypes.Specific, Ticker = "KO", Name = "Coca-Cola",
+                PaymentDate = new DateTime(2026, 9, 1), Currency = "JPY", NetAmount = 100m,
+                NetAmountJpy = 100m, SourceFile = Path.GetFullPath("dividend.csv"), SourceRowNumber = 2
+            };
+            var statement = new BrokerStatementImport
+            {
+                CanUpdateHoldings = true,
+                Holdings = new[] { chosen, skipped }, Dividends = new[] { dividend },
+                CompleteHoldingScopes = new[] { new CompleteHoldingSnapshotScope
+                {
+                    Broker = "SBI証券", Account = AccountTypes.Specific,
+                    SnapshotDate = new DateTime(2026, 9, 26)
+                } }
+            };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically, () => "すべてプレビューして手動選択");
+            var preview = typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var capture = typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var import = typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            preview.Invoke(vm, new object[] { statement, 1 });
+            Assert.Equal(3, vm.PreviewRows.Count(row => row.CanChooseManual));
+            capture.Invoke(vm, null);
+            import.Invoke(vm, new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            Assert.Contains("選択されていません", vm.Message);
+            Assert.Single(repository.GetPositions());
+            Assert.Empty(repository.GetDividendPayments());
+
+            vm.PreviewRows.Single(row => row.Values.Contains("chosen.csv")).ManualChoice = "この行を反映";
+            vm.PreviewRows.Single(row => row.Values.Contains("dividend.csv")).ManualChoice = "この行を反映";
+            capture.Invoke(vm, null);
+            import.Invoke(vm, new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            var positions = repository.GetPositions();
+            Assert.Equal(2, positions.Count);
+            Assert.Equal(10m, positions.Single(x => x.Stock.Ticker == "KO").CurrentHolding.CurrentShares);
+            Assert.Equal(5m, positions.Single(x => x.Stock.Ticker == "8593").CurrentHolding.CurrentShares);
+            Assert.DoesNotContain(positions, x => x.Stock.Ticker == "7203");
+            Assert.Single(repository.GetDividendPayments());
+        });
+    }
+
+    [Fact]
+    public void ManualMergePolicy_AppliesOnlyChosenTrade()
+    {
+        WithRepository(repository =>
+        {
+            var chosen = TradeStatement(new DateTime(2026, 1, 1), 10m).Trades.Single();
+            chosen.SourceFile = Path.GetFullPath("chosen-trade.csv");
+            chosen.SourceRowNumber = 2;
+            var skipped = TradeStatement(new DateTime(2026, 1, 2), 5m).Trades.Single();
+            skipped.SourceFile = Path.GetFullPath("skipped-trade.csv");
+            skipped.SourceRowNumber = 3;
+            var statement = new BrokerStatementImport
+                { CanUpdateHoldings = true, Trades = new[] { chosen, skipped } };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically, () => "すべてプレビューして手動選択");
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            Assert.Equal(2, vm.PreviewRows.Count(row => row.CanChooseManual));
+            vm.PreviewRows.Single(row => row.Values.Contains("chosen-trade.csv")).ManualChoice = "この行を反映";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            var position = Assert.Single(repository.GetPositions());
+            Assert.Equal(10m, position.CurrentHolding.CurrentShares);
+            Assert.Single(repository.GetBrokerTrades(position.Stock.Id));
+        });
+    }
+
+    [Fact]
+    public void ManualMergePolicy_ChosenConflictDoesNotPersistUnchosenConflict()
+    {
+        WithRepository(repository =>
+        {
+            var statement = new BrokerStatementImport
+            {
+                CanUpdateHoldings = true,
+                UnresolvedHoldings = new[]
+                    { ConflictHolding("first.csv", 10m), ConflictHolding("second.csv", 20m) }
+            };
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically, () => "すべてプレビューして手動選択",
+                saveReviewHolding: repository.SaveCsvImportReviewHolding);
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+            vm.PreviewRows.Single(row => row.Values.Contains("second.csv")).ConflictChoice = "この行を採用";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+
+            Assert.Equal(20m, Assert.Single(repository.GetPositions()).CurrentHolding.CurrentShares);
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var review = connection.CreateCommand();
+            review.CommandText = "SELECT COUNT(*) FROM CsvImportReviewHoldings;";
+            Assert.Equal(0L, review.ExecuteScalar());
+        });
+    }
+
+    [Fact]
+    public void ManualMergePolicy_DividendOnlyCsvAppliesSelectedRow()
+    {
+        WithRepository(repository =>
+        {
+            repository.SavePosition(Position("KO", "USD", 10m, 150m));
+            var records = new[] { 1, 2 }.Select(day => new BrokerDividendRecord
+            {
+                Broker = "SBI証券", Account = AccountTypes.Specific,
+                Ticker = "KO", Name = "Coca-Cola", PaymentDate = new DateTime(2026, 9, day),
+                Currency = "JPY", NetAmount = day * 100m, NetAmountJpy = day * 100m,
+                SourceFile = Path.GetFullPath("dividend-only.csv"), SourceRowNumber = day + 1
+            }).ToArray();
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                getMergePolicy: () => "すべてプレビューして手動選択",
+                runImportAtomically: repository.RunImportAtomically);
+            typeof(CsvImportViewModel).GetMethod("AddDividendPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { records, 1 });
+            vm.PreviewRows.Single(row => row.Values.Contains("2026/09/02")).ManualChoice = "この行を反映";
+            typeof(CsvImportViewModel).GetMethod("CaptureHoldingConflictChoices",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, null);
+            typeof(CsvImportViewModel).GetMethod("ImportDividendRecords",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+                new object[] { new Func<IReadOnlyList<BrokerDividendRecord>>(() => records), "test" });
+
+            Assert.Equal(new DateTime(2026, 9, 2), Assert.Single(repository.GetDividendPayments()).PaymentDate);
+        });
+    }
+
+    private static BrokerHoldingRecord ConflictHolding(string fileName, decimal shares) => new()
+    {
+        Broker = "SBI証券", Account = AccountTypes.Specific,
+        Ticker = "8593", Name = "Example", Shares = shares,
+        Currency = "JPY", CurrentPrice = 100m, MarketValue = shares * 100m,
+        SnapshotDate = new DateTime(2026, 9, 26),
+        SourceFile = Path.GetFullPath(fileName), SourceRowNumber = 4,
+        ReviewReason = "同一日時の保有残高が食い違います。"
+    };
+
+    [Fact]
+    public void StatementPreview_ShowsAuditedInputRowsAndOriginalIssueLines()
+    {
+        var statement = new BrokerStatementImport
+        {
+            SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>
+            {
+                ["statement.csv"] = new()
+                {
+                    InputRows = 2, PendingRows = 1, ExcludedRows = 1,
+                    Issues = new[]
+                    {
+                        new CsvRowIssue(3, "要確認", "銘柄コードなし"),
+                        new CsvRowIssue(5, "対象外", "投資対象外の明細")
+                    }
+                }
+            }
+        };
+        var vm = new CsvImportViewModel();
+        typeof(CsvImportViewModel).GetMethod("PreviewBrokerStatement",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+            new object[] { new Func<BrokerStatementImport>(() => statement), "test", "statement.csv" });
+
+        var audit = Assert.Single(vm.PreviewAudits);
+        Assert.Equal("一致", audit.Balance);
+        Assert.Equal(2, audit.InputRows);
+        Assert.True(vm.HasPreviewAudits);
+        Assert.Equal(new[] { "要確認", "対象外" }, vm.PreviewRows.Select(x => x.Status));
+        Assert.Contains("statement.csv:3", vm.PreviewRows[0].Values);
+        Assert.Contains("statement.csv:5", vm.PreviewRows[1].Values);
+    }
+
+    [Fact]
+    public void StatementPreview_RejectsUnbalancedAuditWithoutLeavingPartialRows()
+    {
+        var statement = new BrokerStatementImport
+        {
+            SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>
+            {
+                ["statement.csv"] = new() { InputRows = 2, ParsedRows = 1 }
+            }
+        };
+        var vm = new CsvImportViewModel();
+        typeof(CsvImportViewModel).GetMethod("PreviewBrokerStatement",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm,
+            new object[] { new Func<BrokerStatementImport>(() => statement), "test", "statement.csv" });
+
+        Assert.Contains("入力行数と分類件数が一致しません", vm.Message);
+        Assert.Empty(vm.PreviewAudits);
+        Assert.Empty(vm.PreviewRows);
+        Assert.False(vm.HasPreviewAudits);
+    }
+
+    [Fact]
+    public void TradePreview_PreservesIdenticalTransactionMultiplicity()
+    {
+        WithRepository(repository =>
+        {
+            static BrokerTradeRecord Trade() => new()
+            {
+                Broker = "SBI証券", Account = AccountTypes.Specific,
+                Ticker = "KO", Name = "Coca-Cola", TradeType = "現物買付",
+                TradeDate = new DateTime(2026, 8, 1), SettlementDate = new DateTime(2026, 8, 3),
+                Quantity = 10m, SignedQuantity = 10m, UnitPrice = 50m,
+                SettlementAmountJpy = 75_000m, ExchangeRate = 150m,
+                Currency = "USD", Source = "test"
+            };
+            var stockId = repository.SavePosition(Position("KO", "USD", 10m, 150m));
+            repository.SaveBrokerTrades(new[] { Trade() });
+            var persisted = Assert.Single(repository.GetBrokerTrades(stockId));
+            Assert.Equal(AccountTypes.Specific, persisted.CustodyType);
+            var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically);
+            var statement = new BrokerStatementImport
+            {
+                CanUpdateHoldings = true, Trades = new[] { Trade(), Trade() }
+            };
+            typeof(CsvImportViewModel).GetMethod("AddStatementPreviewRows",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, new object[] { statement, 1 });
+
+            Assert.Equal(new[] { "同一", "新規" }, vm.PreviewRows.Select(x => x.Status));
+            Assert.Contains("75,000", vm.PreviewRows[1].After);
+            var stock = Assert.Single(repository.GetPositions());
+            Assert.Single(repository.GetBrokerTrades(stock.Stock.Id));
+
+            var importVm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                repository.SaveDividendPayment, repository.GetDividendPayments,
+                repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                repository.RunImportAtomically,
+                saveImportLog: repository.SaveCsvImportLog,
+                saveImportChange: repository.SaveCsvImportChange);
+            typeof(CsvImportViewModel).GetMethod("ImportBrokerStatement",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(importVm,
+                new object[] { new Func<BrokerStatementImport>(() => statement), "test" });
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = repository.DatabasePath, Pooling = false }.ToString());
+            connection.Open();
+            using var batch = connection.CreateCommand();
+            batch.CommandText = "SELECT BatchId FROM CsvImportChangeRows LIMIT 1;";
+            var batchId = Assert.IsType<string>(batch.ExecuteScalar());
+            var tradeChanges = repository.GetCsvImportChanges(batchId);
+            Assert.Equal(new[] { "同一", "新規" }, tradeChanges.Select(x => x.Action));
+            Assert.All(tradeChanges, x => Assert.Equal("取引", x.RecordKind));
+            Assert.Equal(75_000m, tradeChanges[1].AfterAmountJpy);
+        });
+    }
+
+    [Fact]
+    public void DividendPreview_ShowsEveryRowAndDoesNotWriteToDatabase()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_DISTRIBUTION_{Guid.NewGuid():N}.csv");
+        try
+        {
+            var rows = Enumerable.Range(1, 25)
+                .Select(day => $"2026/08/{day:00},特定,米国株式,Example Corp EXMP,10,{100 + day}");
+            File.WriteAllText(path,
+                "受渡日,口座,商品,銘柄名,数量,受取額(税引後・円)\n" +
+                string.Join("\n", rows) + "\n", Encoding.UTF8);
+            WithRepository(repository =>
+            {
+                var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                    repository.SaveDividendPayment, repository.GetDividendPayments,
+                    repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                    repository.RunImportAtomically) { FilePath = path };
+
+                vm.PreviewCommand.Execute(null);
+
+                Assert.Equal(25, vm.PreviewRows.Count);
+                var audit = Assert.Single(vm.PreviewAudits);
+                Assert.Equal(25, audit.InputRows);
+                Assert.Equal(25, audit.ParsedRows);
+                Assert.Equal("一致", audit.Balance);
+                Assert.All(vm.PreviewRows, row => Assert.Equal("新規", row.Status));
+                Assert.Equal(25, vm.PreviewRows.Last().RowNumber);
+                Assert.Empty(repository.GetDividendPayments());
+                Assert.Empty(repository.GetPositions());
+            });
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void DividendPreview_ReimportAndChangedSourceRowHaveDifferentOutcomes()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_DISTRIBUTION_{Guid.NewGuid():N}.csv");
+        try
+        {
+            static string Csv(int amount) =>
+                "受渡日,口座,商品,銘柄名,数量,受取額(税引後・円)\n" +
+                $"2026/08/01,特定,米国株式,Example Corp EXMP,10,{amount}\n";
+            File.WriteAllText(path, Csv(100), Encoding.UTF8);
+            WithRepository(repository =>
+            {
+                var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                    repository.SaveDividendPayment, repository.GetDividendPayments,
+                    repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                    repository.RunImportAtomically,
+                    saveImportLog: repository.SaveCsvImportLog,
+                    saveImportChange: repository.SaveCsvImportChange) { FilePath = path };
+                vm.PreviewCommand.Execute(null);
+                Assert.Equal("新規", Assert.Single(vm.PreviewRows).Status);
+                vm.ImportCommand.Execute(null);
+                Assert.Equal(100m, Assert.Single(repository.GetDividendPayments()).NetAmountJpy);
+                var batchId = repository.GetRecentCsvImportLogs().First().BatchId;
+                var change = Assert.Single(repository.GetCsvImportChanges(batchId));
+                Assert.Equal("配当", change.RecordKind);
+                Assert.Equal("新規", change.Action);
+                Assert.Equal(100m, change.AfterAmountJpy);
+                Assert.True(change.SourceRowNumber > 0);
+
+                vm.PreviewCommand.Execute(null);
+                Assert.Equal("同一", Assert.Single(vm.PreviewRows).Status);
+
+                File.WriteAllText(path, Csv(150), Encoding.UTF8);
+                vm.PreviewCommand.Execute(null);
+                var changed = Assert.Single(vm.PreviewRows);
+                Assert.Equal("要確認", changed.Status);
+                Assert.Contains("100", changed.Before);
+                Assert.Equal("反映保留", changed.After);
+                Assert.Equal(100m, Assert.Single(repository.GetDividendPayments()).NetAmountJpy);
+            });
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
     }
 
     [Fact]
