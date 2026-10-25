@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using InvestmentStory.App.ViewModels;
 
 namespace InvestmentStory.App.Views;
@@ -10,6 +11,17 @@ public partial class SettingsView : UserControl
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        Loaded += OnLoaded;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not SettingsViewModel vm || vm.SelectedApiLog is null) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            ApiLogGrid.BringIntoView();
+            ApiLogGrid.ScrollIntoView(vm.SelectedApiLog);
+        });
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -46,7 +58,7 @@ public partial class SettingsView : UserControl
         RestoreDrillButton.IsEnabled = false;
         try
         {
-            var backupFileName = viewModel.SelectedBackup?.FileName
+            var backupFileName = viewModel.SelectedBackup?.BackupKey
                 ?? throw new InvalidOperationException("復元するバックアップを選択してください。");
             var impact = await viewModel.GetRestoreImpactAsync(backupFileName);
             var confirmation = MessageBox.Show(Window.GetWindow(this),

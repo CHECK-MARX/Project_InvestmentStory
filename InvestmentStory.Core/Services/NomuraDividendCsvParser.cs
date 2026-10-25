@@ -22,6 +22,10 @@ public sealed class NomuraDividendCsvParser
         var headers = ParseCsvLine(lines[headerIndex]);
         CsvRowValidation.ValidateHeaders(headers, "交付日", "配当等の額", "源泉徴収税額",
             "銘柄コード", "銘柄名", "商品", "数量");
+        CsvRowValidation.ValidateKnownHeaders(headers, "NomuraDividends-v1",
+            "交付日", "商品", "銘柄コード", "銘柄名", "配当等の単価", "数量",
+            "配当等の額", "加算対象額", "源泉徴収税額", "上場株式配当等控除額",
+            "元本払戻金（特別分配金）");
         var dividends = new List<BrokerDividendRecord>();
         var unresolved = new List<BrokerUnresolvedDividend>();
         var ignored = 0;
@@ -69,7 +73,9 @@ public sealed class NomuraDividendCsvParser
             Dividends = dividends, IgnoredRowCount = ignored,
             UnresolvedDividends = unresolved,
             SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase)
-            { [filePath] = rowAudit.Build() }
+            { [filePath] = rowAudit.Build() },
+            SourceFormatVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            { [filePath] = "NomuraDividends-v1" }
         };
     }
 

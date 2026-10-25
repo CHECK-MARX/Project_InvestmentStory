@@ -107,7 +107,9 @@ public sealed class NomuraTransactionCsvParser
             UnresolvedDividends = unresolvedDividends,
             UnresolvedTrades = unresolvedTrades,
             SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase)
-            { [filePath] = rowAudit.Build() }
+            { [filePath] = rowAudit.Build() },
+            SourceFormatVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            { [filePath] = "NomuraTransactions-v1" }
         };
     }
 
@@ -134,6 +136,10 @@ public sealed class NomuraTransactionCsvParser
         var headers = ParseCsvLine(lines[headerIndex]);
         CsvRowValidation.ValidateHeaders(headers, "約定日", "受渡日", "取引区分", "商品",
             "銘柄コード", "銘柄名", "発行通貨", "数量", "単価", "受渡金額/決済損益", "レート");
+        CsvRowValidation.ValidateKnownHeaders(headers, "NomuraTransactions-v1",
+            "約定日", "受渡日", "商品", "銘柄コード", "銘柄名", "摘要", "取引区分",
+            "預り区分", "発行通貨", "数量", "単価", "受渡金額/決済損益",
+            "手数料（税込）", "レート", "決済通貨", "売買損益（円）");
         var rows = new List<IReadOnlyDictionary<string, string>>();
         for (var index = headerIndex + 1; index < lines.Length; index++)
         {

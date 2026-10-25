@@ -515,7 +515,7 @@ public sealed class BrokerHoldingMergeService
             Stock = stock,
             Purchase = new Purchase
             {
-                PurchaseDate = snapshotAt.Date,
+                PurchaseDate = DateTime.MinValue,
                 Shares = source.Shares,
                 UnitPrice = source.AverageAcquisitionPrice,
                 ExchangeRate = purchaseExchangeRate,
@@ -580,7 +580,7 @@ public sealed class BrokerHoldingMergeService
             },
             Purchase = new Purchase
             {
-                PurchaseDate = snapshotAt.Date,
+                PurchaseDate = DateTime.MinValue,
                 Shares = unitsHeld,
                 UnitPrice = averageCostNav,
                 ExchangeRate = 1m,

@@ -65,7 +65,15 @@ public sealed class MainViewModel : ObservableObject
         _isSidebarCollapsed = settings.IsSidebarCollapsed;
         _exchangeRateService = new ExchangeRateProviderFactory(() => _repository.GetSettings());
 
-        Dashboard = new DashboardViewModel(RecordCurrentPortfolioSnapshot);
+        Dashboard = new DashboardViewModel(RecordCurrentPortfolioSnapshot, OpenTodayReview, OpenTodayReviewItem);
+        Performance = new PerformanceViewModel(() => new CashLedgerRepository(_repository.DatabasePath));
+        Allocation = new AllocationViewModel(() => new AllocationTargetRepository(_repository.DatabasePath));
+        Nisa = new NisaViewModel(() => new NisaHistoryRepository(_repository.DatabasePath));
+        Reminders = new ReminderViewModel(
+            () => new ReminderRepository(_repository.DatabasePath),
+            () => _repository.GetDividendPayments(),
+            () => _repository.GetRecentApiFetchLogs(100),
+            OpenReminderSource);
         CashLedger = new CashLedgerViewModel(() => new CashLedgerRepository(_repository.DatabasePath), RefreshCashDashboard);
         SimpleRegistration = new SimpleRegistrationViewModel(
             SaveStock,
@@ -102,7 +110,11 @@ public sealed class MainViewModel : ObservableObject
             UpdateDividendSchedules,
             _repository.GetTaxProfiles,
             _repository.SaveTaxProfile,
-            _repository.GetGoal);
+            _repository.GetGoal,
+            plannedId => new DividendReviewRepository(_repository.DatabasePath).GetHistory(plannedId),
+            (plannedId, action, actualId, reason) =>
+                new DividendReviewRepository(_repository.DatabasePath).Apply(plannedId, action, actualId, reason),
+            LoadData);
         PassiveIncome = new PassiveIncomeViewModel(SaveGoal);
         Simulation = new SimulationViewModel(
             _calculator,
@@ -137,10 +149,21 @@ public sealed class MainViewModel : ObservableObject
             resolveReviewTrade: (trade, resolution, batchId) =>
                 _repository.ResolveCsvImportReviewTrade(trade, resolution, batchId),
             getTradeResolution: trade => _repository.GetCsvImportReviewTradeResolution(trade));
+        CsvReview = new CsvReviewViewModel(() => _repository.GetCsvReviewRecords(includeResolved: true),
+            OpenCsvImportSafely,
+            (key, status, note) => new CsvReviewDispositionRepository(_repository.DatabasePath).Save(key, status, note),
+            LoadData);
         BrokerIntegration = new BrokerIntegrationViewModel(
             () => _repository.GetSettings(),
             appSettings => _repository.SaveSettings(appSettings),
-            OpenCsvImportSafely);
+            OpenCsvImportSafely,
+            path =>
+            {
+                OpenCsvImportSafely();
+                if (!ReferenceEquals(CurrentPage, CsvImport)) return;
+                CsvImport.FilePath = path;
+                CsvImport.PreviewCommand.Execute(null);
+            });
         Settings = new SettingsViewModel(
             () => _repository.GetSettings(),
             appSettings => _repository.SaveSettings(appSettings),
@@ -191,6 +214,26 @@ public sealed class MainViewModel : ObservableObject
             CashLedger.Load();
             Navigate(CashLedger, "現金台帳");
         });
+        ShowPerformanceCommand = new RelayCommand(() =>
+        {
+            Performance.Load();
+            Navigate(Performance, "運用成績");
+        });
+        ShowAllocationCommand = new RelayCommand(() =>
+        {
+            Allocation.Load(_snapshots);
+            Navigate(Allocation, "資産配分目標");
+        });
+        ShowNisaCommand = new RelayCommand(() =>
+        {
+            Nisa.Load(_snapshots);
+            Navigate(Nisa, "NISA評価額と投資枠");
+        });
+        ShowRemindersCommand = new RelayCommand(() =>
+        {
+            Reminders.Load();
+            Navigate(Reminders, "配当・更新通知");
+        });
         ShowBrokerIntegrationCommand = new RelayCommand(() => Navigate(BrokerIntegration, "取込・統合設定"));
         ShowSettingsCommand = new RelayCommand(() =>
         {
@@ -212,6 +255,11 @@ public sealed class MainViewModel : ObservableObject
 
     public DashboardViewModel Dashboard { get; }
     public CashLedgerViewModel CashLedger { get; }
+    public PerformanceViewModel Performance { get; }
+    public AllocationViewModel Allocation { get; }
+    public NisaViewModel Nisa { get; }
+    public ReminderViewModel Reminders { get; }
+    public event Action? DataRefreshed;
     public SimpleRegistrationViewModel SimpleRegistration { get; }
     public StockListViewModel StockList { get; }
     public StockEditorViewModel StockEditor { get; }
@@ -220,6 +268,7 @@ public sealed class MainViewModel : ObservableObject
     public PassiveIncomeViewModel PassiveIncome { get; }
     public SimulationViewModel Simulation { get; }
     public CsvImportViewModel CsvImport { get; }
+    public CsvReviewViewModel CsvReview { get; }
     public BrokerIntegrationViewModel BrokerIntegration { get; }
     public SettingsViewModel Settings { get; }
 
@@ -233,6 +282,10 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ShowSimulationCommand { get; }
     public ICommand ShowCsvImportCommand { get; }
     public ICommand ShowCashLedgerCommand { get; }
+    public ICommand ShowPerformanceCommand { get; }
+    public ICommand ShowAllocationCommand { get; }
+    public ICommand ShowNisaCommand { get; }
+    public ICommand ShowRemindersCommand { get; }
     public ICommand ShowBrokerIntegrationCommand { get; }
     public ICommand ShowSettingsCommand { get; }
     public ICommand RefreshCommand { get; }
@@ -330,6 +383,15 @@ public sealed class MainViewModel : ObservableObject
         var cashQuote = SelectCashValuationQuote(snapshots, usdJpyQuote, sampleMode);
         var cashAssets = ReadCashAssets(repository, cashQuote, sampleMode);
         var dividends = repository.GetDividendPayments();
+        var csvReviewRecords = repository.GetCsvReviewRecords();
+        var csvReviewSummary = new CsvReviewSummary(
+            csvReviewRecords.Count(x => x.SourceKey.StartsWith("trade:", StringComparison.Ordinal)),
+            csvReviewRecords.Count(x => x.SourceKey.StartsWith("holding:", StringComparison.Ordinal)),
+            csvReviewRecords.Count(x => x.SourceKey.StartsWith("dividend:", StringComparison.Ordinal)));
+        var todayReview = new TodayReviewService().Build(snapshots, dividends,
+            repository.GetRecentApiFetchLogs(100), csvReviewSummary, DateTime.Today,
+            csvReviewRecords,
+            new DividendReviewRepository(repository.DatabasePath).GetLatestDecisions());
         var goal = repository.GetGoal(DateTime.Today.Year);
         var brokerTrades = repository.GetAllBrokerTrades();
         var realizedGainLossJpy = brokerTrades.Sum(x => x.RealizedGainLossJpy);
@@ -370,10 +432,14 @@ public sealed class MainViewModel : ObservableObject
         return () =>
         {
             _snapshots = snapshots;
+            if (ReferenceEquals(CurrentPage, Allocation)) Allocation.Load(snapshots);
+            if (ReferenceEquals(CurrentPage, Nisa)) Nisa.Load(snapshots);
+            if (ReferenceEquals(CurrentPage, Reminders)) Reminders.Load(presentNew: false);
+            if (ReferenceEquals(CurrentPage, CsvReview)) CsvReview.Load();
             _cashValuationQuote = cashQuote;
             Dashboard.Update(summary, snapshots, portfolioSnapshots,
                 _repository.GetRecentCsvImportLogs(20).FirstOrDefault(x => x.Result == "Succeeded")?.ImportedAtUtc,
-                cashAssets);
+                cashAssets, todayReview);
             StockList.Update(snapshots, dividends, brokerTrades);
             Dividends.Update(positions, dividends, goal, DateTime.Today);
             PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
@@ -384,6 +450,7 @@ public sealed class MainViewModel : ObservableObject
 
             var detailSnapshots = ResolveDetailSnapshots();
             UpdateStockDetail(detailSnapshots);
+            DataRefreshed?.Invoke();
         };
     }
 
@@ -395,7 +462,79 @@ public sealed class MainViewModel : ObservableObject
         LoadData();
     }
 
-    private void RefreshCashDashboard() => Dashboard.UpdateCashAssets(ReadCashAssets(_repository, _cashValuationQuote, IsSampleMode));
+    private void OpenTodayReview(TodayReviewKind kind)
+    {
+        switch (kind)
+        {
+            case TodayReviewKind.Csv:
+                CsvReview.Load();
+                Navigate(CsvReview, "CSV要確認記録");
+                break;
+            case TodayReviewKind.Cost:
+                Navigate(StockList, "銘柄一覧");
+                break;
+            case TodayReviewKind.Dividend:
+                Navigate(Dividends, "配当実績");
+                break;
+            case TodayReviewKind.Update:
+                Settings.Load();
+                Navigate(Settings, "設定");
+                break;
+        }
+    }
+
+    private void OpenTodayReviewItem(TodayReviewItem item)
+    {
+        switch (item.Kind)
+        {
+            case TodayReviewKind.Csv:
+                CsvReview.Load();
+                CsvReview.FocusKey(item.SourceKey);
+                Navigate(CsvReview, "CSV要確認記録");
+                break;
+            case TodayReviewKind.Cost:
+                StockList.FocusPosition(item.SourceKey);
+                Navigate(StockList, "銘柄一覧");
+                break;
+            case TodayReviewKind.Dividend:
+                if (int.TryParse(item.SourceKey, out var paymentId)) Dividends.FocusPayment(paymentId);
+                Navigate(Dividends, "配当実績");
+                break;
+            case TodayReviewKind.Update:
+                Settings.Load();
+                if (int.TryParse(item.SourceKey, out var logId)) Settings.FocusApiLog(logId);
+                Navigate(Settings, "設定");
+                break;
+            default:
+                OpenTodayReview(item.Kind);
+                break;
+        }
+    }
+
+    private void OpenReminderSource(ReminderEvent item)
+    {
+        if (item.Kind == ReminderKind.UpdateFailure)
+        {
+            Settings.Load();
+            if (item.Key.StartsWith("api:", StringComparison.Ordinal) &&
+                int.TryParse(item.Key.AsSpan("api:".Length), out var logId))
+                Settings.FocusApiLog(logId);
+            Navigate(Settings, "設定");
+        }
+        else
+        {
+            var parts = item.Key.Split(':');
+            if (parts.Length >= 2 && int.TryParse(parts[1], out var paymentId))
+                Dividends.FocusPayment(paymentId);
+            Navigate(Dividends, "配当実績");
+        }
+    }
+
+    private void RefreshCashDashboard()
+    {
+        Dashboard.UpdateCashAssets(ReadCashAssets(_repository, _cashValuationQuote, IsSampleMode));
+        Performance.RequireReconfirmation();
+    }
 
     private static CashAssetSummary ReadCashAssets(InvestmentStoryRepository repository, ExchangeRateQuote? quote, bool sampleMode)
     {
@@ -583,6 +722,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void ToggleSampleMode()
     {
+        if (CashLedger.CsvImport.IsBusy || CsvImport.IsBusy || Performance.IsBusy) return;
         if (IsSampleMode)
         {
             DisableSampleMode();
@@ -596,6 +736,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void ResetSampleData()
     {
+        if (CashLedger.CsvImport.IsBusy || CsvImport.IsBusy || Performance.IsBusy) return;
         if (!IsSampleMode)
         {
             return;
@@ -622,6 +763,9 @@ public sealed class MainViewModel : ObservableObject
         sampleSettings.BrokerDataMode = "Sample";
         _repository = SampleDataSeeder.ResetSampleSessionDatabase(sampleSettings);
         CashLedger.Reset();
+        Performance.Reset();
+        Allocation.Reset();
+        Reminders.Reset();
         _selectedDetailStockId = null;
         IsSampleMode = true;
         Simulation.ReloadDividendPurchasePlan();
@@ -635,6 +779,9 @@ public sealed class MainViewModel : ObservableObject
         _normalRepository.SaveSettings(normalSettings);
         _repository = _normalRepository;
         CashLedger.Reset();
+        Performance.Reset();
+        Allocation.Reset();
+        Reminders.Reset();
         _selectedDetailStockId = null;
         IsSampleMode = false;
         DatabasePaths.DeleteSampleSessionDatabase();

@@ -22,6 +22,12 @@ public static class PositionEvidenceService
         ? position.MutualFund.UnitsHeld > 0m
         : position.CurrentHolding.CurrentShares > 0m;
 
+    public static bool IsActiveHoldingSnapshot(StockSnapshot snapshot) => IsActiveHolding(snapshot.Position);
+
+    public static DataFreshness PriceFreshness(StockPosition position, DateTime asOf) =>
+        Freshness(position.IsMutualFund ? position.MutualFund.NavDate :
+            position.CurrentHolding.CurrentPriceAcquiredAt, asOf);
+
     // Purchase and current-rate fields historically defaulted to 1. For foreign
     // currencies that value cannot establish a JPY conversion without separate evidence.
     public static bool HasUsableForeignExchangeRate(decimal rate) => rate > 0m && rate != 1m;
@@ -40,8 +46,16 @@ public static class PositionEvidenceService
             .DefaultIfEmpty(DateTime.MinValue)
             .Min();
 
+    public static bool PurchaseDateMayBeHoldingSnapshotDate(StockPosition position) =>
+        position.Stock.DataSource.Contains("保有残高CSV", StringComparison.OrdinalIgnoreCase) &&
+        position.Purchase.PurchaseDate != DateTime.MinValue &&
+        position.CurrentHolding.UpdatedAt != DateTime.MinValue &&
+        position.Purchase.PurchaseDate.Date == position.CurrentHolding.UpdatedAt.Date &&
+        position.Purchase.ExchangeRateAcquiredAt.Date == position.Purchase.PurchaseDate.Date;
+
     public static bool AcquisitionDateNeedsReview(StockPosition position, IEnumerable<BrokerTrade> trades)
     {
+        if (PurchaseDateMayBeHoldingSnapshotDate(position)) return true;
         if (position.IsMutualFund) return false;
         if (position.Purchase.PurchaseDate == DateTime.MinValue ||
             position.Purchase.Memo.Contains("かんたん登録", StringComparison.Ordinal)) return true;

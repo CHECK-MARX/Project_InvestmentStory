@@ -23,6 +23,14 @@ public sealed class NomuraHoldingsCsvParser
         var headers = ParseCsvLine(lines[headerIndex]);
         CsvRowValidation.ValidateHeaders(headers,
             "商品", "銘柄コード", "ティッカー", "銘柄名", "保有数量", "基準日");
+        CsvRowValidation.ValidateKnownHeaders(headers, "NomuraHoldings-v1",
+            "商品", "銘柄コード", "ティッカー", "銘柄名", "期間満了預り保有区分", "市場",
+            "預り区分", "保有数量", "注文中数量", "売却可能数量（単元）",
+            "売却可能数量（単元未満）", "取得コスト（円）", "取得単価", "参考時価",
+            "基準日", "現在値", "前日比", "取得金額（円）", "評価額（円）",
+            "評価損益（円）", "評価レート", "通貨", "買付単価（外貨）",
+            "取得為替レート", "外貨評価額", "利率", "利払日", "決算日",
+            "償還日", "格付1", "格付2", "格付3", "格付4");
         var holdings = new List<BrokerHoldingRecord>();
         var unresolvedHoldings = new List<BrokerHoldingRecord>();
         var rowAudit = new CsvSourceRowAuditBuilder();
@@ -62,7 +70,9 @@ public sealed class NomuraHoldingsCsvParser
             Holdings = holdings,
             UnresolvedHoldings = unresolvedHoldings,
             SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase)
-            { [filePath] = rowAudit.Build() }
+            { [filePath] = rowAudit.Build() },
+            SourceFormatVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            { [filePath] = "NomuraHoldings-v1" }
         };
     }
 

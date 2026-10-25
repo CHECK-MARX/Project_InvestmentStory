@@ -1,6 +1,8 @@
 using InvestmentStory.Core.Models;
 using InvestmentStory.Data;
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace InvestmentStory.Tests;
 
@@ -31,7 +33,29 @@ public sealed class DatabaseInitializerTests
                     found |= reader.GetString(1) == "SourceRowNumber";
                 Assert.True(found);
             }
-            Assert.Single(Directory.GetFiles(directory, "*_before_trade_source_rows.db"));
+            var backupPath = Assert.Single(Directory.GetFiles(directory, "*_before_trade_source_rows.db"));
+            using (var backup = Open(backupPath))
+            using (var check = backup.CreateCommand())
+            {
+                check.CommandText = "PRAGMA integrity_check;";
+                Assert.Equal("ok", check.ExecuteScalar()?.ToString());
+            }
+            using var metadata = JsonDocument.Parse(File.ReadAllText(backupPath + ".json"));
+            Assert.StartsWith("schema-", metadata.RootElement.GetProperty("SchemaId").GetString());
+            using var backupFile = File.OpenRead(backupPath);
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(backupFile)),
+                metadata.RootElement.GetProperty("Sha256").GetString());
+            var restoreService = new DatabaseRestoreService(path);
+            var migration = Assert.Single(restoreService.GetBackups());
+            Assert.Equal("移行前", migration.SourceKind);
+            Assert.StartsWith("migration:", migration.BackupKey);
+            Assert.Equal(Path.GetFileName(backupPath), migration.FileName);
+
+            new InvestmentStoryRepository(path).RunImportAtomically(() => { });
+            var listed = restoreService.GetBackups();
+            Assert.Equal(2, listed.Count);
+            Assert.Contains(listed, item => item.SourceKind == "取込前" &&
+                item.BackupKey == item.FileName);
         }
         finally
         {

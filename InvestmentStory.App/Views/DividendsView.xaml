@@ -16,10 +16,23 @@
                 </StackPanel>
                 <StackPanel>
                     <TextBlock Text="配当実績・予定" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="実績と予定を照合し、対象年の入金状況・税額・年末見込みを同じ集計基準で表示します。"
+                    <TextBlock Text="年末見込み＝入金済み実績＋今後の予定・推定。期限経過の未照合額は除外します。"
                                Foreground="{DynamicResource SecondaryTextBrush}" FontSize="14" />
                 </StackPanel>
             </DockPanel>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="月次レポート" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <ComboBox Width="85" Height="34" ItemsSource="{Binding ReportMonthOptions}"
+                              SelectedItem="{Binding ReportMonth, Mode=TwoWay}" Margin="0,0,12,0" />
+                    <TextBlock Text="月" VerticalAlignment="Center" Margin="0,0,16,0" />
+                    <CheckBox Content="共有用に金額・識別子をマスク" IsChecked="{Binding MaskReport, Mode=TwoWay}"
+                              VerticalAlignment="Center" Margin="0,0,16,0" />
+                    <Button Content="明細CSV" Click="OnExportCsv" Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0" />
+                    <Button Content="月次PDF" Click="OnExportPdf" Style="{StaticResource ActionButtonStyle}" />
+                </StackPanel>
+            </Border>
 
             <TextBlock Text="年間サマリー" Style="{StaticResource SectionTitleStyle}" Margin="0,10,0,12" />
             <WrapPanel>
@@ -41,6 +54,7 @@
                         <TextBlock Text="年末見込み" Style="{StaticResource LabelTextStyle}" />
                         <TextBlock Text="{Binding YearEndForecastJpy}" Style="{StaticResource MetricValueTextStyle}"
                                    Foreground="{DynamicResource AccentBlueBrush}" />
+                        <TextBlock Text="期限経過の未照合は除外" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}" Width="242" BorderBrush="{DynamicResource WarningBrush}">
@@ -132,7 +146,7 @@
                             <DataGridTextColumn Header="入金済み" Binding="{Binding Actual}" Width="140" />
                             <DataGridTextColumn Header="今後予定" Binding="{Binding Upcoming}" Width="140" />
                             <DataGridTextColumn Header="未照合" Binding="{Binding Unmatched}" Width="140" />
-                            <DataGridTextColumn Header="年末見込み" Binding="{Binding Forecast}" Width="150" />
+                            <DataGridTextColumn Header="見込み（未照合を除外）" Binding="{Binding Forecast}" Width="180" />
                             <DataGridTextColumn Header="月目標" Binding="{Binding Goal}" Width="140" />
                             <DataGridTextColumn Header="差額" Binding="{Binding Difference}" Width="150" />
                         </DataGrid.Columns>
@@ -239,17 +253,21 @@
                         </StackPanel>
                     </Expander>
 
-                    <TabControl Height="430">
+                    <TabControl x:Name="PaymentTabs" Height="430">
                         <TabItem Header="配当予定">
-                            <DataGrid ItemsSource="{Binding PlannedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}"
+                            <DataGrid x:Name="PlannedGrid" ItemsSource="{Binding PlannedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}"
                                       FrozenColumnCount="2">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="予定日" Binding="{Binding PaymentDate}" Width="105" />
+                                    <DataGridTextColumn Header="権利落ち日" Binding="{Binding ExDividendDate}" Width="105" />
+                                    <DataGridTextColumn Header="権利確定日" Binding="{Binding RecordDate}" Width="105" />
+                                    <DataGridTextColumn Header="権利情報" Binding="{Binding RightsStatus}" Width="105" />
                                     <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="190" />
                                     <DataGridTextColumn Header="品質" Binding="{Binding DataQuality}" Width="90" />
                                     <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
                                     <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="180" />
                                     <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120" />
+                                    <DataGridTextColumn Header="口座" Binding="{Binding AccountType}" Width="115" />
                                     <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
                                     <DataGridTextColumn Header="1株配当" Binding="{Binding DividendPerShare}" Width="120" />
                                     <DataGridTextColumn Header="税引前" Binding="{Binding GrossAmountJpy}" Width="130" />
@@ -264,6 +282,9 @@
                                       FrozenColumnCount="2">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="入金日" Binding="{Binding PaymentDate}" Width="105" />
+                                    <DataGridTextColumn Header="権利落ち日" Binding="{Binding ExDividendDate}" Width="105" />
+                                    <DataGridTextColumn Header="権利確定日" Binding="{Binding RecordDate}" Width="105" />
+                                    <DataGridTextColumn Header="権利情報" Binding="{Binding RightsStatus}" Width="105" />
                                     <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="90" />
                                     <DataGridTextColumn Header="銘柄" Binding="{Binding StockName}" Width="180" />
                                     <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120" />
@@ -279,7 +300,7 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                         </TabItem>
-                        <TabItem Header="差分確認">
+                        <TabItem Header="差分・対象外">
                             <DataGrid ItemsSource="{Binding ReplacedPayments}" SelectedItem="{Binding SelectedPayment, Mode=TwoWay}">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="元予定日" Binding="{Binding PaymentDate}" Width="105" />
@@ -312,6 +333,50 @@
                             </DockPanel>
                         </TabItem>
                     </TabControl>
+                    <Border BorderBrush="{DynamicResource SecondaryTextBrush}" BorderThickness="1" CornerRadius="8"
+                            Padding="12" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock Text="配当の照合・判断" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBlock Text="配当予定の行を選び、候補実績と照合してください。保留は未照合件数に残り、対象外は見込みから除外されます。操作には理由が必要です。"
+                                       TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,4,0,8" />
+                            <TextBlock Text="実績候補（同じ銘柄・証券会社、口座と日付を確認）" Style="{StaticResource LabelTextStyle}" />
+                            <DataGrid ItemsSource="{Binding ActualCandidates}" SelectedItem="{Binding SelectedActualCandidate, Mode=TwoWay}"
+                                      Height="125" IsReadOnly="True" AutoGenerateColumns="False" Margin="0,4,0,8">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="入金日" Binding="{Binding PaymentDate}" Width="105" />
+                                    <DataGridTextColumn Header="ティッカー" Binding="{Binding Ticker}" Width="100" />
+                                    <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="125" />
+                                    <DataGridTextColumn Header="口座" Binding="{Binding AccountType}" Width="120" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
+                                    <DataGridTextColumn Header="税引後" Binding="{Binding JpyAmount}" Width="140" />
+                                    <DataGridTextColumn Header="通貨" Binding="{Binding Currency}" Width="75" />
+                                    <DataGridTextColumn Header="為替根拠" Binding="{Binding ExchangeRateInfo}" Width="240" />
+                                    <DataGridTextColumn Header="照合時の確認点" Binding="{Binding Evidence}" Width="300" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="判断理由" Style="{StaticResource LabelTextStyle}" />
+                            <TextBox Text="{Binding ReviewReason, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     MaxLength="1000" Margin="0,4,0,8" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="選択した実績と紐付け" Command="{Binding LinkActualCommand}"
+                                        Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0" />
+                                <Button Content="確認を保留" Command="{Binding HoldReviewCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,0" />
+                                <Button Content="対象外にする" Command="{Binding ExcludeReviewCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}" />
+                            </StackPanel>
+                            <TextBlock Text="選択した予定の判断履歴" Style="{StaticResource LabelTextStyle}" />
+                            <DataGrid ItemsSource="{Binding ReviewHistory}" Height="105" IsReadOnly="True"
+                                      AutoGenerateColumns="False" Margin="0,4,0,0">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="日時" Binding="{Binding Date}" Width="150" />
+                                    <DataGridTextColumn Header="操作" Binding="{Binding Action}" Width="120" />
+                                    <DataGridTextColumn Header="実績ID" Binding="{Binding Actual}" Width="90" />
+                                    <DataGridTextColumn Header="理由" Binding="{Binding Reason}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 

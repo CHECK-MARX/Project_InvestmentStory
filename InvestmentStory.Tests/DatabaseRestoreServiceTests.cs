@@ -51,6 +51,11 @@ public sealed class DatabaseRestoreServiceTests
             var service = new DatabaseRestoreService(path);
             var backup = Assert.Single(service.GetBackups());
             Assert.Equal("未実施", backup.LastDrillDisplay);
+            Assert.StartsWith("schema-", backup.SchemaId);
+            Assert.Equal(23, backup.SchemaId.Length);
+            var recordedMetadata = JsonNode.Parse(File.ReadAllText(
+                Assert.Single(repository.GetPreImportBackupPaths()) + ".json"))!;
+            Assert.Equal(backup.SchemaId, recordedMetadata["SchemaId"]?.GetValue<string>());
 
             var drill = service.RunRestoreDrill(backup.FileName);
 
@@ -104,6 +109,12 @@ public sealed class DatabaseRestoreServiceTests
 
             Assert.NotNull(archive);
             Assert.True(File.Exists(archive));
+            var receipt = JsonNode.Parse(File.ReadAllText(archive + ".restore.json"))!;
+            Assert.Equal(backup.FileName, receipt["BackupFileName"]?.GetValue<string>());
+            Assert.Equal(Path.GetFileName(archive), receipt["ArchiveFileName"]?.GetValue<string>());
+            Assert.Equal(64, receipt["ArchiveSha256"]?.GetValue<string>().Length);
+            Assert.Equal(64, receipt["RestoredSha256"]?.GetValue<string>().Length);
+            Assert.StartsWith("schema-", receipt["BackupSchemaId"]?.GetValue<string>());
             Assert.Single(repository.GetRecentCsvImportLogs());
             Assert.Equal("old.csv", repository.GetRecentCsvImportLogs()[0].FileName);
             Assert.Equal(2, new InvestmentStoryRepository(archive).GetRecentCsvImportLogs().Count);
@@ -243,6 +254,31 @@ public sealed class DatabaseRestoreServiceTests
         {
             DeleteTestDirectory(directory);
         }
+    }
+
+    [Fact]
+    public void BackupWithMismatchedSchemaId_IsRejectedBeforeRestore()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "InvestmentStoryRestore_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "portfolio.db");
+            var repository = new InvestmentStoryRepository(path);
+            repository.Initialize();
+            repository.RunImportAtomically(() => repository.SaveCsvImportLog(new CsvImportLogEntry
+                { BatchId = "new", FileName = "new.csv", Result = "Succeeded" }));
+            var backupPath = Assert.Single(repository.GetPreImportBackupPaths());
+            var metadata = JsonNode.Parse(File.ReadAllText(backupPath + ".json"))!;
+            metadata["SchemaId"] = "schema-0000000000000000";
+            File.WriteAllText(backupPath + ".json", metadata.ToJsonString());
+
+            var service = new DatabaseRestoreService(path);
+            Assert.Contains("DB形式ID", Assert.Single(service.GetBackups()).Status);
+            Assert.Throws<InvalidDataException>(() => service.ScheduleRestore(Path.GetFileName(backupPath)));
+            Assert.Single(repository.GetRecentCsvImportLogs());
+        }
+        finally { DeleteTestDirectory(directory); }
     }
 
     [Fact]

@@ -59,8 +59,8 @@ public sealed class StockDetailViewModel : ObservableObject
 
     public string PurchaseExchangeRate => _snapshot is null ? "-" :
         _snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "対象外" :
-        _snapshot.Position.Purchase.ExchangeRate > 0m && _snapshot.Position.Purchase.ExchangeRate != 1m
-            ? $"{_snapshot.Position.Purchase.ExchangeRate:N2} JPY/{_snapshot.Position.Stock.Currency}" :
+        PositionEvidenceService.HasUsableForeignExchangeRate(_snapshot.Position.Purchase.ExchangeRate)
+            ? $"{(_snapshot.HasKnownPurchaseCostJpy ? "" : "未採用 ")}{_snapshot.Position.Purchase.ExchangeRate:N2} JPY/{_snapshot.Position.Stock.Currency}" :
         _snapshot.IsReferencePurchaseCostJpy && _snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount > 0m
             ? $"概算 {_snapshot.Position.Purchase.ReferenceAcquisitionAmountJpy / _snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount:N2} JPY/{_snapshot.Position.Stock.Currency}"
             : "未確認";
@@ -74,6 +74,8 @@ public sealed class StockDetailViewModel : ObservableObject
             ? "円建て換算不要"
         : _snapshot.IsReferencePurchaseCostJpy
             ? $"{_snapshot.Position.Purchase.ReferenceAcquisitionSource} / 参考換算"
+        : !_snapshot.HasKnownPurchaseCostJpy && PositionEvidenceService.HasUsableForeignExchangeRate(_snapshot.Position.Purchase.ExchangeRate)
+            ? $"未採用の為替候補 / {_snapshot.Position.Purchase.ExchangeRateSource} / 記録日 {_snapshot.Position.Purchase.ExchangeRateAcquiredAt:yyyy/MM/dd}。円建て取得額の根拠には使いません。"
         : _snapshot.Position.Purchase.ExchangeRate <= 0m || _snapshot.Position.Purchase.ExchangeRate == 1m
             ? "取得時為替未確認"
         : $"{_snapshot.Position.Purchase.ExchangeRateAcquiredAt:yyyy/MM/dd HH:mm} / {_snapshot.Position.Purchase.ExchangeRateSource} / {_snapshot.Position.Purchase.ExchangeRateInputType}";

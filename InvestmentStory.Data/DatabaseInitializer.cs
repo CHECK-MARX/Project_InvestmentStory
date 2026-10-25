@@ -1,6 +1,8 @@
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace InvestmentStory.Data;
 
@@ -18,6 +20,12 @@ public sealed class DatabaseInitializer
         connection.Open();
         Execute(connection, "PRAGMA foreign_keys = ON;");
         CashLedgerRepository.EnsureSchema(connection, databasePath);
+        CashLedgerRepository.EnsurePerformanceSchema(connection, databasePath);
+        AllocationTargetRepository.EnsureSchema(connection, databasePath);
+        ReminderRepository.EnsureSchema(connection, databasePath);
+        CsvReviewDispositionRepository.EnsureSchema(connection, databasePath);
+        DividendReviewRepository.EnsureSchema(connection, databasePath);
+        NisaHistoryRepository.EnsureSchema(connection, databasePath);
         BackupBeforeDividendPurchasePlanMigrationIfNeeded(connection, databasePath);
         BackupBeforeDividendCalendarMigrationIfNeeded(connection, databasePath);
         BackupBeforeNetOnlyDividendMigrationIfNeeded(connection, databasePath);
@@ -30,7 +38,7 @@ public sealed class DatabaseInitializer
         MigrateBrokerTradeOccurrencesIfNeeded(connection, databasePath);
         if (!ColumnExists(connection, "BrokerTrades", "SourceRowNumber"))
         {
-            BackupDatabase(databasePath, "before_trade_source_rows");
+            BackupDatabase(connection, databasePath, "before_trade_source_rows");
             AddColumnIfMissing(connection, "BrokerTrades", "SourceRowNumber", "INTEGER NOT NULL DEFAULT 0");
         }
         RepairCsvReimportDuplicates(connection, databasePath);
@@ -68,13 +76,7 @@ public sealed class DatabaseInitializer
         }
 
         if (updates.Count == 0) return;
-        var backupPath = Path.Combine(Path.GetDirectoryName(databasePath) ?? string.Empty,
-            $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.Now:yyyyMMdd_HHmmss}_before_sector_classification{Path.GetExtension(databasePath)}");
-        using (var destination = new SqliteConnection(CreateConnectionString(backupPath)))
-        {
-            destination.Open();
-            connection.BackupDatabase(destination);
-        }
+        BackupDatabase(connection, databasePath, "before_sector_classification");
 
         using var transaction = connection.BeginTransaction();
         foreach (var update in updates)
@@ -475,7 +477,7 @@ public sealed class DatabaseInitializer
     {
         if (!ColumnExists(connection, "Stocks", "CanonicalSecurityKey"))
         {
-            BackupDatabase(databasePath, "before_security_fix");
+            BackupDatabase(connection, databasePath, "before_security_fix");
         }
     }
 
@@ -483,16 +485,7 @@ public sealed class DatabaseInitializer
     {
         if (!TableExists(connection, "Purchases") ||
             ColumnExists(connection, "Purchases", "AcquisitionAmountSource")) return;
-        var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
-        var backupPath = Path.Combine(directory,
-            $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.Now:yyyyMMdd_HHmmss_fffffff}_before_cost_evidence{Path.GetExtension(databasePath)}");
-        using var destination = new SqliteConnection(CreateConnectionString(backupPath));
-        destination.Open();
-        connection.BackupDatabase(destination);
-        using var check = destination.CreateCommand();
-        check.CommandText = "PRAGMA integrity_check;";
-        if (check.ExecuteScalar()?.ToString() != "ok")
-            throw new InvalidDataException("取得額根拠の移行前バックアップを検証できませんでした。");
+        BackupDatabase(connection, databasePath, "before_cost_evidence");
     }
 
     private static void BackupBeforeDividendPurchasePlanMigrationIfNeeded(
@@ -503,7 +496,7 @@ public sealed class DatabaseInitializer
             (!TableExists(connection, "DividendPurchasePlans") ||
              !TableExists(connection, "DividendPurchasePlanItems")))
         {
-            BackupDatabase(databasePath, "before_dividend_purchase_plan");
+            BackupDatabase(connection, databasePath, "before_dividend_purchase_plan");
         }
     }
 
@@ -513,7 +506,7 @@ public sealed class DatabaseInitializer
     {
         if (TableExists(connection, "Stocks") && !TableExists(connection, "DividendCalendarEvents"))
         {
-            BackupDatabase(databasePath, "before_dividend_calendar");
+            BackupDatabase(connection, databasePath, "before_dividend_calendar");
         }
     }
 
@@ -527,19 +520,14 @@ public sealed class DatabaseInitializer
         count.CommandText = "SELECT COUNT(*) FROM DividendPayments WHERE SourceFile LIKE 'SBI配当CSV%';";
         if (Convert.ToInt32(count.ExecuteScalar()) == 0) return;
 
-        var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
-        var backupPath = Path.Combine(directory,
-            $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.Now:yyyyMMdd_HHmmss}_before_netonly{Path.GetExtension(databasePath)}");
-        using var destination = new SqliteConnection(CreateConnectionString(backupPath));
-        destination.Open();
-        connection.BackupDatabase(destination);
+        BackupDatabase(connection, databasePath, "before_netonly");
     }
 
     private static void BackupBeforeCsvChangeMigrationIfNeeded(SqliteConnection connection, string databasePath)
     {
         if (TableExists(connection, "CsvImportChangeRows") &&
             !ColumnExists(connection, "CsvImportChangeRows", "RecordKind"))
-            BackupDatabase(databasePath, "before_csv_change_details");
+            BackupDatabase(connection, databasePath, "before_csv_change_details");
     }
 
     private static void MigrateBrokerTradeOccurrencesIfNeeded(SqliteConnection connection, string databasePath)
@@ -547,7 +535,7 @@ public sealed class DatabaseInitializer
         if (!TableExists(connection, "BrokerTrades") || ColumnExists(connection, "BrokerTrades", "OccurrenceIndex"))
             return;
 
-        BackupDatabase(databasePath, "before_trade_occurrences");
+        BackupDatabase(connection, databasePath, "before_trade_occurrences");
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -600,7 +588,7 @@ public sealed class DatabaseInitializer
     private static void MigrateReviewTradeSourceRowsIfNeeded(SqliteConnection connection, string databasePath)
     {
         if (ColumnExists(connection, "CsvImportReviewRows", "SourceRowNumber")) return;
-        BackupDatabase(databasePath, "before_trade_review_source_rows");
+        BackupDatabase(connection, databasePath, "before_trade_review_source_rows");
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -645,7 +633,7 @@ public sealed class DatabaseInitializer
     {
         if (ColumnExists(connection, "CsvImportReviewRows", "Resolution") &&
             ColumnExists(connection, "CsvImportReviewRows", "TradeIdentityKey")) return;
-        BackupDatabase(databasePath, "before_trade_review_resolution");
+        BackupDatabase(connection, databasePath, "before_trade_review_resolution");
         AddColumnIfMissing(connection, "CsvImportReviewRows", "Resolution", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CsvImportReviewRows", "ResolvedAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CsvImportReviewRows", "ResolutionBatchId", "TEXT NOT NULL DEFAULT ''");
@@ -910,7 +898,7 @@ public sealed class DatabaseInitializer
         var zeroPriceInboundCount = CountZeroPriceInboundEvents(connection);
         if (duplicatePositionGroups.Count > 0 || zeroPriceInboundCount > 0)
         {
-            BackupDatabase(databasePath);
+            BackupDatabase(connection, databasePath);
         }
 
         NormalizeZeroPriceInboundEvents(connection);
@@ -1045,11 +1033,13 @@ public sealed class DatabaseInitializer
                 Result TEXT NOT NULL DEFAULT '',
                 ErrorSummary TEXT NOT NULL DEFAULT '',
                 BatchId TEXT NOT NULL DEFAULT '',
-                ParserVersion TEXT NOT NULL DEFAULT ''
+                ParserVersion TEXT NOT NULL DEFAULT '',
+                FormatVersion TEXT NOT NULL DEFAULT ''
             );
             """);
         AddColumnIfMissing(connection, "CsvImportLogs", "BatchId", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CsvImportLogs", "ParserVersion", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportLogs", "FormatVersion", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CsvImportLogs", "ParsedRowCount", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "CsvImportLogs", "PendingRowCount", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "CsvImportLogs", "ExcludedRowCount", "INTEGER NOT NULL DEFAULT 0");
@@ -1257,7 +1247,7 @@ public sealed class DatabaseInitializer
             return;
         }
 
-        BackupDatabase(databasePath, "before_initial_position_backfill");
+        BackupDatabase(connection, databasePath, "before_initial_position_backfill");
         Execute(connection, """
             INSERT OR IGNORE INTO BrokerTrades
                 (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
@@ -1522,21 +1512,47 @@ public sealed class DatabaseInitializer
             ("$duplicateId", duplicateId));
     }
 
-    private static void BackupDatabase(string databasePath, string reason = "backup")
+    internal static void BackupDatabase(SqliteConnection source, string databasePath, string reason = "backup")
     {
         if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath))
-        {
-            return;
-        }
+            throw new FileNotFoundException("移行前バックアップの元DBがありません。", databasePath);
 
         var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
         var name = Path.GetFileNameWithoutExtension(databasePath);
         var extension = Path.GetExtension(databasePath);
         var suffix = string.IsNullOrWhiteSpace(reason) ? "backup" : reason;
-        var backupPath = Path.Combine(directory, $"{name}_{DateTime.Now:yyyyMMdd_HHmmss}_{suffix}{extension}");
-        if (!File.Exists(backupPath))
+        var backupPath = Path.Combine(directory,
+            $"{name}_{DateTime.Now:yyyyMMdd_HHmmss_fffffff}_{Guid.NewGuid():N}_{suffix}{extension}");
+        try
         {
-            File.Copy(databasePath, backupPath);
+            string schemaId;
+            using (var destination = new SqliteConnection(CreateConnectionString(backupPath)))
+            {
+                destination.Open();
+                source.BackupDatabase(destination);
+                using var check = destination.CreateCommand();
+                check.CommandText = "PRAGMA integrity_check;";
+                if (!string.Equals(check.ExecuteScalar()?.ToString(), "ok", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("移行前バックアップの整合性検査に失敗しました。");
+                schemaId = DatabaseSchemaIdentity.Compute(destination);
+            }
+            using var stream = File.OpenRead(backupPath);
+            var hash = Convert.ToHexString(SHA256.HashData(stream));
+            var metadata = new
+            {
+                CreatedAtUtc = DateTime.UtcNow,
+                AppVersion = typeof(DatabaseInitializer).Assembly.GetName().Version?.ToString() ?? "不明",
+                Reason = suffix,
+                Sha256 = hash,
+                SchemaId = schemaId
+            };
+            File.WriteAllText(backupPath + ".json", JsonSerializer.Serialize(metadata));
+        }
+        catch
+        {
+            if (File.Exists(backupPath)) File.Delete(backupPath);
+            if (File.Exists(backupPath + ".json")) File.Delete(backupPath + ".json");
+            throw;
         }
     }
 

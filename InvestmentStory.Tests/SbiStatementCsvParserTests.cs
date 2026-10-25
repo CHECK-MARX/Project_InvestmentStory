@@ -6,6 +6,60 @@ namespace InvestmentStory.Tests;
 
 public sealed class SbiStatementCsvParserTests
 {
+    [Theory]
+    [InlineData("銘柄コード,銘柄名称,保有株数,取得単価,現在値,評価額,評価損益", "必須列")]
+    [InlineData("銘柄コード,銘柄名称,保有株数,取得単価,現在値,取得金額,評価額,評価損益,新評価額", "未登録の列")]
+    public void ParseFiles_RejectsChangedSbiHoldingSchemaBeforeUsingAmounts(string header, string expected)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_changed_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, "保有証券一覧\n特定預り\n" + header + "\n", Encoding.UTF8);
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(
+                () => new SbiStatementCsvParser().ParseFiles(new[] { path }));
+            Assert.Contains(expected, error.Message);
+        }
+        finally { File.Delete(path); }
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "InvestmentStory.sln")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+        throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
+    [Fact]
+    public void ParseFiles_RejectsUnrecognizedCsvInsteadOfSilentlyDroppingIt()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_unknown_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path, "約定日,未知の列\n2026/10/25,100\n", Encoding.UTF8);
+        try
+        {
+            var known = Path.Combine(FindRepositoryRoot(), "SampleData", "Csv", "Sbi", "v1", "SBI_HOLDINGS.csv");
+            var error = Assert.Throws<InvalidOperationException>(
+                () => new SbiStatementCsvParser().ParseFiles(new[] { known, path }));
+            Assert.Contains("形式を判定できません", error.Message);
+            Assert.Contains(Path.GetFileName(path), error.Message);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ParseFiles_RejectsMissingSelectedFileInsteadOfDroppingIt()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"SBI_missing_{Guid.NewGuid():N}.csv");
+        var known = Path.Combine(FindRepositoryRoot(), "SampleData", "Csv", "Sbi", "v1", "SBI_HOLDINGS.csv");
+        var error = Assert.Throws<FileNotFoundException>(
+            () => new SbiStatementCsvParser().ParseFiles(new[] { known, path }));
+        Assert.Contains("プレビューをやり直してください", error.Message);
+    }
+
     [Fact]
     public void ParseFiles_ConflictingSameDateHoldingsRemainReviewableWithSourceRows()
     {
@@ -218,6 +272,7 @@ public sealed class SbiStatementCsvParserTests
             var statement = parser.ParseFiles(new[] { path });
 
             Assert.Equal(2, statement.Holdings.Count);
+            Assert.Equal("SbiFundHoldings-v2", statement.SourceFormatVersions[path]);
             Assert.Equal(2_737_598m, statement.Holdings.Sum(x => x.MarketValue));
             Assert.Equal(1_720_031m, statement.Holdings.Sum(x => x.AcquisitionAmount));
             Assert.Equal(1_017_567m, statement.Holdings.Sum(x => x.UnrealizedGainLossJpy));

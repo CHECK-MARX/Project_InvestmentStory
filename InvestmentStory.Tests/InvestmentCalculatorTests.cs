@@ -14,6 +14,7 @@ public sealed class InvestmentCalculatorTests
         var closedPosition = CreateNvdaPosition();
         closedPosition.Stock.Id = 2;
         closedPosition.Purchase.ExchangeRate = 0m;
+        closedPosition.Purchase.AcquisitionAmountJpy = 0m;
         closedPosition.CurrentHolding.CurrentShares = 0m;
         closedPosition.CurrentHolding.CurrentPrice = 0m;
         var closed = _calculator.CreateSnapshot(closedPosition);
@@ -78,6 +79,7 @@ public sealed class InvestmentCalculatorTests
         position.Purchase.Shares = 10m;
         position.Purchase.UnitPrice = 100m;
         position.Purchase.ExchangeRate = 100m;
+        position.Purchase.AcquisitionAmountJpy = 100_000m;
         position.CurrentHolding.CurrentShares = 10m;
         position.CurrentHolding.CurrentPrice = 150m;
         position.CurrentHolding.CurrentExchangeRate = 160m;
@@ -364,7 +366,9 @@ public sealed class InvestmentCalculatorTests
                 PurchaseDate = new DateTime(2021, 1, 15),
                 Shares = 5m,
                 UnitPrice = 290m,
-                ExchangeRate = 160m
+                ExchangeRate = 160m,
+                AcquisitionAmountJpy = 232_000m,
+                AcquisitionAmountSource = "取引報告書"
             },
             Split = new StockSplit
             {

@@ -47,6 +47,58 @@
                 </StackPanel>
             </DockPanel>
 
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,12">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,6">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <TextBlock Text="{Binding TodayReviewDate}" Style="{StaticResource SubtleTextStyle}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                            <Button Content="通知を開く" Command="{Binding DataContext.ShowRemindersCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    Style="{StaticResource SecondaryButtonStyle}" />
+                        </StackPanel>
+                        <TextBlock Text="今日の確認" Style="{StaticResource SectionTitleStyle}" />
+                    </DockPanel>
+                    <TextBlock Text="{Binding TodayReviewScope}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <ItemsControl ItemsSource="{Binding TodayReviewCards}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="4">
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding Count, StringFormat={}{0}件}" FontWeight="SemiBold" FontSize="17" />
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" />
+                                        </DockPanel>
+                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,6,0,3" />
+                                        <TextBlock Text="{Binding Impact}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" />
+                                        <Expander Header="対象の記録を選ぶ" Margin="0,8,0,0"
+                                                  Visibility="{Binding HasItems, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                                                <ItemsControl ItemsSource="{Binding Items}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Button Content="{Binding Label}" ToolTip="{Binding Context}"
+                                                                    Command="{Binding DataContext.OpenReviewItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                                    CommandParameter="{Binding}" Style="{StaticResource SecondaryButtonStyle}"
+                                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2,0,2" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                        </Expander>
+                                        <Button Content="{Binding NextAction}"
+                                                Command="{Binding DataContext.OpenReviewCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding Kind}" Style="{StaticResource SecondaryButtonStyle}"
+                                                HorizontalAlignment="Left" Margin="0,8,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <UniformGrid Columns="4">
                 <Border Style="{StaticResource HeroCardStyle}">
                     <Grid>
@@ -272,6 +324,8 @@
                         <TextBlock Text="{Binding TotalReturn}" Style="{StaticResource DashboardReturnValueStyle}" />
                         <TextBlock Text="{Binding TotalReturnExplanation}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding PeriodReturnAvailability}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" />
+                        <Button Content="運用成績を確認" Command="{Binding DataContext.ShowPerformanceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Margin="0,8,0,0" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource MetricCardStyle}">

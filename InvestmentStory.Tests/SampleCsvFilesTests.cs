@@ -17,6 +17,7 @@ public sealed class SampleCsvFilesTests
         Assert.Contains(result.Holdings, x => x.Ticker == "7203" && x.Shares == 300m);
         Assert.Contains(result.Holdings, x => x.AssetType == AssetTypes.MutualFund && x.UnitsHeld == 411_318m);
         Assert.Empty(result.Dividends);
+        Assert.Equal("SbiStockHoldings-v1+SbiFundHoldings-v1", result.SourceFormatVersions[seedFile]);
     }
 
     [Fact]
@@ -31,6 +32,7 @@ public sealed class SampleCsvFilesTests
         Assert.Equal(3, result.Holdings.Count);
         Assert.Contains(result.Holdings, x => x.Ticker == "9433" && x.Currency == "JPY");
         Assert.Contains(result.Holdings, x => x.Ticker == "AAPL" && x.Currency == "USD");
+        Assert.Equal("NomuraHoldings-v1", result.SourceFormatVersions[file]);
     }
 
     private static string FindRepositoryRoot()

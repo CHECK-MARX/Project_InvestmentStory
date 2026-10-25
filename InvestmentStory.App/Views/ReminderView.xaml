@@ -1,0 +1,59 @@
+<UserControl x:Class="InvestmentStory.App.Views.ReminderView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="ReminderTextCell" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellTextStyle}">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="TextTrimming" Value="None" />
+            <Setter Property="Margin" Value="4,5" />
+        </Style>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <TextBlock Text="配当・更新通知" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="配当予定と更新失敗を個別に確認します。予定は入金実績ではありません。既読・延期はこのアプリ内で保存され、元の配当・取得記録は変更しません。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,12" />
+            <WrapPanel Margin="0,0,0,12" VerticalAlignment="Center">
+                <TextBlock Text="新着の通知先" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <ComboBox ItemsSource="{Binding ModeOptions}" SelectedItem="{Binding SelectedMode, Mode=TwoWay}"
+                          Width="150" MinHeight="32" />
+                <TextBlock Text="初期値はアプリ内。Windows通知はアプリ起動中のみ送ります。"
+                           Style="{StaticResource SubtleTextStyle}" VerticalAlignment="Center" Margin="12,0,0,0" />
+            </WrapPanel>
+            <TextBlock Text="{Binding NewNotice}" Foreground="{DynamicResource AccentBlueBrush}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <TextBlock Text="{Binding Message}" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,12">
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding UnreadSummary}" FontWeight="SemiBold" />
+                        <TextBlock Text="通知一覧" Style="{StaticResource SectionTitleStyle}" />
+                    </DockPanel>
+                    <WrapPanel Margin="0,0,0,10">
+                        <Button Content="再読込" Command="{Binding RefreshCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="選択を既読にする" Command="{Binding MarkReadCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="未読に戻す" Command="{Binding MarkUnreadCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="明日まで延期" Command="{Binding SnoozeTomorrowCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="7日間延期" Command="{Binding SnoozeWeekCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="延期を解除" Command="{Binding ClearSnoozeCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                    </WrapPanel>
+                    <DataGrid ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" IsReadOnly="True" AutoGenerateColumns="False"
+                              CanUserAddRows="False" RowHeight="58" Height="360">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="日付" Binding="{Binding Date}" Width="105" ElementStyle="{StaticResource ReminderTextCell}" />
+                            <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="125" ElementStyle="{StaticResource ReminderTextCell}" />
+                            <DataGridTextColumn Header="件名" Binding="{Binding Title}" Width="175" ElementStyle="{StaticResource ReminderTextCell}" />
+                            <DataGridTextColumn Header="内容" Binding="{Binding Detail}" Width="*" MinWidth="240" ElementStyle="{StaticResource ReminderTextCell}" />
+                            <DataGridTextColumn Header="元記録" Binding="{Binding Source}" Width="125" ElementStyle="{StaticResource ReminderTextCell}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <WrapPanel Margin="0,10,0,0">
+                        <Button Content="選択した通知の元画面を開く" Command="{Binding OpenSourceCommand}" Style="{StaticResource ActionButtonStyle}" />
+                        <Button Content="今後1年の配当予定をICS出力" Command="{Binding ExportIcsCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                    </WrapPanel>
+                    <TextBlock Text="ICSは予定日の終日イベントを作ります。過去の未照合予定とAPI更新失敗は含めません。カレンダーに取り込んだ予定は、アプリ側で変更しても自動更新されません。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

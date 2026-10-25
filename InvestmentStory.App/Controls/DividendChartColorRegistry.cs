@@ -34,7 +34,8 @@ public static class DividendChartColorRegistry
             [DividendScheduleStatus.Estimated] = new(DividendScheduleStatus.Estimated, "推定", Color.FromRgb(245, 158, 11), .78d, new DoubleCollection { 2, 2 }),
             [DividendScheduleStatus.MissedEligibility] = new(DividendScheduleStatus.MissedEligibility, "権利取得不可", Color.FromRgb(100, 116, 139), .62d, new DoubleCollection { 4, 2 }),
             [DividendScheduleStatus.NotAvailable] = new(DividendScheduleStatus.NotAvailable, "未取得", Color.FromRgb(239, 68, 68), .88d),
-            [DividendScheduleStatus.OverdueUnmatched] = new(DividendScheduleStatus.OverdueUnmatched, "期限超過・未照合", Color.FromRgb(248, 113, 113), .9d, new DoubleCollection { 1, 2 })
+            [DividendScheduleStatus.OverdueUnmatched] = new(DividendScheduleStatus.OverdueUnmatched, "期限超過・未照合", Color.FromRgb(248, 113, 113), .9d, new DoubleCollection { 1, 2 }),
+            [DividendScheduleStatus.NeedsReview] = new(DividendScheduleStatus.NeedsReview, "実績候補・要照合", Color.FromRgb(192, 132, 252), .9d, new DoubleCollection { 3, 2 })
         };
 
     public static IReadOnlyList<DividendStatusVisual> Legend => Statuses.Values.ToList();

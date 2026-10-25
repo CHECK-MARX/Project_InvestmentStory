@@ -115,6 +115,8 @@ public sealed class BrokerHoldingMergeServiceTests
         Assert.NotNull(decision.Merged);
         Assert.Equal("楽天証券", decision.Merged.Stock.Broker);
         Assert.Equal("KO", decision.Merged.Stock.Ticker);
+        Assert.Equal(DateTime.MinValue, decision.Merged.Purchase.PurchaseDate);
+        Assert.False(new InvestmentCalculator().CreateSnapshot(decision.Merged).HasKnownPurchaseCostJpy);
     }
 
     [Fact]

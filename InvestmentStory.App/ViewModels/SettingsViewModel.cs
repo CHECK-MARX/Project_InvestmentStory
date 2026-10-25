@@ -15,6 +15,7 @@ public sealed class SettingsViewModel : ObservableObject
     private readonly DatabaseRestoreService? _restoreService;
     private string _message = string.Empty;
     private DatabaseBackupInfo? _selectedBackup;
+    private ApiFetchLogRowViewModel? _selectedApiLog;
 
     public SettingsViewModel(
         Func<AppSettings> loadSettings,
@@ -38,6 +39,19 @@ public sealed class SettingsViewModel : ObservableObject
     public ICommand ReloadLogsCommand { get; }
     public ICommand ReloadBackupsCommand { get; }
     public ObservableCollection<ApiFetchLogRowViewModel> ApiLogs { get; } = new();
+    public ApiFetchLogRowViewModel? SelectedApiLog
+    {
+        get => _selectedApiLog;
+        set => SetProperty(ref _selectedApiLog, value);
+    }
+
+    public bool FocusApiLog(int logId)
+    {
+        var row = ApiLogs.FirstOrDefault(x => x.Id == logId);
+        if (row is null) { SelectedApiLog = null; return false; }
+        SelectedApiLog = row;
+        return true;
+    }
     public ObservableCollection<DatabaseBackupInfo> Backups { get; } = new();
     public string BackupStorageSummary { get; private set; } = "バックアップはありません。";
     public DatabaseBackupInfo? SelectedBackup
@@ -65,10 +79,10 @@ public sealed class SettingsViewModel : ObservableObject
     {
         if (_restoreService is null || SelectedBackup is null)
             throw new InvalidOperationException("演習するバックアップを選択してください。");
-        var fileName = SelectedBackup.FileName;
-        var result = await Task.Run(() => _restoreService.RunRestoreDrill(fileName));
+        var backupKey = SelectedBackup.BackupKey;
+        var result = await Task.Run(() => _restoreService.RunRestoreDrill(backupKey));
         ReloadBackups();
-        SelectedBackup = Backups.FirstOrDefault(backup => backup.FileName == fileName);
+        SelectedBackup = Backups.FirstOrDefault(backup => backup.BackupKey == backupKey);
         Message = result.Summary;
         return result.Summary;
     }
@@ -155,6 +169,7 @@ public sealed class SettingsViewModel : ObservableObject
 
     private void ReloadLogs()
     {
+        var selectedId = SelectedApiLog?.Id;
         ApiLogs.Clear();
         foreach (var log in _loadLogs())
         {
@@ -162,6 +177,7 @@ public sealed class SettingsViewModel : ObservableObject
         }
 
         OnPropertyChanged(nameof(ApiLogs));
+        SelectedApiLog = ApiLogs.FirstOrDefault(x => x.Id == selectedId);
     }
 
     private void ReloadBackups()

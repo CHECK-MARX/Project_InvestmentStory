@@ -6,21 +6,21 @@ using Microsoft.Data.Sqlite;
 
 namespace InvestmentStory.Data;
 
-public sealed class CashLedgerRepository(string databasePath)
+public sealed partial class CashLedgerRepository(string databasePath)
 {
     internal static void EnsureSchema(SqliteConnection connection, string databasePath)
     {
         using var check = connection.CreateCommand();
         check.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='CashOperations';";
-        if (Convert.ToInt32(check.ExecuteScalar()) != 0) return;
+        if (Convert.ToInt32(check.ExecuteScalar()) != 0)
+        {
+            EnsureCsvSchema(connection, databasePath);
+            return;
+        }
         check.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Stocks';";
         if (Convert.ToInt32(check.ExecuteScalar()) != 0)
         {
-            var backupPath = Path.Combine(Path.GetDirectoryName(databasePath) ?? string.Empty,
-                $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}_before_cash_ledger.db");
-            using var backup = new SqliteConnection(DatabaseInitializer.CreateConnectionString(backupPath));
-            backup.Open();
-            connection.BackupDatabase(backup);
+            DatabaseInitializer.BackupDatabase(connection, databasePath, "before_cash_ledger");
         }
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
@@ -39,6 +39,7 @@ public sealed class CashLedgerRepository(string databasePath)
             """;
         command.ExecuteNonQuery();
         transaction.Commit();
+        EnsureCsvSchema(connection, databasePath, backupFirst: false);
     }
 
     private SqliteConnection Open()
@@ -103,6 +104,12 @@ public sealed class CashLedgerRepository(string databasePath)
         if (operation.CancelledAtUtc is not null) throw new ArgumentException("取消済みの取引は新規登録できません。");
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
+        InsertOperation(connection, transaction, operation);
+        transaction.Commit();
+    }
+
+    private static void InsertOperation(SqliteConnection connection, SqliteTransaction transaction, CashOperation operation)
+    {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "INSERT INTO CashOperations (Id,Date,Kind,Evidence,CreatedAtUtc) VALUES ($id,$date,$kind,$evidence,$created);";
@@ -125,7 +132,6 @@ public sealed class CashLedgerRepository(string databasePath)
             command.Parameters.AddWithValue("$amount", leg.Amount.ToString(CultureInfo.InvariantCulture));
             command.ExecuteNonQuery();
         }
-        transaction.Commit();
     }
 
     public void Cancel(string id, string reason)

@@ -21,7 +21,9 @@ public sealed class CsvImportLogEntry
     public string FileHash { get; init; } = string.Empty;
     public string Broker { get; init; } = string.Empty;
     public string CsvType { get; init; } = string.Empty;
-    public string ParserVersion { get; init; } = "2026-10-18";
+    public string ParserVersion { get; init; } = "2026-10-25";
+    public string FormatVersion { get; init; } = string.Empty;
+    public string FormatVersionLabel => string.IsNullOrWhiteSpace(FormatVersion) ? "未記録" : FormatVersion;
     public int RowCount { get; init; }
     public int ParsedRowCount { get; init; }
     public int PendingRowCount { get; init; }

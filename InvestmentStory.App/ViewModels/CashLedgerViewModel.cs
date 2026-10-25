@@ -30,6 +30,15 @@ public sealed record CashPeriodRow(CashReconciliation Period, CashReconciliation
     public string ReviewDetails => $"照合保存日時: {Period.ReviewedAtUtc.ToLocalTime():yyyy/MM/dd HH:mm}\n根拠: {Period.Evidence}\n{Result.Status}";
 }
 
+public sealed record CashCsvSourceRow(CashCsvSource Source, CashOperation? Operation)
+{
+    public string ImportedAt => Source.ImportedAtUtc.ToLocalTime().ToString("yyyy/MM/dd HH:mm");
+    public string Origin => $"{Source.FileName} / 明細{Source.RecordNumber}";
+    public string Resolution => Source.Resolution + (Operation?.CancelledAtUtc is null ? "" : "（取引取消済み）");
+    public string Reason => Source.Reason;
+    public string Details => $"{Operation?.Evidence}\n{Source.RawRecord}\n取引ID: {Source.OperationId}\nSHA256: {Source.FileHash}";
+}
+
 public sealed class CashLedgerViewModel : ObservableObject
 {
     private readonly Func<CashLedgerRepository> _repository;
@@ -44,6 +53,7 @@ public sealed class CashLedgerViewModel : ObservableObject
     {
         _repository = repository;
         _afterChanged = afterChanged ?? (() => { });
+        CsvImport = new CashCsvImportViewModel(repository, () => { Load(); NotifyChanged(); });
         Kinds = Enum.GetValues<CashOperationKind>().Select(x => new CashKindOption(x, CashLedgerService.KindLabel(x))).ToArray();
         _selectedKind = Kinds[0];
         SaveCommand = new RelayCommand(Save);
@@ -53,8 +63,10 @@ public sealed class CashLedgerViewModel : ObservableObject
     }
 
     public IReadOnlyList<CashKindOption> Kinds { get; }
+    public CashCsvImportViewModel CsvImport { get; }
     public ObservableCollection<CashOperationRow> Operations { get; } = new();
     public ObservableCollection<CashPeriodRow> Periods { get; } = new();
+    public ObservableCollection<CashCsvSourceRow> CsvSources { get; } = new();
     public ICommand SaveCommand { get; }
     public RelayCommand CancelCommand { get; }
     public ICommand ReloadCommand { get; }
@@ -110,7 +122,8 @@ public sealed class CashLedgerViewModel : ObservableObject
 
     public void Reset()
     {
-        _operations = Array.Empty<CashOperation>(); Operations.Clear(); Periods.Clear();
+        CsvImport.Reset();
+        _operations = Array.Empty<CashOperation>(); Operations.Clear(); Periods.Clear(); CsvSources.Clear();
         SelectedOperation = null; SelectedPeriod = null; SelectedKind = Kinds[0];
         EntryDate = DateTime.Today; EntryAccount = string.Empty; EntryCurrency = "JPY"; EntryAmount = string.Empty;
         DestinationAccount = string.Empty; DestinationCurrency = "USD"; DestinationAmount = string.Empty;
@@ -135,6 +148,10 @@ public sealed class CashLedgerViewModel : ObservableObject
             foreach (var operation in operations.Reverse()) Operations.Add(new(operation));
             Periods.Clear();
             foreach (var period in periods) Periods.Add(new(period, CashLedgerService.Reconcile(operations, period)));
+            CsvSources.Clear();
+            var byId = operations.ToDictionary(x => x.Id);
+            foreach (var source in repository.GetCsvSources().OrderByDescending(x => x.ImportedAtUtc))
+                CsvSources.Add(new(source, byId.GetValueOrDefault(source.OperationId)));
             AllEntriesConfirmed = false; ExternalFlowsConfirmed = false;
             RefreshAllProperties();
             return true;

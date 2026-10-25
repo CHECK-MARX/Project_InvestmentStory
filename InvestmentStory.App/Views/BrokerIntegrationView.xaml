@@ -51,6 +51,33 @@
                 </StackPanel>
             </Border>
 
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,8,0,0">
+                <StackPanel>
+                    <TextBlock Text="新しいCSVの確認候補" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="指定フォルダー直下に新しく置かれたCSVを検知します。内容の読取・取込・確定は自動で行いません。"
+                               TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,4,0,10" />
+                    <DockPanel Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="フォルダーを選択" Click="OnChooseCsvFolder"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                        <TextBox Text="{Binding CsvWatchFolder, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center" Margin="0,0,10,0" />
+                    </DockPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="監視先を保存" Command="{Binding SaveWatchFolderCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,0" />
+                        <Button Content="選択したCSVをプレビュー" Command="{Binding OpenInboxCsvCommand}"
+                                Style="{StaticResource ActionButtonStyle}" />
+                    </StackPanel>
+                    <DataGrid ItemsSource="{Binding PendingCsvFiles}" SelectedItem="{Binding SelectedInboxFile}"
+                              AutoGenerateColumns="False" IsReadOnly="True" Height="160" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="検知日時" Binding="{Binding DetectedAtDisplay}" Width="160" />
+                            <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="320" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
             <Grid Margin="0,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

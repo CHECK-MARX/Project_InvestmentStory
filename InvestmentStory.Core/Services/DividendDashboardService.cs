@@ -8,6 +8,7 @@ public sealed class DividendDashboardService
     public const string StatusUpcoming = "入金予定";
     public const string StatusOverdue = "予定日経過（CSV未照合）";
     public const string StatusEstimated = "推定";
+    public const string StatusNeedsReview = "実績候補あり（要照合）";
 
     public DividendDashboardAnalysis Build(
         IEnumerable<DividendPayment> source,
@@ -18,16 +19,15 @@ public sealed class DividendDashboardService
         ArgumentNullException.ThrowIfNull(source);
 
         var all = source.ToList();
-        var actuals = all
-            .Where(x => x.PaymentDate.Year == year)
+        var actualsForMatching = all
             .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
             .ToList();
+        var actuals = actualsForMatching.Where(x => x.PaymentDate.Year == year).ToList();
 
         var schedules = all
             .Where(x => x.PaymentDate.Year == year)
             .Where(x => DividendConstants.IsUnconfirmed(x.DividendStatus))
             .Where(x => x.ReplacedByDividendId is null && x.MatchedActualDividendId is null)
-            .Where(x => !actuals.Any(actual => IsSameDividendIdentity(x, actual)))
             .GroupBy(BuildScheduleKey, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
                 .OrderByDescending(x => x.SourcePriority)
@@ -36,17 +36,19 @@ public sealed class DividendDashboardService
             .ToList();
 
         var entries = actuals.Select(CreateActualEntry)
-            .Concat(schedules.Select(x => CreateScheduleEntry(x, asOf)))
+            .Concat(schedules.Select(x => CreateScheduleEntry(x, asOf,
+                actualsForMatching.Any(actual => IsSameDividendIdentity(x, actual)))))
             .OrderBy(x => x.Payment.PaymentDate)
             .ThenBy(x => x.Payment.Ticker)
             .ToList();
 
         var actualNet = entries.Where(x => x.IsActual).Sum(x => x.NetJpy);
         var upcomingNet = entries.Where(x => x.IsUpcoming).Sum(x => x.NetJpy);
-        var forecast = entries.Sum(x => x.NetJpy);
+        var forecastEntries = entries.Where(x => !x.IsUnmatched).ToList();
+        var forecast = forecastEntries.Sum(x => x.NetJpy);
         var monthlyGoal = annualGoalJpy > 0m ? annualGoalJpy / 12m : 0m;
         var months = BuildMonths(entries, monthlyGoal);
-        var rankings = BuildRankings(entries, forecast);
+        var rankings = BuildRankings(forecastEntries, forecast);
 
         return new DividendDashboardAnalysis
         {
@@ -57,9 +59,9 @@ public sealed class DividendDashboardService
             AnnualGoalJpy = annualGoalJpy,
             AchievementRate = annualGoalJpy > 0m ? forecast / annualGoalJpy * 100m : 0m,
             RemainingJpy = Math.Max(0m, annualGoalJpy - forecast),
-            GrossTotalJpy = entries.Sum(x => x.GrossJpy),
-            ForeignTaxTotalJpy = entries.Sum(x => x.ForeignTaxJpy),
-            DomesticTaxTotalJpy = entries.Sum(x => x.DomesticTaxJpy),
+            GrossTotalJpy = forecastEntries.Sum(x => x.GrossJpy),
+            ForeignTaxTotalJpy = forecastEntries.Sum(x => x.ForeignTaxJpy),
+            DomesticTaxTotalJpy = forecastEntries.Sum(x => x.DomesticTaxJpy),
             UnmatchedCount = entries.Count(x => x.IsUnmatched),
             Entries = entries,
             Months = months,
@@ -81,23 +83,24 @@ public sealed class DividendDashboardService
         NetJpy = NetJpy(payment)
     };
 
-    private static DividendDashboardEntry CreateScheduleEntry(DividendPayment payment, DateTime asOf)
+    private static DividendDashboardEntry CreateScheduleEntry(
+        DividendPayment payment, DateTime asOf, bool hasActualCandidate)
     {
-        var overdue = string.Equals(payment.DividendStatus, DividendConstants.PaymentDue, StringComparison.OrdinalIgnoreCase)
-                      || payment.PaymentDate.Date < asOf.Date;
+        var overdue = payment.PaymentDate.Date < asOf.Date;
         var estimated = !overdue && string.Equals(
             payment.DividendStatus, DividendConstants.Estimated, StringComparison.OrdinalIgnoreCase);
 
         return new DividendDashboardEntry
         {
             Payment = payment,
-            ScheduleStatus = overdue
+            ScheduleStatus = hasActualCandidate ? DividendScheduleStatus.NeedsReview : overdue
                 ? DividendScheduleStatus.OverdueUnmatched
                 : estimated ? DividendScheduleStatus.Estimated : DividendScheduleStatus.Expected,
-            DisplayStatus = overdue ? StatusOverdue : estimated ? StatusEstimated : StatusUpcoming,
-            DataQuality = overdue ? "未照合" : estimated ? "推定" : "予定",
-            IsUpcoming = !overdue,
-            IsUnmatched = overdue,
+            DisplayStatus = hasActualCandidate ? StatusNeedsReview : overdue ? StatusOverdue :
+                estimated ? StatusEstimated : StatusUpcoming,
+            DataQuality = hasActualCandidate || overdue ? "未照合" : estimated ? "推定" : "予定",
+            IsUpcoming = !overdue && !hasActualCandidate,
+            IsUnmatched = overdue || hasActualCandidate,
             IsEstimated = estimated,
             GrossJpy = ToJpy(payment.GrossAmountJpy, payment.GrossAmount, payment),
             ForeignTaxJpy = ToJpy(payment.ForeignTaxAmountJpy, payment.ForeignTaxAmount, payment),
@@ -120,7 +123,7 @@ public sealed class DividendDashboardService
             var actual = monthEntries.Where(x => x.IsActual).Sum(x => x.NetJpy);
             var upcoming = monthEntries.Where(x => x.IsUpcoming).Sum(x => x.NetJpy);
             var unmatched = monthEntries.Where(x => x.IsUnmatched).Sum(x => x.NetJpy);
-            var forecast = monthEntries.Sum(x => x.NetJpy);
+            var forecast = actual + upcoming;
             cumulativeActual += actual;
             cumulativeForecast += forecast;
             result.Add(new DividendDashboardMonth

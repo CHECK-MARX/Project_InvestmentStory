@@ -43,8 +43,23 @@
         <DataTemplate DataType="{x:Type vm:CsvImportViewModel}">
             <views:CsvImportView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:CsvReviewViewModel}">
+            <views:CsvReviewView />
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:CashLedgerViewModel}">
             <views:CashLedgerView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PerformanceViewModel}">
+            <views:PerformanceView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:AllocationViewModel}">
+            <views:AllocationView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:NisaViewModel}">
+            <views:NisaView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ReminderViewModel}">
+            <views:ReminderView />
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:BrokerIntegrationViewModel}">
             <views:BrokerIntegrationView />
@@ -68,6 +83,12 @@
                 <Style TargetType="Border">
                     <Style.Triggers>
                         <DataTrigger Binding="{Binding CsvImport.IsBusy}" Value="True">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding CashLedger.CsvImport.IsBusy}" Value="True">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Performance.IsBusy}" Value="True">
                             <Setter Property="IsEnabled" Value="False" />
                         </DataTrigger>
                     </Style.Triggers>
@@ -161,6 +182,30 @@
                         </StackPanel>
                     </Button>
 
+                    <Button Command="{Binding ShowPerformanceCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="運用成績">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="%" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="運用成績" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowAllocationCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="資産配分目標">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="A" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="資産配分目標" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowNisaCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="NISA評価額と投資枠">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="N" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="NISA評価額と投資枠" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowRemindersCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="配当・更新通知">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="!" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="配当・更新通知" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
                     <TextBlock Text="設定" Style="{StaticResource NavCategoryTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
                     <Button Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="設定">
                         <StackPanel Orientation="Horizontal">
@@ -196,6 +241,12 @@
                             <Style TargetType="StackPanel">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CsvImport.IsBusy}" Value="True">
+                                        <Setter Property="IsEnabled" Value="False" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding CashLedger.CsvImport.IsBusy}" Value="True">
+                                        <Setter Property="IsEnabled" Value="False" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Performance.IsBusy}" Value="True">
                                         <Setter Property="IsEnabled" Value="False" />
                                     </DataTrigger>
                                 </Style.Triggers>

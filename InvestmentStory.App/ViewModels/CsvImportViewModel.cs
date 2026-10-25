@@ -424,7 +424,8 @@ public sealed class CsvImportViewModel : ObservableObject
             IgnoredRowCount = statement.IgnoredRowCount,
             ReviewMessages = statement.ReviewMessages,
             SourceRowCounts = statement.SourceRowCounts,
-            SourceRowAudits = statement.SourceRowAudits
+            SourceRowAudits = statement.SourceRowAudits,
+            SourceFormatVersions = statement.SourceFormatVersions
         };
     }
 
@@ -457,7 +458,8 @@ public sealed class CsvImportViewModel : ObservableObject
             IgnoredRowCount = statement.IgnoredRowCount,
             ReviewMessages = statement.ReviewMessages,
             SourceRowCounts = statement.SourceRowCounts,
-            SourceRowAudits = statement.SourceRowAudits
+            SourceRowAudits = statement.SourceRowAudits,
+            SourceFormatVersions = statement.SourceFormatVersions
         };
     }
 
@@ -531,7 +533,8 @@ public sealed class CsvImportViewModel : ObservableObject
             ResolvedDuplicateTrades = statement.ResolvedDuplicateTrades.Concat(resolvedDuplicates).ToList(),
             Dividends = statement.Dividends, UnresolvedDividends = statement.UnresolvedDividends,
             IgnoredRowCount = statement.IgnoredRowCount, ReviewMessages = statement.ReviewMessages,
-            SourceRowCounts = statement.SourceRowCounts, SourceRowAudits = statement.SourceRowAudits
+            SourceRowCounts = statement.SourceRowCounts, SourceRowAudits = statement.SourceRowAudits,
+            SourceFormatVersions = statement.SourceFormatVersions
         };
     }
 
@@ -847,6 +850,17 @@ public sealed class CsvImportViewModel : ObservableObject
                 AddImportLog($"[{Path.GetFileName(filePath)}] 未対応CSVのため汎用プレビュー対象です。");
                 handled.Add(filePath);
                 ReportProgress(handled.Count, Path.GetFileName(filePath));
+            }
+
+            foreach (var (first, second) in FindEquivalentNomuraExports(filePaths))
+            {
+                var reason = $"{Path.GetFileName(first)} と {Path.GetFileName(second)} は取引・配当の内容が同じです。どちらか1件を選び直してください。";
+                AddPreviewRow(new CsvPreviewRowViewModel
+                {
+                    RowNumber = index++, Status = "要確認", After = "一括取込を保留",
+                    Reason = reason, Values = "野村取引履歴CSV / 同内容の別出力"
+                });
+                AddImportLog($"要確認: {reason}");
             }
 
             var supported = statementCount + dividendOnlyCount;
@@ -1364,6 +1378,15 @@ public sealed class CsvImportViewModel : ObservableObject
 
     private void ImportMultipleFiles(IReadOnlyList<string> filePaths)
     {
+        var equivalentExports = FindEquivalentNomuraExports(filePaths);
+        if (equivalentExports.Count > 0)
+        {
+            var (first, second) = equivalentExports[0];
+            Message = $"{Path.GetFileName(first)} と {Path.GetFileName(second)} は同内容の野村取引履歴です。二重取込を避けるため一括取込を保留しました。どちらか1件を選び直してください。DBは変更していません。";
+            AddImportLog($"要確認: {Message}");
+            return;
+        }
+
         if (_runImportAtomically is not null && !_atomicImportInProgress)
         {
             _fileImportOutcomes.Clear();
@@ -1444,6 +1467,26 @@ public sealed class CsvImportViewModel : ObservableObject
 
         var reviewRows = CurrentImportLogs.Count(x => x.StartsWith("要確認:", StringComparison.Ordinal));
         Message = $"{filePaths.Count}件のCSVを処理しました。適用対象: {processed}件、未対応ファイル: {skipped}件、要確認ログ: {reviewRows}行。詳細はログを確認してください。";
+    }
+
+    private IReadOnlyList<(string First, string Second)> FindEquivalentNomuraExports(
+        IReadOnlyList<string> filePaths)
+    {
+        var nomuraFiles = filePaths.Where(path => GetCsvKind(path) == CsvKind.NomuraTransaction).ToList();
+        var duplicates = new List<(string First, string Second)>();
+        for (var i = 0; i < nomuraFiles.Count; i++)
+        {
+            var first = nomuraFiles[i];
+            var firstStatement = GetPreviewStatement(first, () => _nomuraTransactionParser.Parse(first));
+            for (var j = i + 1; j < nomuraFiles.Count; j++)
+            {
+                var second = nomuraFiles[j];
+                var secondStatement = GetPreviewStatement(second, () => _nomuraTransactionParser.Parse(second));
+                if (CsvEquivalentExportDetector.AreEquivalentTransactions(firstStatement, secondStatement))
+                    duplicates.Add((first, second));
+            }
+        }
+        return duplicates;
     }
 
     private void ImportDividendRecords(Func<IReadOnlyList<BrokerDividendRecord>> parseRecords, string sourceLabel)
@@ -2180,6 +2223,12 @@ public sealed class CsvImportViewModel : ObservableObject
             : "追加・更新件数は保有と配当を対象とし、再構築した取引台帳の行数は含みません。";
         if (outcome.Audit is { } audit)
             note += $" 入力明細 {audit.InputRows}行 = 解析 {audit.ParsedRows}行 + 要確認 {audit.PendingRows}行 + 対象外 {audit.ExcludedRows}行。";
+        var formatVersion = _previewStatements.TryGetValue(filePath, out var previewStatement) &&
+            previewStatement.SourceFormatVersions.TryGetValue(filePath, out var singleVersion)
+                ? singleVersion
+                : _previewSbiBatch is not null &&
+                    _previewSbiBatch.SourceFormatVersions.TryGetValue(filePath, out var batchVersion)
+                    ? batchVersion : string.Empty;
         return new CsvImportLogEntry
         {
             BatchId = batchId,
@@ -2190,6 +2239,7 @@ public sealed class CsvImportViewModel : ObservableObject
             Broker = csvType.StartsWith("野村", StringComparison.Ordinal) ? "野村証券" :
                 csvType.StartsWith("SBI", StringComparison.Ordinal) ? "SBI証券" : string.Empty,
             CsvType = csvType,
+            FormatVersion = formatVersion,
             RowCount = outcome.RowCount,
             ParsedRowCount = outcome.Audit?.ParsedRows ?? 0,
             PendingRowCount = outcome.Audit?.PendingRows ?? 0,

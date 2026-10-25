@@ -28,6 +28,8 @@ public sealed class SbiDistributionCsvParser
 
         var headers = ParseCsvLine(lines[headerIndex]);
         CsvRowValidation.ValidateHeaders(headers, "受渡日", "口座", "商品", "銘柄名", "受取額(税引後・円)", "数量");
+        CsvRowValidation.ValidateKnownHeaders(headers, "SbiDistribution-v1",
+            "受渡日", "口座", "商品", "銘柄名", "数量", "受取額(税引後・円)");
         var records = new List<BrokerDividendRecord>();
         var unresolved = new List<BrokerUnresolvedDividend>();
         var rowAudit = new CsvSourceRowAuditBuilder();
@@ -85,7 +87,9 @@ public sealed class SbiDistributionCsvParser
             SourceRowCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             { [filePath] = records.Count },
             SourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase)
-            { [filePath] = rowAudit.Build() }
+            { [filePath] = rowAudit.Build() },
+            SourceFormatVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            { [filePath] = "SbiDistribution-v1" }
         };
     }
 

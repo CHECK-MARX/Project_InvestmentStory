@@ -153,6 +153,8 @@ public sealed class BrokerStatementImport
     public IReadOnlyDictionary<string, int> SourceRowCounts { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, CsvSourceRowAudit> SourceRowAudits { get; init; } =
         new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, string> SourceFormatVersions { get; init; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class BrokerMergeResult

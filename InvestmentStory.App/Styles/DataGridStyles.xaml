@@ -7,7 +7,7 @@
         <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
         <Style.Triggers>
             <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True">
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </DataTrigger>
         </Style.Triggers>
     </Style>
@@ -29,7 +29,7 @@
                 <Setter Property="Foreground" Value="{DynamicResource LossBrush}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True">
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </DataTrigger>
         </Style.Triggers>
     </Style>
@@ -72,7 +72,7 @@
             </Trigger>
             <Trigger Property="IsSelected" Value="True">
                 <Setter Property="Background" Value="{DynamicResource SelectedRowBackgroundBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -84,7 +84,7 @@
         <Style.Triggers>
             <Trigger Property="IsSelected" Value="True">
                 <Setter Property="Background" Value="{DynamicResource SelectedRowBackgroundBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </Trigger>
         </Style.Triggers>
     </Style>

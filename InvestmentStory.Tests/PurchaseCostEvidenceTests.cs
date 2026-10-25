@@ -7,6 +7,36 @@ namespace InvestmentStory.Tests;
 public sealed class PurchaseCostEvidenceTests
 {
     [Fact]
+    public void HoldingStatementFxAloneDoesNotConfirmHistoricalJpyCost()
+    {
+        var position = new StockPosition
+        {
+            Stock = new Stock { Currency = "USD", Ticker = "EX", DataSource = "野村保有残高CSV" },
+            Purchase = new Purchase
+            {
+                PurchaseDate = new DateTime(2026, 10, 14), Shares = 10m, UnitPrice = 20m,
+                ExchangeRate = 150m, ExchangeRateAcquiredAt = new DateTime(2026, 10, 14),
+                ExchangeRateSource = "野村保有残高CSV", ExchangeRateInputType = "CSV"
+            },
+            CurrentHolding = new CurrentHolding
+            {
+                CurrentShares = 10m, CurrentPrice = 25m, CurrentExchangeRate = 150m,
+                UpdatedAt = new DateTime(2026, 10, 14)
+            }
+        };
+
+        var snapshot = new InvestmentCalculator().CreateSnapshot(position);
+        Assert.False(snapshot.HasKnownPurchaseCostJpy);
+        Assert.Equal(0m, snapshot.PurchaseTotalJpy);
+        Assert.Equal(AcquisitionCostQuality.Unconfirmed, PositionEvidenceService.CostQuality(snapshot));
+        Assert.StartsWith("未採用", new StockRowViewModel(snapshot).PurchaseExchangeRate);
+        var quality = new DataQualityService().BuildForPosition(position, new DateTime(2026, 10, 25));
+        Assert.Contains("為替レートだけでは", quality.Single(x => x.FieldName == "円建て取得額").Memo);
+        Assert.Equal(DataQualityStates.Estimated, quality.Single(x => x.FieldName == "取得日").ConfidenceLevel);
+        Assert.True(PositionEvidenceService.AcquisitionDateNeedsReview(position, []));
+    }
+
+    [Fact]
     public void ForeignDefaultOneAndMissingJapaneseUnitPriceAreNotConfirmedCosts()
     {
         var calculator = new InvestmentCalculator();

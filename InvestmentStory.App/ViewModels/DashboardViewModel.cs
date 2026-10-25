@@ -17,14 +17,24 @@ public sealed class DashboardViewModel : ObservableObject
     private string _selectedCompositionMode = "分野別";
     private string _selectedHistoryPeriod = "1年";
     private DateTime? _lastCsvImportAtUtc;
+    private TodayReviewOverview _todayReview = new(DateTime.Today, [], "");
 
-    public DashboardViewModel(Action? recordSnapshot = null)
+    public DashboardViewModel(Action? recordSnapshot = null, Action<TodayReviewKind>? openReview = null,
+        Action<TodayReviewItem>? openReviewItem = null)
     {
         _recordSnapshot = recordSnapshot ?? (() => { });
         CompositionModes = new[] { "分野別", "国別", "通貨別", "証券会社別", "資産種別別", "口座区分別" };
         HistoryPeriods = new[] { "1か月", "3か月", "6か月", "1年", "3年", "全期間" };
         RecordSnapshotCommand = new RelayCommand(_recordSnapshot,
             () => _snapshots.All(x => x.HasKnownCurrentMarketValueJpy && x.HasKnownPurchaseCostJpy));
+        OpenReviewCommand = new RelayCommand(value =>
+        {
+            if (value is TodayReviewKind kind) openReview?.Invoke(kind);
+        });
+        OpenReviewItemCommand = new RelayCommand(value =>
+        {
+            if (value is TodayReviewItem item) openReviewItem?.Invoke(item);
+        });
     }
 
     private bool HasIncompleteValuation => _summary.UnknownCurrentMarketValuePositionCount > 0;
@@ -96,7 +106,7 @@ public sealed class DashboardViewModel : ObservableObject
     public string TotalReturnLabel => _summary.ReferencePurchaseCostPositionCount > 0
         ? "記録済み損益合計（概算）" : "記録済み損益合計（参考）";
     public string TotalReturnExplanation => "現在保有の含み損益＋記録済み売却損益＋確認済み受取配当。未記録の取引・配当は含みません。";
-    public string PeriodReturnAvailability => "期間利回り: 算出不可（現金・評価履歴の期間照合は未対応）";
+    public string PeriodReturnAvailability => "期間利回りは『運用成績』で、両時点の評価根拠・現金残高・外部入出金を確認して計算できます。";
     public string CumulativeDividend => Formatters.Jpy(_summary.CumulativeDividendJpy);
     public string RealizedGainLoss => Formatters.SignedJpy(_summary.RealizedGainLossJpy);
     public string CapitalRecoveryAvailability => "元本回収率: 通算投下元本が未確認のため算出不可";
@@ -125,31 +135,18 @@ public sealed class DashboardViewModel : ObservableObject
     {
         get
         {
-            var current = _snapshots.Where(x => x.Position.CurrentHolding.CurrentShares > 0m ||
-                x.Position.MutualFund.UnitsHeld > 0m).ToList();
-            var estimated = current.Where(x => PositionEvidenceService.CostQuality(x) == AcquisitionCostQuality.Estimated).ToList();
-            var unknown = current.Where(x => PositionEvidenceService.CostQuality(x) == AcquisitionCostQuality.Unconfirmed).ToList();
-            var unknownValuation = current.Count(x => !x.HasKnownCurrentMarketValueJpy);
-            var knownPrices = current.Where(x => x.Position.IsMutualFund
-                ? x.Position.MutualFund.CurrentNav > 0m : x.Position.CurrentHolding.CurrentPrice > 0m).ToList();
-            var priceFreshness = knownPrices.Select(x => PositionEvidenceService.Freshness(
-                x.Position.IsMutualFund ? x.Position.MutualFund.NavDate : x.Position.CurrentHolding.CurrentPriceAcquiredAt,
-                DateTime.Today)).ToList();
-            var foreign = current.Where(x => !x.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)).ToList();
-            var fxFreshness = foreign.Where(x => PositionEvidenceService.HasUsableForeignExchangeRate(x.Position.CurrentHolding.CurrentExchangeRate))
-                .Select(x => PositionEvidenceService.Freshness(x.Position.CurrentHolding.ExchangeRateAcquiredAt, DateTime.Today))
-                .ToList();
-            return $"取得額: 確定 {current.Count - estimated.Count - unknown.Count} 件 / " +
-                   $"概算 {estimated.Count} 件（評価額 {CoverageAmount(estimated)}） / " +
-                   $"未確認 {unknown.Count} 件（損益集計対象外の評価額 {CoverageAmount(unknown)}） / " +
-                   $"評価額未取得 {unknownValuation} 件 / " +
-                   $"株価・基準価額: 未取得 {current.Count - knownPrices.Count} 件 / 更新遅れ {priceFreshness.Count(x => x == DataFreshness.Delayed)} 件 / 時刻不明 {priceFreshness.Count(x => x == DataFreshness.TimeUnknown)} 件 / " +
-                   $"為替: 未取得 {foreign.Count - fxFreshness.Count} 件 / 更新遅れ {fxFreshness.Count(x => x == DataFreshness.Delayed)} 件 / 時刻不明 {fxFreshness.Count(x => x == DataFreshness.TimeUnknown)} 件";
+            var coverage = PositionEvidenceCoverage.Build(_snapshots, DateTime.Today);
+            return $"取得額: 確定 {coverage.ConfirmedCostCount} 件 / " +
+                   $"概算 {coverage.EstimatedCostCount} 件（評価額 {CoverageAmount(coverage.EstimatedCostMarketValueJpy)}） / " +
+                   $"未確認 {coverage.UnconfirmedCostCount} 件（損益集計対象外の評価額 {CoverageAmount(coverage.ExcludedMarketValueJpy)}） / " +
+                   $"評価額未取得 {coverage.UnknownMarketValueCount} 件 / " +
+                   $"株価・基準価額: 未取得 {coverage.MissingPriceCount} 件 / 更新遅れ {coverage.DelayedPriceCount} 件 / 時刻不明 {coverage.UnknownPriceTimeCount} 件 / " +
+                   $"為替: 未取得 {coverage.MissingFxCount} 件 / 更新遅れ {coverage.DelayedFxCount} 件 / 時刻不明 {coverage.UnknownFxTimeCount} 件";
         }
     }
 
-    private static string CoverageAmount(IReadOnlyList<StockSnapshot> group) =>
-        group.Any(x => !x.HasKnownCurrentMarketValueJpy) ? "算出不可" : Formatters.Jpy(group.Sum(x => x.CurrentMarketValueJpy));
+    private static string CoverageAmount(decimal? amount) =>
+        amount is decimal known ? Formatters.Jpy(known) : "算出不可";
 
     private static string LatestDate(IEnumerable<DateTime> dates)
     {
@@ -159,6 +156,11 @@ public sealed class DashboardViewModel : ObservableObject
     public IReadOnlyList<string> CompositionModes { get; }
     public IReadOnlyList<string> HistoryPeriods { get; }
     public ICommand RecordSnapshotCommand { get; }
+    public ICommand OpenReviewCommand { get; }
+    public ICommand OpenReviewItemCommand { get; }
+    public IReadOnlyList<TodayReviewCard> TodayReviewCards => _todayReview.Cards;
+    public string TodayReviewScope => _todayReview.ScopeNote;
+    public string TodayReviewDate => $"基準日 {_todayReview.AsOfDate:yyyy/MM/dd}";
     public string RecordSnapshotStatus => _snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy || !x.HasKnownPurchaseCostJpy)
         ? "取得額・評価額・現在為替が未確認の銘柄があるため、今日の資産履歴は記録できません。" : string.Empty;
     public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
@@ -222,13 +224,15 @@ public sealed class DashboardViewModel : ObservableObject
         IReadOnlyList<StockSnapshot> snapshots,
         IReadOnlyList<PortfolioSnapshot> portfolioSnapshots,
         DateTime? lastCsvImportAtUtc = null,
-        CashAssetSummary? cashAssets = null)
+        CashAssetSummary? cashAssets = null,
+        TodayReviewOverview? todayReview = null)
     {
         _summary = summary;
         UpdateCashAssets(cashAssets ?? new CashAssetSummary());
         _snapshots = snapshots;
         _portfolioSnapshots = portfolioSnapshots;
         _lastCsvImportAtUtc = lastCsvImportAtUtc;
+        if (todayReview is not null) _todayReview = todayReview;
         ((RelayCommand)RecordSnapshotCommand).RaiseCanExecuteChanged();
         RebuildAssetBars();
         RebuildPortfolioHistoryRows(portfolioSnapshots);

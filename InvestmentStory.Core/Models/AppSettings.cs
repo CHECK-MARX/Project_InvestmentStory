@@ -9,6 +9,7 @@ public sealed class AppSettings
     public string ExchangeRateProvider { get; set; } = "Yahoo Finance";
     public string BrokerDataMode { get; set; } = "手入力";
     public string CsvMergePolicy { get; set; } = "証券会社データを正として上書き";
+    public string CsvWatchFolder { get; set; } = string.Empty;
     public string AlphaVantageApiKey { get; set; } = string.Empty;
     public string JQuantsApiKey { get; set; } = string.Empty;
     public int ApiTimeoutSeconds { get; set; } = 10;

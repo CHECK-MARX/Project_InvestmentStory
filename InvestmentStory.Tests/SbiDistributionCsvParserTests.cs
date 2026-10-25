@@ -6,6 +6,23 @@ namespace InvestmentStory.Tests;
 public sealed class SbiDistributionCsvParserTests
 {
     [Fact]
+    public void ParseStatement_RejectsUnregisteredAmountColumn()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"sbi_distribution_schema_{Guid.NewGuid():N}.csv");
+        File.WriteAllText(path,
+            "受渡日,口座,商品,銘柄名,数量,受取額(税引後・円),新税額\n" +
+            "2026/10/01,特定,米国株式,Example EXMP,10,100,20\n", Encoding.UTF8);
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(
+                () => new SbiDistributionCsvParser().ParseStatement(path));
+            Assert.Contains("SbiDistribution-v1", error.Message);
+            Assert.Contains("新税額", error.Message);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void Parse_ReadsSbiDistributionRows()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

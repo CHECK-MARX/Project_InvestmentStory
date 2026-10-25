@@ -987,6 +987,44 @@ public sealed class CsvImportSafetyTests
     }
 
     [Fact]
+    public void MultipleSelectedFiles_EquivalentNomuraExports_AreHeldBeforeDatabaseWrite()
+    {
+        var first = Path.Combine(Path.GetTempPath(), $"nomura_delivery_{Guid.NewGuid():N}.csv");
+        var second = Path.Combine(Path.GetTempPath(), $"nomura_trade_{Guid.NewGuid():N}.csv");
+        try
+        {
+            const string header = "取引履歴\n約定日,受渡日,商品,銘柄コード,銘柄名,摘要,取引区分,預り区分,発行通貨,数量,単価,受渡金額/決済損益,手数料（税込）,レート,決済通貨,売買損益（円）\n";
+            var rows = Enumerable.Range(1, 10).Select(day =>
+                $"2026/07/{day:00},2026/07/{day:00},株式,8151,東陽テクニカ,,入金（配当金）,特定,,100,30,{2000 + day},,,,\n").ToArray();
+            File.WriteAllText(first, header + string.Concat(rows), Encoding.UTF8);
+            File.WriteAllText(second, header + string.Concat(rows.Reverse()), Encoding.UTF8);
+
+            WithRepository(repository =>
+            {
+                var vm = new CsvImportViewModel(repository.GetPositions, repository.SavePosition,
+                    repository.SaveDividendPayment, repository.GetDividendPayments,
+                    repository.SaveBrokerTrades, null, repository.GetBrokerTrades,
+                    repository.RunImportAtomically, null, null, null, null,
+                    repository.SaveCsvImportLog);
+                typeof(CsvImportViewModel).GetMethod("PreviewMultipleFiles", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(vm, new object[] { new[] { first, second } });
+                Assert.Contains(vm.PreviewRows, row => row.Reason.Contains("どちらか1件", StringComparison.Ordinal));
+
+                typeof(CsvImportViewModel).GetMethod("ImportMultipleFiles", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(vm, new object[] { new[] { first, second } });
+                Assert.Contains("一括取込を保留", vm.Message);
+                Assert.Empty(repository.GetDividendPayments());
+                Assert.Empty(repository.GetPositions());
+            });
+        }
+        finally
+        {
+            if (File.Exists(first)) File.Delete(first);
+            if (File.Exists(second)) File.Delete(second);
+        }
+    }
+
+    [Fact]
     public async Task AsyncImport_CancelRollsBackAppliedRows()
     {
         var csvPath = Path.Combine(Path.GetTempPath(), $"SBI_DISTRIBUTION_{Guid.NewGuid():N}.csv");
@@ -1037,7 +1075,7 @@ public sealed class CsvImportSafetyTests
     }
 
     [Fact]
-    public void Initialize_AddsSourceRowAuditColumnsToExistingImportLog()
+    public void Initialize_AddsSourceRowAuditAndFormatColumnsToExistingImportLog()
     {
         var path = Path.Combine(Path.GetTempPath(), $"investment_story_legacy_log_{Guid.NewGuid():N}.db");
         try
@@ -1064,6 +1102,7 @@ public sealed class CsvImportSafetyTests
             Assert.Contains("ParsedRowCount", names);
             Assert.Contains("PendingRowCount", names);
             Assert.Contains("ExcludedRowCount", names);
+            Assert.Contains("FormatVersion", names);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
@@ -1133,6 +1172,7 @@ public sealed class CsvImportSafetyTests
                 vm.ImportCommand.Execute(null);
 
                 Assert.Single(repository.GetDividendPayments());
+                Assert.Equal("SbiDistribution-v1", repository.GetRecentCsvImportLogs()[0].FormatVersion);
                 using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
                 {
                     DataSource = repository.DatabasePath, Pooling = false

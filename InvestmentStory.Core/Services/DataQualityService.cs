@@ -11,6 +11,7 @@ public sealed class DataQualityService
         var snapshot = new InvestmentCalculator().CreateSnapshot(position);
         var quickRegistrationDate = !position.IsMutualFund &&
             position.Purchase.Memo.Contains("かんたん登録", StringComparison.Ordinal);
+        var holdingSnapshotDate = PositionEvidenceService.PurchaseDateMayBeHoldingSnapshotDate(position);
         var firstDocumentedBuy = PositionEvidenceService.EarliestDocumentedBuyDate(
             stockId, trades ?? Array.Empty<BrokerTrade>());
         var purchaseDateAfterBuy = !position.IsMutualFund && firstDocumentedBuy != DateTime.MinValue &&
@@ -39,6 +40,9 @@ public sealed class DataQualityService
                     ? "取得額と平均取得価額が不明なため損益集計から除外します。"
                     : position.Purchase.Shares <= 0m || position.Purchase.UnitPrice <= 0m
                         ? "取得数量または取得単価が不明なため損益集計から除外します。"
+                        : !position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) &&
+                          PositionEvidenceService.HasUsableForeignExchangeRate(position.Purchase.ExchangeRate)
+                            ? "保有残高などに記載された為替レートだけでは取得時の円決済額を確定できません。取得日・適用日・出所を確認して参考換算として登録するか、円決済額を登録してください。損益集計から除外します。"
                         : position.Purchase.PurchaseDate == DateTime.MinValue
                             ? "取得日が不明です。取得時の円決済額または取得日の参考為替を確認するまで損益集計から除外します。"
                         : "取得時の円決済額・為替が不明なため損益集計から除外します。外貨の初期値1は換算に使いません。" :
@@ -49,17 +53,22 @@ public sealed class DataQualityService
                 position.Purchase.PurchaseDate == DateTime.MinValue ? "未確認" :
                     position.Purchase.PurchaseDate.ToString("yyyy/MM/dd"),
                 purchaseDateAfterBuy ? DataSourceTypes.TransactionCsv :
+                    holdingSnapshotDate ? DataSourceTypes.BrokerCsv :
                     quickRegistrationDate ? DataSourceTypes.Manual : ResolveSourceType(position.Stock.DataSource),
                 purchaseDateAfterBuy ? "取引履歴との照合" :
+                    holdingSnapshotDate ? position.Stock.DataSource :
                     quickRegistrationDate ? "かんたん登録" : position.Stock.DataSource,
                 position.Purchase.PurchaseDate,
                 position.Purchase.PurchaseDate == DateTime.MinValue ? DataQualityStates.Missing :
                     purchaseDateAfterBuy ? DataQualityStates.Conflict :
+                    holdingSnapshotDate ? DataQualityStates.Estimated :
                     quickRegistrationDate ? DataQualityStates.Estimated : DataQualityStates.Reliable,
                 memo: position.Purchase.PurchaseDate == DateTime.MinValue
                     ? "取得日が不明です。取引報告書や取引履歴で確認してください。"
                     : purchaseDateAfterBuy
                         ? $"記録された取得日より前の買付履歴があります（最初の買付 {firstDocumentedBuy:yyyy/MM/dd}）。売却・再購入や移管の可能性もあるため、取得日と現在の原価の対応を確認してください。日付は自動変更しません。"
+                    : holdingSnapshotDate
+                        ? "保有残高CSVの基準日が取得日として保存された可能性があります。取引履歴で実際の取得日を確認してください。"
                     : quickRegistrationDate
                         ? "かんたん登録の取得日です。以前の登録では保存日が自動設定された可能性があるため、取引履歴で照合してください。"
                         : string.Empty,

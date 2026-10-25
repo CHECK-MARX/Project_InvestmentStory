@@ -19,15 +19,14 @@ public sealed class InvestmentCalculator
         var current = position.CurrentHolding;
         var stock = position.Stock;
         var hasOpenHolding = current.CurrentShares > 0m;
-        var purchaseExchangeRate = NormalizeExchangeRate(stock.Currency, purchase.ExchangeRate);
         var currentExchangeRate = NormalizeExchangeRate(stock.Currency, current.CurrentExchangeRate);
         var purchaseTotal = CalculatePurchaseTotal(purchase.Shares, purchase.UnitPrice);
-        // A rate of 1 is the legacy default for an unentered foreign-currency rate.
-        // It is only an actual conversion rate for a JPY-denominated position.
+        // A holding statement's purchase FX can be a reference or an inferred value.
+        // Only a documented JPY settlement amount or an explicitly retained reference
+        // acquisition amount establishes a foreign position's JPY cost basis.
         var hasPurchaseBasis = purchaseTotal > 0m;
         var hasVerifiedPurchaseCostJpy = purchase.AcquisitionAmountJpy > 0m ||
-            (hasPurchaseBasis && (IsJpyCurrency(stock.Currency) ||
-                PositionEvidenceService.HasUsableForeignExchangeRate(purchase.ExchangeRate)));
+            (hasPurchaseBasis && IsJpyCurrency(stock.Currency));
         var hasReferencePurchaseCostJpy = !hasVerifiedPurchaseCostJpy &&
             hasPurchaseBasis &&
             purchase.ReferenceAcquisitionAmountJpy > 0m &&
@@ -44,7 +43,7 @@ public sealed class InvestmentCalculator
         var annualDividend = CalculateAnnualDividendForecast(current.CurrentShares, current.AnnualDividendPerShare);
         var purchaseTotalJpy = purchase.AcquisitionAmountJpy > 0m
             ? purchase.AcquisitionAmountJpy
-            : hasVerifiedPurchaseCostJpy ? CalculateJpyAmount(purchaseTotal, purchaseExchangeRate)
+            : hasVerifiedPurchaseCostJpy ? purchaseTotal
             : hasReferencePurchaseCostJpy ? purchase.ReferenceAcquisitionAmountJpy : 0m;
         var currentMarketValueJpy = hasKnownCurrentMarketValueJpy ? CalculateJpyAmount(currentMarketValue, currentExchangeRate) : 0m;
         var unrealizedGainJpy = hasOpenHolding && hasKnownPurchaseCostJpy && hasKnownCurrentMarketValueJpy

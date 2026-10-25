@@ -74,8 +74,9 @@ public sealed class StockRowViewModel
     public bool HasNegativeGain => !HasUnknownMarketValue && Snapshots.All(x => x.HasKnownPurchaseCostJpy) && UnrealizedGainJpyValue < 0m;
     public string PurchaseExchangeRate => Snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
         ? "対象外"
-        : Snapshot.Position.Purchase.ExchangeRate > 0m && Snapshot.Position.Purchase.ExchangeRate != 1m
-            ? $"{Snapshot.Position.Purchase.ExchangeRate:N2}"
+        : PositionEvidenceService.HasUsableForeignExchangeRate(Snapshot.Position.Purchase.ExchangeRate)
+            ? Snapshot.HasKnownPurchaseCostJpy ? $"{Snapshot.Position.Purchase.ExchangeRate:N2}"
+                : $"未採用 {Snapshot.Position.Purchase.ExchangeRate:N2}"
             : Snapshot.IsReferencePurchaseCostJpy && Snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount > 0m
                 ? $"概算 {Snapshot.Position.Purchase.ReferenceAcquisitionAmountJpy / Snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount:N2}"
                 : "未確認";
@@ -99,6 +100,14 @@ public sealed class StockRowViewModel
     public string PriceAcquiredAt => Snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt == DateTime.MinValue
         ? Snapshot.Position.CurrentHolding.CurrentPrice > 0m ? "時刻不明" : "未取得"
         : Snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt.ToString("yyyy/MM/dd HH:mm");
+    public string CostQuality => Snapshots.Any(x => PositionEvidenceService.CostQuality(x) == AcquisitionCostQuality.Unconfirmed)
+        ? "未確認" : Snapshots.Any(x => PositionEvidenceService.CostQuality(x) == AcquisitionCostQuality.Estimated)
+            ? "概算" : "確定";
+    public string PriceFreshness => Snapshots.Any(x => x.Position.IsMutualFund
+        ? x.Position.MutualFund.CurrentNav <= 0m : x.Position.CurrentHolding.CurrentPrice <= 0m)
+        ? "未取得" : Snapshots.Any(x => PositionEvidenceService.PriceFreshness(x.Position, DateTime.Today) == DataFreshness.TimeUnknown)
+            ? "時刻不明" : Snapshots.Any(x => PositionEvidenceService.PriceFreshness(x.Position, DateTime.Today) == DataFreshness.Delayed)
+                ? "更新遅れ" : "最新";
     public string CurrentPriceSource => string.IsNullOrWhiteSpace(Snapshot.Position.CurrentHolding.CurrentPriceSource)
         ? "未取得"
         : Snapshot.Position.CurrentHolding.CurrentPriceSource;

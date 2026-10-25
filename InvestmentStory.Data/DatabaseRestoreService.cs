@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace InvestmentStory.Data;
 
@@ -14,6 +15,9 @@ public sealed record DatabaseBackupInfo(
     public string LastImportDisplay => LastImportAtUtc?.ToLocalTime().ToString("yyyy/MM/dd HH:mm") ?? "記録なし";
     public DateTime? LastDrillAtUtc { get; init; }
     public string LastDrillDisplay => LastDrillAtUtc?.ToLocalTime().ToString("yyyy/MM/dd HH:mm") ?? "未実施";
+    public string SchemaId { get; init; } = "不明";
+    public string BackupKey { get; init; } = FileName;
+    public string SourceKind { get; init; } = "取込前";
 }
 
 public sealed record DatabaseRestoreDrillResult(
@@ -27,6 +31,13 @@ public sealed record DatabaseRestoreDrillResult(
         $"評価額 {MarketValueJpy:N0}円、税引後配当 {NetDividendJpy:N0}円を照合しました。" +
         "現在のDBは変更していません。";
 }
+
+public sealed record DatabaseRestoreReceipt(
+    DateTime CompletedAtUtc, string BackupFileName, string ArchiveFileName,
+    string BackupSha256, string ArchiveSha256, string RestoredSha256,
+    string BackupSchemaId, string ArchiveSchemaId,
+    long StockCount, long HoldingCount, long TradeCount, long DividendCount,
+    decimal AcquisitionAmountJpy, decimal MarketValueJpy, decimal NetDividendJpy);
 
 /// <summary>Restores a verified, application-created SQLite snapshot on the next process start.</summary>
 public sealed class DatabaseRestoreService
@@ -46,16 +57,24 @@ public sealed class DatabaseRestoreService
 
     public IReadOnlyList<DatabaseBackupInfo> GetBackups()
     {
-        if (!Directory.Exists(_backupDirectory)) return Array.Empty<DatabaseBackupInfo>();
-        return Directory.GetFiles(_backupDirectory, "*.db")
-            .OrderByDescending(Path.GetFileName)
+        var imported = Directory.Exists(_backupDirectory)
+            ? Directory.GetFiles(_backupDirectory, "*.db") : Array.Empty<string>();
+        var parent = Path.GetDirectoryName(_databasePath)!;
+        var migrated = Directory.Exists(parent)
+            ? Directory.GetFiles(parent, "*.db")
+                .Where(path => IsMigrationBackupName(Path.GetFileName(path)))
+            : Enumerable.Empty<string>();
+        return imported.Concat(migrated)
             .Select(path => Inspect(path))
+            .OrderByDescending(info => info.CreatedAtLocal)
             .ToArray();
     }
 
     public DatabaseBackupInfo Inspect(string path)
     {
-        var fullPath = ResolveBackupPath(Path.GetFileName(path));
+        var backupKey = GetBackupKey(path);
+        var fullPath = ResolveBackupPath(backupKey);
+        var isMigration = backupKey.StartsWith("migration:", StringComparison.Ordinal);
         var file = new FileInfo(fullPath);
         try
         {
@@ -69,18 +88,29 @@ public sealed class DatabaseRestoreService
             }
             using var connection = OpenReadOnly(fullPath);
             ValidateDatabase(connection);
+            var schemaId = DatabaseSchemaIdentity.Compute(connection);
+            if (!string.IsNullOrWhiteSpace(metadata?.SchemaId) &&
+                !string.Equals(metadata.SchemaId, schemaId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("バックアップのDB形式IDが作成時と一致しません。");
             return new DatabaseBackupInfo(file.Name, metadata?.CreatedAtUtc.ToLocalTime() ?? file.CreationTime,
                 file.Length, "正常",
                 CountImportLogs(connection), GetLastImportLogId(connection), GetLastImportAt(connection),
                 metadata?.AppVersion ?? "記録なし", metadata?.Reason ?? "CSV取込前（旧形式）")
             {
-                LastDrillAtUtc = ReadValidDrillDate(fullPath, metadata?.Sha256)
+                LastDrillAtUtc = ReadValidDrillDate(fullPath, metadata?.Sha256),
+                SchemaId = schemaId,
+                BackupKey = backupKey,
+                SourceKind = isMigration ? "移行前" : "取込前"
             };
         }
         catch (Exception ex) when (ex is SqliteException or InvalidDataException or IOException or UnauthorizedAccessException)
         {
             return new DatabaseBackupInfo(file.Name, file.CreationTime, file.Length,
-                "復元不可: " + ex.Message, 0, 0, null, "不明", "不明");
+                "復元不可: " + ex.Message, 0, 0, null, "不明", "不明")
+            {
+                BackupKey = backupKey,
+                SourceKind = isMigration ? "移行前" : "取込前"
+            };
         }
     }
 
@@ -321,7 +351,15 @@ public sealed class DatabaseRestoreService
         ("DividendPurchasePlans", "購入計画"), ("DividendPurchasePlanItems", "計画明細"),
         ("AppSettings", "設定"), ("IncomeGoals", "収入目標"),
         ("PortfolioSnapshots", "資産履歴"),
-        ("CashOperations", "現金取引"), ("CashLegs", "現金明細"), ("CashReconciliations", "現金残高照合")
+        ("CashOperations", "現金取引"), ("CashLegs", "現金明細"), ("CashReconciliations", "現金残高照合"),
+        ("CashCsvSources", "現金CSV照合履歴"), ("PerformanceReports", "運用成績の保存記録"),
+        ("AllocationTargetRevisions", "資産配分目標の改訂履歴"),
+        ("ReminderStates", "通知の既読・延期状態"),
+        ("ReminderPreferences", "通知方法の設定"),
+        ("CsvReviewDispositions", "CSV要確認の解決・保留状態"),
+        ("DividendReviewHistory", "配当照合の判断履歴"),
+        ("NisaTransactions", "NISA取得・売却履歴"),
+        ("NisaHistoryState", "NISA履歴確認状態")
     ];
 
     private sealed record RestoreRow(string Contents, string[] Columns, string?[] Values)
@@ -438,36 +476,98 @@ public sealed class DatabaseRestoreService
         }
         if (!File.Exists(_databasePath)) throw new FileNotFoundException("復元前のDBがありません。", _databasePath);
 
+        using var source = OpenReadOnly(backupPath);
+        ValidateDatabase(source);
+        var expectedMetrics = ReadDrillMetrics(source);
+        var backupSchemaId = DatabaseSchemaIdentity.Compute(source);
+
         Directory.CreateDirectory(_archiveDirectory);
         var archivePath = Path.Combine(_archiveDirectory,
             $"{DateTime.Now:yyyyMMdd_HHmmss_fffffff}_{Guid.NewGuid():N}.db");
         // Creating and checking the archive must succeed before changing the live database.
         CopySqlite(_databasePath, archivePath);
+        var receiptPath = archivePath + ".restore.json";
         try
         {
+            using var archived = OpenReadOnly(archivePath);
+            ValidateDatabase(archived);
+            var archiveSchemaId = DatabaseSchemaIdentity.Compute(archived);
             CopySqlite(backupPath, _databasePath);
             using var restored = OpenReadOnly(_databasePath);
             ValidateDatabase(restored);
+            var actualMetrics = ReadDrillMetrics(restored);
+            if (actualMetrics != expectedMetrics)
+                throw new InvalidDataException("復元後の主要件数・金額がバックアップと一致しません。");
+            var receipt = new DatabaseRestoreReceipt(DateTime.UtcNow, Path.GetFileName(backupPath),
+                Path.GetFileName(archivePath), ComputeFileHash(backupPath),
+                ComputeFileHash(archivePath), ComputeFileHash(_databasePath),
+                backupSchemaId, archiveSchemaId,
+                actualMetrics.StockCount, actualMetrics.HoldingCount,
+                actualMetrics.TradeCount, actualMetrics.DividendCount,
+                actualMetrics.AcquisitionAmountJpy, actualMetrics.MarketValueJpy,
+                actualMetrics.NetDividendJpy);
+            var temporaryReceipt = receiptPath + ".tmp";
+            try
+            {
+                File.WriteAllText(temporaryReceipt, JsonSerializer.Serialize(receipt));
+                File.Move(temporaryReceipt, receiptPath, true);
+            }
+            finally { if (File.Exists(temporaryReceipt)) File.Delete(temporaryReceipt); }
             File.Delete(_pendingPath);
             return archivePath;
         }
         catch
         {
-            CopySqlite(archivePath, _databasePath);
-            File.Delete(_pendingPath);
+            try { CopySqlite(archivePath, _databasePath); }
+            finally
+            {
+                if (File.Exists(receiptPath)) File.Delete(receiptPath);
+                if (File.Exists(_pendingPath)) File.Delete(_pendingPath);
+            }
             throw;
         }
     }
 
     private string ResolveBackupPath(string fileName)
     {
-        if (string.IsNullOrWhiteSpace(fileName) ||
-            fileName != Path.GetFileName(fileName) ||
-            !fileName.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(fileName))
             throw new InvalidDataException("バックアップのファイル名が不正です。");
-        var path = Path.GetFullPath(Path.Combine(_backupDirectory, fileName));
+        var isMigration = fileName.StartsWith("migration:", StringComparison.Ordinal);
+        var name = isMigration ? fileName["migration:".Length..] : fileName;
+        if (string.IsNullOrWhiteSpace(name) ||
+            name != Path.GetFileName(name) ||
+            !name.EndsWith(".db", StringComparison.OrdinalIgnoreCase) ||
+            isMigration && !IsMigrationBackupName(name))
+            throw new InvalidDataException("バックアップのファイル名が不正です。");
+        var directory = isMigration ? Path.GetDirectoryName(_databasePath)! : _backupDirectory;
+        var path = Path.GetFullPath(Path.Combine(directory, name));
         if (!File.Exists(path)) throw new FileNotFoundException("バックアップが見つかりません。", path);
         return path;
+    }
+
+    private string GetBackupKey(string path)
+    {
+        if (!Path.IsPathRooted(path)) return path;
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath)!;
+        if (string.Equals(directory, _backupDirectory, StringComparison.OrdinalIgnoreCase))
+            return Path.GetFileName(fullPath);
+        if (string.Equals(directory, Path.GetDirectoryName(_databasePath), StringComparison.OrdinalIgnoreCase) &&
+            IsMigrationBackupName(Path.GetFileName(fullPath)))
+            return "migration:" + Path.GetFileName(fullPath);
+        throw new InvalidDataException("指定されたファイルはこのDBのバックアップではありません。");
+    }
+
+    private bool IsMigrationBackupName(string name)
+    {
+        var prefix = Path.GetFileNameWithoutExtension(_databasePath) + "_";
+        var extension = Path.GetExtension(_databasePath);
+        if (extension.Length == 0 || !name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+            !name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) return false;
+        var middle = name[prefix.Length..^extension.Length];
+        return Regex.IsMatch(middle,
+            @"^\d{8}_\d{6}(?:_\d{7})?(?:_[0-9a-f]{32})?_(?:before_[a-z0-9_]+|backup)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static SqliteConnection OpenReadOnly(string path)
@@ -476,6 +576,12 @@ public sealed class DatabaseRestoreService
         { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         connection.Open();
         return connection;
+    }
+
+    private static string ComputeFileHash(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
     }
 
     private static void CopySqlite(string sourcePath, string destinationPath)
@@ -531,7 +637,8 @@ public sealed class DatabaseRestoreService
         catch (JsonException ex) { throw new InvalidDataException("バックアップのメタデータを読めません。", ex); }
     }
 
-    private sealed record BackupMetadata(DateTime CreatedAtUtc, string AppVersion, string Reason, string? Sha256 = null);
+    private sealed record BackupMetadata(DateTime CreatedAtUtc, string AppVersion, string Reason,
+        string? Sha256 = null, string? SchemaId = null);
 
     private static long CountImportLogs(SqliteConnection connection)
     {

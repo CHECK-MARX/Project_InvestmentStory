@@ -4,6 +4,35 @@ namespace InvestmentStory.Core.Services;
 
 public sealed class DividendReconciliationService
 {
+    public IReadOnlyList<DividendPayment> FindActualCandidates(
+        DividendPayment planned, IEnumerable<DividendPayment> payments)
+    {
+        ArgumentNullException.ThrowIfNull(planned);
+        ArgumentNullException.ThrowIfNull(payments);
+        if (!DividendConstants.IsUnconfirmed(planned.DividendStatus)) return [];
+        return payments.Where(x => x.Id > 0 && DividendConstants.IsVisibleActual(x.DividendStatus))
+            .Where(x => IsSameSecurity(planned, x) &&
+                        string.Equals(Normalize(planned.Broker), Normalize(x.Broker), StringComparison.OrdinalIgnoreCase))
+            .Where(x =>
+            {
+                var plannedAccount = NormalizeAccount(planned.AccountType);
+                var actualAccount = NormalizeAccount(x.AccountType);
+                var plannedTaxAccount = NormalizeAccount(planned.TaxAccountType);
+                var actualTaxAccount = NormalizeAccount(x.TaxAccountType);
+                return (plannedAccount == DividendConstants.AccountUnknown ||
+                        actualAccount == DividendConstants.AccountUnknown || plannedAccount == actualAccount) &&
+                       (plannedTaxAccount == DividendConstants.AccountUnknown ||
+                        actualTaxAccount == DividendConstants.AccountUnknown ||
+                        plannedTaxAccount == actualTaxAccount);
+            })
+            .Where(x => Math.Abs((planned.PaymentDate.Date - x.PaymentDate.Date).TotalDays) <= 30 ||
+                        planned.RecordDate != DateTime.MinValue && planned.RecordDate.Date == x.RecordDate.Date ||
+                        planned.ExDividendDate != DateTime.MinValue && planned.ExDividendDate.Date == x.ExDividendDate.Date)
+            .OrderBy(x => Math.Abs((planned.PaymentDate.Date - x.PaymentDate.Date).TotalDays))
+            .ThenBy(x => x.Id)
+            .ToArray();
+    }
+
     public DividendReconciliationDecision ReconcileActual(
         IEnumerable<DividendPayment> existingPayments,
         DividendPayment actualPayment)
@@ -65,6 +94,22 @@ public sealed class DividendReconciliationService
 
     private static bool CanReplaceAutomatically(DividendPayment planned, DividendPayment actual)
     {
+        // An unknown account can match more than one taxable/NISA holding. A unique,
+        // exact manual actual may still be replaced by the broker's CSV actual.
+        var plannedAccount = NormalizeAccount(planned.AccountType);
+        var actualAccount = NormalizeAccount(actual.AccountType);
+        if (plannedAccount == DividendConstants.AccountUnknown ||
+            actualAccount == DividendConstants.AccountUnknown ||
+            plannedAccount != actualAccount)
+            return plannedAccount == DividendConstants.AccountUnknown &&
+                   actualAccount == DividendConstants.AccountUnknown &&
+                   IsManualActual(planned) &&
+                   string.Equals(actual.Source, DividendConstants.SourceCsv, StringComparison.OrdinalIgnoreCase) &&
+                   planned.PaymentDate.Date == actual.PaymentDate.Date &&
+                   NormalizeCurrency(planned.Currency) == NormalizeCurrency(actual.Currency) &&
+                   planned.GrossAmount > 0m && planned.GrossAmount == actual.GrossAmount &&
+                   planned.NetAmount > 0m && planned.NetAmount == actual.NetAmount &&
+                   planned.NetAmountJpy > 0m && planned.NetAmountJpy == actual.NetAmountJpy;
         var plannedJpy = planned.NetAmountJpy > 0m ? planned.NetAmountJpy : planned.JpyAmount;
         var actualJpy = actual.NetAmountJpy > 0m ? actual.NetAmountJpy : actual.JpyAmount;
         if (planned.PaymentDate.Date == actual.PaymentDate.Date && plannedJpy == actualJpy)

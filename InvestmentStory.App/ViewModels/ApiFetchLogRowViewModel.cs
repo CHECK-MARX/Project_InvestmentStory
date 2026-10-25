@@ -6,6 +6,7 @@ public sealed class ApiFetchLogRowViewModel
 {
     public ApiFetchLogRowViewModel(ApiFetchLogEntry log)
     {
+        Id = log.Id;
         FetchedAt = log.FetchedAt.ToString("yyyy/MM/dd HH:mm:ss");
         ApiType = log.ApiType;
         Provider = log.Provider;
@@ -16,6 +17,7 @@ public sealed class ApiFetchLogRowViewModel
         Summary = log.Summary;
     }
 
+    public int Id { get; }
     public string FetchedAt { get; }
     public string ApiType { get; }
     public string Provider { get; }

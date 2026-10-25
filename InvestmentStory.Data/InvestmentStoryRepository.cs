@@ -67,7 +67,7 @@ public sealed class InvestmentStoryRepository
             SELECT Id, BatchId, FileName, FileSize, FileHash, Broker, CsvType,
                    ImportedAt, RowCount, ParsedRowCount, PendingRowCount,
                    ExcludedRowCount, InsertedCount, UpdatedCount, SkippedCount,
-                   ConflictCount, Result, ErrorSummary, ParserVersion
+                   ConflictCount, Result, ErrorSummary, ParserVersion, FormatVersion
             FROM CsvImportLogs ORDER BY Id DESC LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 1000));
@@ -88,7 +88,7 @@ public sealed class InvestmentStoryRepository
                 InsertedCount = reader.GetInt32(12), UpdatedCount = reader.GetInt32(13),
                 SkippedCount = reader.GetInt32(14), ConflictCount = reader.GetInt32(15),
                 Result = reader.GetString(16), ErrorSummary = reader.GetString(17),
-                ParserVersion = reader.GetString(18)
+                ParserVersion = reader.GetString(18), FormatVersion = reader.GetString(19)
             });
         }
         return logs;
@@ -140,7 +140,7 @@ public sealed class InvestmentStoryRepository
 
     private string GetPreImportBackupDirectory() => _databasePath + ".pre_import_backups";
 
-    private void CreatePreImportBackup(SqliteConnection source)
+    internal void CreatePreImportBackup(SqliteConnection source)
     {
         if (!File.Exists(_databasePath))
             throw new FileNotFoundException("取込前バックアップの元DBがありません。", _databasePath);
@@ -150,6 +150,7 @@ public sealed class InvestmentStoryRepository
             $"{DateTime.Now:yyyyMMdd_HHmmss_fffffff}_{Guid.NewGuid():N}.db");
         try
         {
+            string schemaId;
             using (var backup = new SqliteConnection(new SqliteConnectionStringBuilder
                    { DataSource = path, Pooling = false }.ToString()))
             {
@@ -159,12 +160,13 @@ public sealed class InvestmentStoryRepository
                 check.CommandText = "PRAGMA quick_check;";
                 if (!string.Equals(check.ExecuteScalar()?.ToString(), "ok", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("取込前バックアップの整合性検査に失敗しました。");
+                schemaId = DatabaseSchemaIdentity.Compute(backup);
             }
             using var backupFile = File.OpenRead(path);
             var sha256 = Convert.ToHexString(SHA256.HashData(backupFile));
             var metadata = new DatabaseBackupMetadata(DateTime.UtcNow,
                 typeof(InvestmentStoryRepository).Assembly.GetName().Version?.ToString() ?? "不明",
-                "CSV取込前", sha256);
+                "CSV取込前", sha256, schemaId);
             File.WriteAllText(path + ".json", JsonSerializer.Serialize(metadata));
         }
         catch
@@ -175,7 +177,8 @@ public sealed class InvestmentStoryRepository
         }
     }
 
-    private sealed record DatabaseBackupMetadata(DateTime CreatedAtUtc, string AppVersion, string Reason, string? Sha256);
+    private sealed record DatabaseBackupMetadata(DateTime CreatedAtUtc, string AppVersion, string Reason,
+        string? Sha256, string? SchemaId);
 
     public void Initialize()
     {
@@ -757,6 +760,7 @@ public sealed class InvestmentStoryRepository
             ExchangeRateProvider = GetSetting(values, nameof(AppSettings.ExchangeRateProvider), "Yahoo Finance"),
             BrokerDataMode = GetSetting(values, nameof(AppSettings.BrokerDataMode), "手入力"),
             CsvMergePolicy = GetSetting(values, nameof(AppSettings.CsvMergePolicy), "証券会社データを正として上書き"),
+            CsvWatchFolder = GetSetting(values, nameof(AppSettings.CsvWatchFolder), string.Empty),
             AlphaVantageApiKey = GetSetting(values, nameof(AppSettings.AlphaVantageApiKey), string.Empty),
             JQuantsApiKey = GetSetting(values, nameof(AppSettings.JQuantsApiKey), string.Empty),
             ApiTimeoutSeconds = GetIntSetting(values, nameof(AppSettings.ApiTimeoutSeconds), 10),
@@ -798,6 +802,7 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.ExchangeRateProvider), settings.ExchangeRateProvider);
         UpsertSetting(connection, transaction, nameof(AppSettings.BrokerDataMode), settings.BrokerDataMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.CsvMergePolicy), settings.CsvMergePolicy);
+        UpsertSetting(connection, transaction, nameof(AppSettings.CsvWatchFolder), settings.CsvWatchFolder);
         UpsertSetting(connection, transaction, nameof(AppSettings.AlphaVantageApiKey), settings.AlphaVantageApiKey);
         UpsertSetting(connection, transaction, nameof(AppSettings.JQuantsApiKey), settings.JQuantsApiKey);
         UpsertSetting(connection, transaction, nameof(AppSettings.ApiTimeoutSeconds), settings.ApiTimeoutSeconds.ToString());
@@ -1085,6 +1090,62 @@ public sealed class InvestmentStoryRepository
         }
 
         return logs;
+    }
+
+    public CsvReviewSummary GetCsvReviewSummary()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+              (SELECT COUNT(*) FROM CsvImportReviewRows WHERE Resolution = ''),
+              (SELECT COUNT(*) FROM CsvImportReviewHoldings h
+                 LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'holding:' || h.Id
+                WHERE COALESCE(d.Status,'要確認') <> '確認済み'),
+              (SELECT COUNT(*) FROM CsvImportReviewDividends v
+                 LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'dividend:' || v.Id
+                WHERE COALESCE(d.Status,'要確認') <> '確認済み');
+            """;
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        return new CsvReviewSummary(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+    }
+
+    public IReadOnlyList<CsvReviewRecord> GetCsvReviewRecords(bool includeResolved = false)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 'trade:' || Id,
+                   CASE WHEN Resolution = '' THEN '取引・未解決' ELSE '取引・解決履歴' END,
+                   TradeDate, Ticker, Broker, Account,
+                   SourceFile, SourceRowNumber, Reason,
+                   CASE WHEN Resolution = '' THEN '未解決' ELSE '解決済み' END,
+                   Resolution
+              FROM CsvImportReviewRows WHERE $all = 1 OR Resolution = ''
+            UNION ALL
+            SELECT 'holding:' || h.Id, '保有・要確認履歴', h.SnapshotDate, h.Ticker, h.Broker, h.Account,
+                   '', 0, h.Reason, COALESCE(d.Status,'要確認'), COALESCE(d.Note,'')
+              FROM CsvImportReviewHoldings h
+              LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'holding:' || h.Id
+             WHERE $all = 1 OR COALESCE(d.Status,'要確認') <> '確認済み'
+            UNION ALL
+            SELECT 'dividend:' || v.Id, '配当・要確認履歴', v.PaymentDate, v.SecurityName, v.Broker, '',
+                   v.Source, 0, v.Reason, COALESCE(d.Status,'要確認'), COALESCE(d.Note,'')
+              FROM CsvImportReviewDividends v
+              LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'dividend:' || v.Id
+             WHERE $all = 1 OR COALESCE(d.Status,'要確認') <> '確認済み'
+            ORDER BY 3 DESC, 1;
+            """;
+        command.Parameters.AddWithValue("$all", includeResolved ? 1 : 0);
+        using var reader = command.ExecuteReader();
+        var records = new List<CsvReviewRecord>();
+        while (reader.Read())
+            records.Add(new CsvReviewRecord(reader.GetString(0), reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), reader.GetString(4),
+                reader.GetString(5), reader.GetString(6), reader.GetInt32(7),
+                reader.GetString(8), reader.GetString(9), reader.GetString(10)));
+        return records;
     }
 
     public void SavePortfolioSnapshot(PortfolioSnapshot snapshot)
@@ -1380,11 +1441,11 @@ public sealed class InvestmentStoryRepository
                 (FileName, FileSize, FileHash, Broker, CsvType, ImportedAt, RowCount,
                  ParsedRowCount, PendingRowCount, ExcludedRowCount,
                  InsertedCount, UpdatedCount, SkippedCount, ConflictCount, Result, ErrorSummary,
-                 BatchId, ParserVersion)
+                 BatchId, ParserVersion, FormatVersion)
             VALUES ($fileName, $fileSize, $fileHash, $broker, $csvType, CURRENT_TIMESTAMP,
                     $rowCount, $parsedRowCount, $pendingRowCount, $excludedRowCount,
                     $insertedCount, $updatedCount, $skippedCount, $conflictCount,
-                    $result, $errorSummary, $batchId, $parserVersion);
+                    $result, $errorSummary, $batchId, $parserVersion, $formatVersion);
             """;
         command.Parameters.AddWithValue("$fileName", entry.FileName);
         command.Parameters.AddWithValue("$fileSize", entry.FileSize);
@@ -1403,6 +1464,7 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$errorSummary", entry.ErrorSummary);
         command.Parameters.AddWithValue("$batchId", entry.BatchId);
         command.Parameters.AddWithValue("$parserVersion", entry.ParserVersion);
+        command.Parameters.AddWithValue("$formatVersion", entry.FormatVersion);
         command.ExecuteNonQuery();
     }
 

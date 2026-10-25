@@ -24,7 +24,7 @@ public sealed class CsvImportHistoryBackupTests
             {
                 BatchId = "new", FileName = "new.csv", FileHash = "abc123",
                 CsvType = "SBI配当CSV", RowCount = 1, ParsedRowCount = 1,
-                InsertedCount = 1, Result = "Succeeded"
+                InsertedCount = 1, Result = "Succeeded", FormatVersion = "SbiDistribution-v1"
             }));
 
             var backupPath = Assert.Single(repository.GetPreImportBackupPaths());
@@ -36,6 +36,7 @@ public sealed class CsvImportHistoryBackupTests
             Assert.Equal("new", recent[0].BatchId);
             Assert.Equal("abc123", recent[0].FileHash);
             Assert.Equal(1, recent[0].ParsedRowCount);
+            Assert.Equal("SbiDistribution-v1", recent[0].FormatVersion);
             Assert.NotEqual(default, recent[0].ImportedAtUtc);
         }
         finally

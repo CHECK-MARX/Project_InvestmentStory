@@ -74,7 +74,7 @@
                        Foreground="{DynamicResource WarningBrush}"
                        Margin="0,0,0,8"
                        TextWrapping="Wrap" />
-            <DataGrid Grid.Row="1"
+            <DataGrid x:Name="StockGrid" Grid.Row="1"
                       ItemsSource="{Binding Rows}"
                       SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                       EnableRowVirtualization="True"
@@ -202,6 +202,10 @@
                                         ElementStyle="{StaticResource ProfitLossCellTextStyle}"
                                         Visibility="{Binding Data.ShowExchangeColumns, Source={StaticResource VmProxy}}" />
 
+                    <DataGridTextColumn Header="取得額品質" Binding="{Binding CostQuality}" Width="100"
+                                        Visibility="{Binding Data.ShowDataColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="価格鮮度" Binding="{Binding PriceFreshness}" Width="100"
+                                        Visibility="{Binding Data.ShowDataColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="株価更新日時" Binding="{Binding PriceAcquiredAt}" Width="140"
                                         ElementStyle="{StaticResource CenterCellTextStyle}"
                                         Visibility="{Binding Data.ShowDataColumns, Source={StaticResource VmProxy}}" />

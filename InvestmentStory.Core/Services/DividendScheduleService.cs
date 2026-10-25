@@ -17,7 +17,12 @@ public sealed class DividendScheduleService
         ArgumentNullException.ThrowIfNull(existingPayments);
         ArgumentNullException.ThrowIfNull(taxProfiles);
 
-        var existing = existingPayments
+        var payments = existingPayments.ToList();
+        var reviewedMonths = payments
+            .Where(x => string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(x.DividendStatus, DividendConstants.Excluded, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var existing = payments
             .Where(x => !string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
             .ToList();
         var profiles = taxProfiles.ToList();
@@ -74,6 +79,13 @@ public sealed class DividendScheduleService
                 if (position.Purchase.PurchaseDate != default &&
                     position.Purchase.Memo.Contains("時系列集計", StringComparison.Ordinal) &&
                     paymentDate.Date < position.Purchase.PurchaseDate.Date)
+                    continue;
+                // A user's explicit link or exclusion must survive the next automatic refresh.
+                // Keep the decision scoped to its account so a different tax account can still receive a schedule.
+                if (reviewedMonths.Any(x => x.StockId == position.Stock.Id &&
+                                            x.PaymentDate.Year == paymentDate.Year &&
+                                            x.PaymentDate.Month == paymentDate.Month &&
+                                            AccountTypeNormalizer.Normalize(x.AccountType) == accountType))
                     continue;
                 if (HasActualPaymentNearDate(position, existing, paymentDate))
                 {

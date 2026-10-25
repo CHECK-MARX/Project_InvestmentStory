@@ -95,7 +95,8 @@ public sealed class ReferencePurchaseCostWorkflowTests
         };
         vm.Update(summary, Array.Empty<StockSnapshot>(), Array.Empty<PortfolioSnapshot>());
         Assert.Contains("概算", vm.TotalReturnLabel);
-        Assert.Contains("算出不可", vm.PeriodReturnAvailability);
+        Assert.Contains("運用成績", vm.PeriodReturnAvailability);
+        Assert.Contains("確認して計算", vm.PeriodReturnAvailability);
         Assert.Contains("算出不可", vm.CapitalRecoveryAvailability);
         Assert.Contains("記録済み売却損益", vm.TotalReturnExplanation);
         Assert.StartsWith("概算 ", vm.FxIncludedUnrealizedGain);

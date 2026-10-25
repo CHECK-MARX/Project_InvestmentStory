@@ -88,6 +88,22 @@ public sealed class StockListViewModel : ObservableObject
     }
 
     public ObservableCollection<StockRowViewModel> Rows { get; } = new();
+
+    public bool FocusPosition(string positionKey)
+    {
+        if (string.IsNullOrWhiteSpace(positionKey)) return false;
+        SelectedGroupingMode = "ポジション別";
+        SelectedFilter = "現在保有のみ";
+        SearchText = string.Empty;
+        SelectedBroker = "すべて";
+        SelectedAccount = "すべて";
+        SelectedSector = "すべて";
+        SelectedQuality = "すべて";
+        var row = Rows.FirstOrDefault(x => x.DetailKey == positionKey);
+        if (row is null) { SelectedRow = null; return false; }
+        SelectedRow = row;
+        return true;
+    }
     public string[] Filters { get; } = { "現在保有のみ", "過去保有銘柄", "配当銘柄", "成長銘柄" };
     public string[] GroupingModes { get; } = { "ポジション別", "銘柄集約" };
     public string[] DisplayModes { get; } = { "基本", "株式", "損益", "配当", "投資信託", "為替", "データ取得", "全項目" };
@@ -288,7 +304,12 @@ public sealed class StockListViewModel : ObservableObject
         var marketValueSummary = unknownMarketValueCount == 0
             ? $"評価額 {Formatters.Jpy(knownMarketValue)}"
             : $"評価額合計 算出不可（確認済み {Formatters.Jpy(knownMarketValue)} / 未確認 {unknownMarketValueCount:N0} 件）";
-        VisibleSummary = $"表示 {Rows.Count:N0} 行（口座別 {visibleSnapshots.Count:N0} 件） / 全 {_allSnapshots.Count:N0} 件 ・ {marketValueSummary} ・ 取得日要確認（全件） {_acquisitionDateReviewStockIds.Count:N0} 件";
+        var coverage = PositionEvidenceCoverage.Build(visibleSnapshots, DateTime.Today);
+        VisibleSummary = $"表示 {Rows.Count:N0} 行（口座別 {visibleSnapshots.Count:N0} 件） / 全 {_allSnapshots.Count:N0} 件 ・ {marketValueSummary} ・ " +
+            $"取得額 概算 {coverage.EstimatedCostCount:N0} 件 / 未確認 {coverage.UnconfirmedCostCount:N0} 件（損益集計対象外の評価額 " +
+            $"{(coverage.ExcludedMarketValueJpy is decimal excluded ? Formatters.Jpy(excluded) : "算出不可")}） ・ " +
+            $"価格更新遅れ {coverage.DelayedPriceCount:N0} 件 / 時刻不明 {coverage.UnknownPriceTimeCount:N0} 件 ・ " +
+            $"取得日要確認（全件） {_acquisitionDateReviewStockIds.Count:N0} 件";
     }
 
     private bool ShouldShow(StockSnapshot snapshot)

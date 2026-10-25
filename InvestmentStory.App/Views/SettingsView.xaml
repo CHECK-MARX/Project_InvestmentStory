@@ -91,12 +91,15 @@
                                Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,0,10" />
                     <DataGrid ItemsSource="{Binding Backups}" SelectedItem="{Binding SelectedBackup, Mode=TwoWay}" Height="200" IsReadOnly="True" AutoGenerateColumns="False">
                         <DataGrid.Columns>
+                            <DataGridTextColumn Header="種別" Binding="{Binding SourceKind}" Width="75" />
                             <DataGridTextColumn Header="作成日時" Binding="{Binding CreatedAtDisplay}" Width="170" />
                             <DataGridTextColumn Header="容量" Binding="{Binding SizeDisplay}" Width="90" />
                             <DataGridTextColumn Header="版" Binding="{Binding AppVersion}" Width="85" />
+                            <DataGridTextColumn Header="DB形式ID" Binding="{Binding SchemaId}" Width="160" />
                             <DataGridTextColumn Header="作成理由" Binding="{Binding Reason}" Width="135" />
                             <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="160" />
                             <DataGridTextColumn Header="取込履歴" Binding="{Binding ImportLogCount}" Width="90" />
+                            <DataGridTextColumn Header="最終取込ID" Binding="{Binding LastImportLogId}" Width="95" />
                             <DataGridTextColumn Header="最終取込" Binding="{Binding LastImportDisplay}" Width="170" />
                             <DataGridTextColumn Header="復元演習" Binding="{Binding LastDrillDisplay}" Width="145" />
                             <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="*" />
@@ -117,7 +120,7 @@
                         <Button DockPanel.Dock="Right" Content="ログ再読込" Command="{Binding ReloadLogsCommand}" Style="{StaticResource SecondaryButtonStyle}" />
                         <TextBlock Text="API取得ログ" Style="{StaticResource SectionTitleStyle}" />
                     </DockPanel>
-                    <DataGrid ItemsSource="{Binding ApiLogs}" Height="280">
+                    <DataGrid x:Name="ApiLogGrid" ItemsSource="{Binding ApiLogs}" SelectedItem="{Binding SelectedApiLog, Mode=TwoWay}" Height="280">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="取得日時" Binding="{Binding FetchedAt}" Width="150" />
                             <DataGridTextColumn Header="API種別" Binding="{Binding ApiType}" Width="140" />

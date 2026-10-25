@@ -198,6 +198,8 @@
                                             <TextBlock Text="{Binding FileName}" TextWrapping="Wrap" FontWeight="SemiBold" />
                                             <TextBlock Text="{Binding BatchId, StringFormat=取込ID: {0}}" TextWrapping="Wrap" />
                                             <TextBlock Text="{Binding CsvType, StringFormat=形式: {0}}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding FormatVersionLabel, StringFormat=CSV形式版: {0}}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ParserVersion, StringFormat=解析器版: {0}}" TextWrapping="Wrap" />
                                             <TextBlock Text="{Binding ParsedRowCount, StringFormat=解析行: {0}}" />
                                             <TextBlock Text="{Binding PendingRowCount, StringFormat=要確認行: {0}}" />
                                             <TextBlock Text="{Binding InsertedCount, StringFormat=追加: {0}}" />
