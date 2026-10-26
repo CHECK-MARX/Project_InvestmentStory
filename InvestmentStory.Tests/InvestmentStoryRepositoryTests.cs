@@ -106,6 +106,8 @@ public sealed class InvestmentStoryRepositoryTests
             settings.ThemeMode = "Dark";
             settings.CsvMergePolicy = "新規銘柄だけ追加";
             settings.IsSidebarCollapsed = true;
+            settings.IsPrivacyMode = true;
+            settings.DisplayDensity = "LargeText";
             settings.StockListDisplayMode = "配当";
             settings.LastDashboardCompositionMode = "Broker";
             settings.LastOpenedPage = "銘柄一覧";
@@ -118,6 +120,8 @@ public sealed class InvestmentStoryRepositoryTests
             Assert.Equal("Dark", loaded.ThemeMode);
             Assert.Equal("新規銘柄だけ追加", loaded.CsvMergePolicy);
             Assert.True(loaded.IsSidebarCollapsed);
+            Assert.True(loaded.IsPrivacyMode);
+            Assert.Equal("LargeText", loaded.DisplayDensity);
             Assert.Equal("配当", loaded.StockListDisplayMode);
             Assert.Equal("Broker", loaded.LastDashboardCompositionMode);
             Assert.Equal("銘柄一覧", loaded.LastOpenedPage);

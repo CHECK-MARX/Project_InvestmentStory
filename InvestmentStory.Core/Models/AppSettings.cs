@@ -18,6 +18,8 @@ public sealed class AppSettings
     public bool EnableApiResponseLog { get; set; }
     public string ThemeMode { get; set; } = "Light";
     public bool IsSidebarCollapsed { get; set; }
+    public bool IsPrivacyMode { get; set; }
+    public string DisplayDensity { get; set; } = "Standard";
     public string StockListDisplayMode { get; set; } = "基本";
     public string StockListFilterJson { get; set; } = string.Empty;
     public string LastDashboardCompositionMode { get; set; } = "Country";

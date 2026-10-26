@@ -211,7 +211,8 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
                     Message = $"新しいCSVを検知しました: {Path.GetFileName(path)}。内容を確認してください。";
                 }
                 var dispatcher = Application.Current?.Dispatcher;
-                if (dispatcher is null || dispatcher.CheckAccess()) Add();
+                if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished ||
+                    dispatcher.CheckAccess()) Add();
                 else dispatcher.BeginInvoke((Action)Add);
             };
         }

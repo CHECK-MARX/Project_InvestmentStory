@@ -93,6 +93,7 @@ public sealed class SettingsViewModel : ObservableObject
     public string[] ExchangeProviders { get; } = { "Yahoo Finance", "Mock" };
     public string[] BrokerDataModes { get; } = { "CSV取込", "手入力", "公式API（市場データのみ）" };
     public string[] ThemeModes { get; } = { "ライト", "ダーク", "Windowsの設定に従う" };
+    public string[] DisplayDensityModes { get; } = { "標準", "コンパクト", "大きな文字" };
 
     public string MarketDataMode { get; set; } = "Web/API";
     public string UsMarketDataProvider { get; set; } = "Alpha Vantage";
@@ -106,6 +107,7 @@ public sealed class SettingsViewModel : ObservableObject
     public bool SaveLoginCredentials { get; set; }
     public bool EnableApiResponseLog { get; set; }
     public string ThemeMode { get; set; } = "ライト";
+    public string DisplayDensity { get; set; } = "標準";
 
     public string Message
     {
@@ -128,6 +130,12 @@ public sealed class SettingsViewModel : ObservableObject
         SaveLoginCredentials = settings.SaveLoginCredentials;
         EnableApiResponseLog = settings.EnableApiResponseLog;
         ThemeMode = ToDisplayThemeMode(settings.ThemeMode);
+        DisplayDensity = settings.DisplayDensity switch
+        {
+            "Compact" => "コンパクト",
+            "LargeText" => "大きな文字",
+            _ => "標準"
+        };
         ReloadLogs();
         ReloadBackups();
         RefreshAllProperties();
@@ -141,26 +149,24 @@ public sealed class SettingsViewModel : ObservableObject
             return;
         }
 
-        var settings = new AppSettings
+        var settings = _loadSettings();
+        settings.MarketDataMode = MarketDataMode;
+        settings.UsMarketDataProvider = UsMarketDataProvider;
+        settings.JapanMarketDataProvider = JapanMarketDataProvider;
+        settings.ExchangeRateProvider = ExchangeRateProvider;
+        settings.BrokerDataMode = BrokerDataMode;
+        settings.AlphaVantageApiKey = AlphaVantageApiKey;
+        settings.JQuantsApiKey = JQuantsApiKey;
+        settings.ApiTimeoutSeconds = ApiTimeoutSeconds;
+        settings.UseLastValueOnApiFailure = UseLastValueOnApiFailure;
+        settings.SaveLoginCredentials = SaveLoginCredentials;
+        settings.EnableApiResponseLog = EnableApiResponseLog;
+        settings.ThemeMode = ToStoredThemeMode(ThemeMode);
+        settings.DisplayDensity = DisplayDensity switch
         {
-            DataDisplayMode = _loadSettings().DataDisplayMode,
-            MarketDataMode = MarketDataMode,
-            UsMarketDataProvider = UsMarketDataProvider,
-            JapanMarketDataProvider = JapanMarketDataProvider,
-            ExchangeRateProvider = ExchangeRateProvider,
-            BrokerDataMode = BrokerDataMode,
-            AlphaVantageApiKey = AlphaVantageApiKey,
-            JQuantsApiKey = JQuantsApiKey,
-            ApiTimeoutSeconds = ApiTimeoutSeconds,
-            UseLastValueOnApiFailure = UseLastValueOnApiFailure,
-            SaveLoginCredentials = SaveLoginCredentials,
-            EnableApiResponseLog = EnableApiResponseLog,
-            ThemeMode = ToStoredThemeMode(ThemeMode),
-            IsSidebarCollapsed = _loadSettings().IsSidebarCollapsed,
-            StockListDisplayMode = _loadSettings().StockListDisplayMode,
-            StockListFilterJson = _loadSettings().StockListFilterJson,
-            LastDashboardCompositionMode = _loadSettings().LastDashboardCompositionMode,
-            LastOpenedPage = _loadSettings().LastOpenedPage
+            "コンパクト" => "Compact",
+            "大きな文字" => "LargeText",
+            _ => "Standard"
         };
         _saveSettings(settings);
         _afterSave(settings);

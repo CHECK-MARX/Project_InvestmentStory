@@ -24,7 +24,7 @@
     </Style>
 
     <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="20" />
+        <Setter Property="FontSize" Value="{DynamicResource UiSectionTitleFontSize}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
         <Setter Property="Margin" Value="0,0,0,12" />
@@ -32,19 +32,19 @@
 
     <Style x:Key="LabelTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
-        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontSize" Value="{DynamicResource UiLabelFontSize}" />
         <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
 
     <Style x:Key="MetricValueTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
-        <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontSize" Value="{DynamicResource UiMetricValueFontSize}" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <Style x:Key="SubtleTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{DynamicResource UiSubtleFontSize}" />
     </Style>
 
     <Style TargetType="TabControl">

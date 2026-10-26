@@ -21,6 +21,10 @@
                             <TextBlock Text="テーマ" Style="{StaticResource LabelTextStyle}" />
                             <ComboBox ItemsSource="{Binding ThemeModes}" SelectedItem="{Binding ThemeMode}" Margin="0,0,14,10" />
                         </StackPanel>
+                        <StackPanel Width="260">
+                            <TextBlock Text="表示密度" Style="{StaticResource LabelTextStyle}" />
+                            <ComboBox ItemsSource="{Binding DisplayDensityModes}" SelectedItem="{Binding DisplayDensity}" Margin="0,0,14,10" />
+                        </StackPanel>
                     </WrapPanel>
                     <TextBlock Text="テーマは保存後すぐに反映され、次回起動時にも維持されます。"
                                Foreground="{DynamicResource MutedTextBrush}"
@@ -58,11 +62,11 @@
                         </StackPanel>
                         <StackPanel Width="260">
                             <TextBlock Text="Alpha Vantage API Key" Style="{StaticResource LabelTextStyle}" />
-                            <PasswordBox x:Name="AlphaVantagePasswordBox" PasswordChanged="AlphaVantagePasswordBox_OnPasswordChanged" Height="34" Margin="0,0,14,10" />
+                            <PasswordBox x:Name="AlphaVantagePasswordBox" PasswordChanged="AlphaVantagePasswordBox_OnPasswordChanged" Margin="0,0,14,10" />
                         </StackPanel>
                         <StackPanel Width="260">
                             <TextBlock Text="J-Quants API Key / Token" Style="{StaticResource LabelTextStyle}" />
-                            <PasswordBox x:Name="JQuantsPasswordBox" PasswordChanged="JQuantsPasswordBox_OnPasswordChanged" Height="34" Margin="0,0,14,10" />
+                            <PasswordBox x:Name="JQuantsPasswordBox" PasswordChanged="JQuantsPasswordBox_OnPasswordChanged" Margin="0,0,14,10" />
                         </StackPanel>
                         <StackPanel Width="180">
                             <TextBlock Text="APIタイムアウト秒数" Style="{StaticResource LabelTextStyle}" />

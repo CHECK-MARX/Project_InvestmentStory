@@ -13,7 +13,8 @@
         MinHeight="720"
         MinWidth="1100"
         Background="{DynamicResource WindowBackgroundBrush}"
-        FontFamily="Yu Gothic UI">
+        FontFamily="Yu Gothic UI"
+        FontSize="{Binding UiFontSize}">
     <Window.Resources>
         <infra:BindingProxy x:Key="VmProxy" Data="{Binding}" />
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
@@ -70,6 +71,7 @@
     </Window.Resources>
 
     <Grid>
+    <Grid x:Name="AppShell" IsEnabled="{Binding IsAppContentEnabled}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="{Binding Data.SidebarWidth, Source={StaticResource VmProxy}}" />
             <ColumnDefinition Width="*" />
@@ -252,6 +254,10 @@
                                 </Style.Triggers>
                             </Style>
                         </StackPanel.Style>
+                        <Button Content="画面を隠す"
+                                Command="{Binding TogglePrivacyModeCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                ToolTip="画面共有向けに全データとツールチップを隠します" />
                         <Button Content="サンプル初期化"
                                 Command="{Binding ResetSampleDataCommand}"
                                 Style="{StaticResource SecondaryButtonStyle}"
@@ -289,5 +295,23 @@
             </Border>
             <ContentControl Grid.Row="1" Content="{Binding CurrentPage}" />
         </Grid>
+    </Grid>
+    <Grid x:Name="PrivacyOverlay" Visibility="{Binding PrivacyOverlayVisibility}"
+          Background="{DynamicResource WindowBackgroundBrush}"
+          Panel.ZIndex="10">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+            <TextBlock Text="画面共有モード"
+                       FontSize="30" FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Foreground="{DynamicResource PrimaryTextBrush}" />
+            <TextBlock Text="金額・数量・口座・データベースの場所を含む画面全体を隠しています。解除するまで操作できません。"
+                       Margin="0,18" TextWrapping="Wrap" TextAlignment="Center"
+                       Foreground="{DynamicResource SecondaryTextBrush}" />
+            <Button x:Name="PrivacyReturnButton" Content="表示を戻す"
+                    Command="{Binding TogglePrivacyModeCommand}"
+                    Style="{StaticResource ActionButtonStyle}"
+                    HorizontalAlignment="Center" />
+        </StackPanel>
+    </Grid>
     </Grid>
 </Window>

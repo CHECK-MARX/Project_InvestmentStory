@@ -34,6 +34,8 @@ public sealed class MainViewModel : ObservableObject
     private object _currentPage;
     private string _currentTitle = "ダッシュボード";
     private bool _isSidebarCollapsed;
+    private bool _isPrivacyMode;
+    private string _displayDensity = "Standard";
     private bool _isSampleMode;
     private bool _startupDividendVerificationStarted;
     private ExchangeRateQuote? _cashValuationQuote;
@@ -55,14 +57,17 @@ public sealed class MainViewModel : ObservableObject
             ["AMD"] = (563m, 0m)
         };
 
-    public MainViewModel()
+    public MainViewModel(InvestmentStoryRepository? normalRepository = null)
     {
-        _normalRepository = new InvestmentStoryRepository();
+        _normalRepository = normalRepository ?? new InvestmentStoryRepository();
         _normalRepository.Initialize();
         _repository = _normalRepository;
         var settings = _normalRepository.GetSettings();
         ThemeManager.Apply(settings.ThemeMode);
         _isSidebarCollapsed = settings.IsSidebarCollapsed;
+        _isPrivacyMode = settings.IsPrivacyMode;
+        _displayDensity = UiDensityManager.Normalize(settings.DisplayDensity);
+        UiDensityManager.Apply(_displayDensity);
         _exchangeRateService = new ExchangeRateProviderFactory(() => _repository.GetSettings());
 
         Dashboard = new DashboardViewModel(RecordCurrentPortfolioSnapshot, OpenTodayReview, OpenTodayReviewItem);
@@ -242,6 +247,7 @@ public sealed class MainViewModel : ObservableObject
         });
         RefreshCommand = new RelayCommand(LoadData);
         ToggleSidebarCommand = new RelayCommand(ToggleSidebar);
+        TogglePrivacyModeCommand = new RelayCommand(TogglePrivacyMode);
         ToggleSampleModeCommand = new RelayCommand(ToggleSampleMode);
         ResetSampleDataCommand = new RelayCommand(ResetSampleData);
 
@@ -260,6 +266,7 @@ public sealed class MainViewModel : ObservableObject
     public NisaViewModel Nisa { get; }
     public ReminderViewModel Reminders { get; }
     public event Action? DataRefreshed;
+    public event Action<bool>? PrivacyModeChanged;
     public SimpleRegistrationViewModel SimpleRegistration { get; }
     public StockListViewModel StockList { get; }
     public StockEditorViewModel StockEditor { get; }
@@ -290,6 +297,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ShowSettingsCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand ToggleSidebarCommand { get; }
+    public ICommand TogglePrivacyModeCommand { get; }
     public ICommand ToggleSampleModeCommand { get; }
     public ICommand ResetSampleDataCommand { get; }
 
@@ -313,6 +321,22 @@ public sealed class MainViewModel : ObservableObject
     public string DataModeDescription => IsSampleMode ? "サンプルデータ表示中" : "通常データ表示中";
     public string SampleModeToggleText => IsSampleMode ? "通常データへ戻る" : "サンプルモード";
     public Visibility SampleModeVisibility => IsSampleMode ? Visibility.Visible : Visibility.Collapsed;
+    public bool IsAppContentEnabled => !IsPrivacyMode;
+    public Visibility PrivacyOverlayVisibility => IsPrivacyMode ? Visibility.Visible : Visibility.Collapsed;
+    public double UiFontSize => UiDensityManager.FontSize(_displayDensity);
+
+    public bool IsPrivacyMode
+    {
+        get => _isPrivacyMode;
+        private set
+        {
+            if (SetProperty(ref _isPrivacyMode, value))
+            {
+                OnPropertyChanged(nameof(IsAppContentEnabled));
+                OnPropertyChanged(nameof(PrivacyOverlayVisibility));
+            }
+        }
+    }
 
     public bool IsSidebarCollapsed
     {
@@ -720,6 +744,22 @@ public sealed class MainViewModel : ObservableObject
         _repository.SaveSettings(settings);
     }
 
+    private void TogglePrivacyMode()
+    {
+        var next = !IsPrivacyMode;
+        var normal = _normalRepository.GetSettings();
+        normal.IsPrivacyMode = next;
+        _normalRepository.SaveSettings(normal);
+        if (IsSampleMode)
+        {
+            var sample = _repository.GetSettings();
+            sample.IsPrivacyMode = next;
+            _repository.SaveSettings(sample);
+        }
+        IsPrivacyMode = next;
+        PrivacyModeChanged?.Invoke(next);
+    }
+
     private void ToggleSampleMode()
     {
         if (CashLedger.CsvImport.IsBusy || CsvImport.IsBusy || Performance.IsBusy) return;
@@ -809,6 +849,8 @@ public sealed class MainViewModel : ObservableObject
             EnableApiResponseLog = source.EnableApiResponseLog,
             ThemeMode = source.ThemeMode,
             IsSidebarCollapsed = source.IsSidebarCollapsed,
+            IsPrivacyMode = source.IsPrivacyMode,
+            DisplayDensity = source.DisplayDensity,
             StockListDisplayMode = source.StockListDisplayMode,
             StockListFilterJson = source.StockListFilterJson,
             LastDashboardCompositionMode = source.LastDashboardCompositionMode,
@@ -839,6 +881,9 @@ public sealed class MainViewModel : ObservableObject
     {
         ThemeManager.Apply(settings.ThemeMode);
         IsSidebarCollapsed = settings.IsSidebarCollapsed;
+        _displayDensity = UiDensityManager.Normalize(settings.DisplayDensity);
+        UiDensityManager.Apply(_displayDensity);
+        OnPropertyChanged(nameof(UiFontSize));
     }
 
     private void ShowSimpleRegistration()

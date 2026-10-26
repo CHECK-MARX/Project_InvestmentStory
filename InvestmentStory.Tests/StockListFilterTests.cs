@@ -28,6 +28,7 @@ public sealed class StockListFilterTests
         var restored = Create(_ => { }, savedJson);
         restored.Update(snapshots);
         Assert.Single(restored.Rows);
+        Assert.True(restored.HasAdvancedFilters);
         Assert.Equal("MSFT", restored.Rows[0].Ticker);
         restored.ResetFiltersCommand.Execute(null);
         Assert.Equal(3, restored.Rows.Count);
@@ -44,6 +45,47 @@ public sealed class StockListFilterTests
 
         Assert.Contains("評価額合計 算出不可", viewModel.VisibleSummary);
         Assert.Contains("確認済み 1,000円 / 未確認 1 件", viewModel.VisibleSummary);
+    }
+
+    [Fact]
+    public void ColumnLayoutSurvivesFilterSaveAndViewModelReload()
+    {
+        string? saved = null;
+        var viewModel = Create(json => saved = json);
+        const string layout = "[{\"Index\":0,\"Width\":100,\"DisplayIndex\":0}]";
+        viewModel.SaveColumnLayout(layout);
+        Assert.NotNull(saved);
+        viewModel.SearchText = "NVDA";
+        viewModel.SaveFiltersCommand.Execute(null);
+
+        var restored = Create(_ => { }, saved);
+        Assert.Equal(layout, restored.ColumnLayoutJson);
+        Assert.Equal("NVDA", restored.SearchText);
+
+        var legacy = Create(_ => { },
+            "{\"SearchText\":\"MO\",\"Broker\":\"すべて\",\"Account\":\"すべて\",\"Sector\":\"すべて\",\"Quality\":\"すべて\",\"Filter\":\"現在保有のみ\",\"Grouping\":\"ポジション別\"}");
+        Assert.Equal(string.Empty, legacy.ColumnLayoutJson);
+    }
+
+    [Fact]
+    public void AggregateSumCanExpandBackToSeparateAccounts()
+    {
+        var taxable = Snapshot("NVDA", "NVIDIA", "SBI", "Technology", 1000m);
+        var nisa = Snapshot("NVDA", "NVIDIA", "SBI", "Technology", 2000m);
+        nisa.Position.Stock.AccountType = AccountTypes.NisaGrowth;
+        var vm = Create(_ => { });
+        vm.Update([taxable, nisa]);
+        vm.SelectedGroupingMode = "銘柄集約";
+
+        var aggregate = Assert.Single(vm.Rows);
+        Assert.Contains("3,000", aggregate.MarketValueJpy);
+        Assert.Equal(2, aggregate.Snapshots.Count);
+        vm.ExpandSelectedCommand.Execute(null);
+
+        Assert.Equal("ポジション別", vm.SelectedGroupingMode);
+        Assert.Equal(2, vm.Rows.Count);
+        Assert.Equal(2, vm.Rows.Select(x => x.AccountType).Distinct().Count());
+        Assert.NotNull(vm.SelectedRow);
     }
 
     private static StockListViewModel Create(Action<string> save, string? json = null) =>

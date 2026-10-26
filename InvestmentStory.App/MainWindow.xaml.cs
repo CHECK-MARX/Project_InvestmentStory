@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Threading;
 using InvestmentStory.App.Dialogs;
 using InvestmentStory.App.ViewModels;
 using Microsoft.Data.Sqlite;
@@ -10,15 +12,21 @@ namespace InvestmentStory.App;
 public partial class MainWindow : Window
 {
     private System.Windows.Forms.NotifyIcon? _reminderIcon;
+    private IInputElement? _focusBeforePrivacy;
 
-    public MainWindow()
+    public MainWindow() : this(new MainViewModel())
+    {
+    }
+
+    public MainWindow(MainViewModel viewModel)
     {
         InitializeComponent();
-        DataContext = new MainViewModel();
+        DataContext = viewModel;
         if (DataContext is MainViewModel mainViewModel)
         {
             mainViewModel.DataRefreshed += PresentWindowsReminders;
             mainViewModel.Reminders.NotificationModeChanged += PresentWindowsReminders;
+            mainViewModel.PrivacyModeChanged += OnPrivacyModeChanged;
         }
         Loaded += OnLoaded;
         Closing += OnClosing;
@@ -30,6 +38,7 @@ public partial class MainWindow : Window
         Loaded -= OnLoaded;
         if (DataContext is MainViewModel mainViewModel)
         {
+            if (mainViewModel.IsPrivacyMode) PrivacyReturnButton.Focus();
             PresentWindowsReminders();
             await mainViewModel.VerifyDividendSchedulesOnStartupAsync();
         }
@@ -37,7 +46,7 @@ public partial class MainWindow : Window
 
     private void PresentWindowsReminders()
     {
-        if (DataContext is not MainViewModel mainViewModel) return;
+        if (DataContext is not MainViewModel mainViewModel || mainViewModel.IsPrivacyMode) return;
         try
         {
             var pending = mainViewModel.Reminders.GetPendingWindowsNotifications();
@@ -53,6 +62,21 @@ public partial class MainWindow : Window
         {
             mainViewModel.Reminders.ReportWindowsError(ex.Message);
         }
+    }
+
+    private void OnPrivacyModeChanged(bool hidden)
+    {
+        if (_reminderIcon is not null) _reminderIcon.Visible = !hidden;
+        if (hidden)
+        {
+            _focusBeforePrivacy = Keyboard.FocusedElement;
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => PrivacyReturnButton.Focus());
+            return;
+        }
+        if (_focusBeforePrivacy is UIElement { IsEnabled: true } previous)
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => previous.Focus());
+        _focusBeforePrivacy = null;
+        PresentWindowsReminders();
     }
 
     private static System.Windows.Forms.NotifyIcon CreateReminderIcon(MainViewModel mainViewModel)
@@ -72,6 +96,14 @@ public partial class MainWindow : Window
         if (DataContext is not MainViewModel mainViewModel ||
             !mainViewModel.Simulation.HasUnsavedDividendPlanChanges)
         {
+            return;
+        }
+
+        if (mainViewModel.IsPrivacyMode)
+        {
+            e.Cancel = true;
+            MessageBox.Show(this, "画面共有モードを解除してから終了してください。",
+                "Investment Story", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 

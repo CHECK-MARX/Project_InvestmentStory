@@ -34,6 +34,7 @@ public sealed class StockListViewModel : ObservableObject
     private string _selectedSector = "すべて";
     private string _selectedQuality = "すべて";
     private string _visibleSummary = string.Empty;
+    private string _columnLayoutJson = string.Empty;
 
     public StockListViewModel(
         Action createNew,
@@ -67,6 +68,7 @@ public sealed class StockListViewModel : ObservableObject
         RefreshMissingCommand = new RelayCommand(_refreshMissing);
         ResetFiltersCommand = new RelayCommand(ResetFilters);
         SaveFiltersCommand = new RelayCommand(SaveFilters);
+        ExpandSelectedCommand = new RelayCommand(ExpandSelectedAccount, () => SelectedRow?.IsAggregated == true);
         if (!string.IsNullOrWhiteSpace(savedFilterJson))
         {
             try
@@ -81,6 +83,7 @@ public sealed class StockListViewModel : ObservableObject
                     _selectedQuality = saved.Quality ?? "すべて";
                     if (Filters.Contains(saved.Filter)) _selectedFilter = saved.Filter;
                     if (GroupingModes.Contains(saved.Grouping)) _selectedGroupingMode = saved.Grouping;
+                    _columnLayoutJson = saved.ColumnLayoutJson ?? string.Empty;
                 }
             }
             catch (JsonException) { /* Ignore obsolete filter settings. */ }
@@ -88,6 +91,16 @@ public sealed class StockListViewModel : ObservableObject
     }
 
     public ObservableCollection<StockRowViewModel> Rows { get; } = new();
+    public string ColumnLayoutJson => _columnLayoutJson;
+    public bool HasAdvancedFilters => SelectedBroker != "すべて" || SelectedAccount != "すべて" ||
+                                      SelectedSector != "すべて" || SelectedQuality != "すべて";
+
+    public void SaveColumnLayout(string json)
+    {
+        if (string.Equals(_columnLayoutJson, json, StringComparison.Ordinal)) return;
+        _columnLayoutJson = json;
+        _saveFilterState(SerializeFilterState());
+    }
 
     public bool FocusPosition(string positionKey)
     {
@@ -116,6 +129,7 @@ public sealed class StockListViewModel : ObservableObject
     public ICommand RefreshMissingCommand { get; }
     public ICommand ResetFiltersCommand { get; }
     public ICommand SaveFiltersCommand { get; }
+    public RelayCommand ExpandSelectedCommand { get; }
     public IReadOnlyList<string> BrokerFilters { get; private set; } = new[] { "すべて" };
     public IReadOnlyList<string> AccountFilters { get; private set; } = new[] { "すべて" };
     public IReadOnlyList<string> SectorFilters { get; private set; } = new[] { "すべて" };
@@ -236,6 +250,7 @@ public sealed class StockListViewModel : ObservableObject
                 DetailCommand.RaiseCanExecuteChanged();
                 DeleteCommand.RaiseCanExecuteChanged();
                 RefreshSelectedCommand.RaiseCanExecuteChanged();
+                ExpandSelectedCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -410,16 +425,26 @@ public sealed class StockListViewModel : ObservableObject
         RebuildRows();
     }
 
+    private void ExpandSelectedAccount()
+    {
+        if (SelectedRow is not { IsAggregated: true } aggregate) return;
+        var positionKey = SecurityIdentityService.BuildPositionKey(aggregate.Snapshots[0].Position);
+        SelectedGroupingMode = "ポジション別";
+        SelectedRow = Rows.FirstOrDefault(x => x.DetailKey == positionKey);
+    }
+
     private void SaveFilters()
     {
-        _saveFilterState(JsonSerializer.Serialize(new StockListFilterState(
-            SearchText, SelectedBroker, SelectedAccount, SelectedSector, SelectedQuality,
-            SelectedFilter, SelectedGroupingMode)));
+        _saveFilterState(SerializeFilterState());
         Message = "検索条件を保存しました。";
     }
 
+    private string SerializeFilterState() => JsonSerializer.Serialize(new StockListFilterState(
+        SearchText, SelectedBroker, SelectedAccount, SelectedSector, SelectedQuality,
+        SelectedFilter, SelectedGroupingMode, _columnLayoutJson));
+
     private sealed record StockListFilterState(string SearchText, string Broker, string Account,
-        string Sector, string Quality, string Filter, string Grouping);
+        string Sector, string Quality, string Filter, string Grouping, string ColumnLayoutJson = "");
 
     private static string AggregateKey(StockSnapshot snapshot)
     {

@@ -46,8 +46,8 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="RowBackground" Value="{DynamicResource RowBackground1Brush}" />
         <Setter Property="AlternatingRowBackground" Value="{DynamicResource RowBackground2Brush}" />
-        <Setter Property="RowHeight" Value="42" />
-        <Setter Property="ColumnHeaderHeight" Value="42" />
+        <Setter Property="RowHeight" Value="{DynamicResource UiGridRowHeight}" />
+        <Setter Property="ColumnHeaderHeight" Value="{DynamicResource UiGridHeaderHeight}" />
         <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderBrush}" />
         <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource BorderBrush}" />
         <Setter Property="ScrollViewer.CanContentScroll" Value="True" />

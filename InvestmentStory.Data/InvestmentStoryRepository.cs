@@ -769,6 +769,8 @@ public sealed class InvestmentStoryRepository
             EnableApiResponseLog = GetBoolSetting(values, nameof(AppSettings.EnableApiResponseLog), false),
             ThemeMode = GetSetting(values, nameof(AppSettings.ThemeMode), "Light"),
             IsSidebarCollapsed = GetBoolSetting(values, nameof(AppSettings.IsSidebarCollapsed), false),
+            IsPrivacyMode = GetBoolSetting(values, nameof(AppSettings.IsPrivacyMode), false),
+            DisplayDensity = GetSetting(values, nameof(AppSettings.DisplayDensity), "Standard"),
             StockListDisplayMode = GetSetting(values, nameof(AppSettings.StockListDisplayMode), "基本"),
             StockListFilterJson = GetSetting(values, nameof(AppSettings.StockListFilterJson), string.Empty),
             LastDashboardCompositionMode = GetSetting(values, nameof(AppSettings.LastDashboardCompositionMode), "Country"),
@@ -811,6 +813,8 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.EnableApiResponseLog), settings.EnableApiResponseLog.ToString());
         UpsertSetting(connection, transaction, nameof(AppSettings.ThemeMode), settings.ThemeMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.IsSidebarCollapsed), settings.IsSidebarCollapsed.ToString());
+        UpsertSetting(connection, transaction, nameof(AppSettings.IsPrivacyMode), settings.IsPrivacyMode.ToString());
+        UpsertSetting(connection, transaction, nameof(AppSettings.DisplayDensity), settings.DisplayDensity);
         UpsertSetting(connection, transaction, nameof(AppSettings.StockListDisplayMode), settings.StockListDisplayMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.StockListFilterJson), settings.StockListFilterJson);
         UpsertSetting(connection, transaction, nameof(AppSettings.LastDashboardCompositionMode), settings.LastDashboardCompositionMode);
