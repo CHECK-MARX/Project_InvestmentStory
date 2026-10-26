@@ -4,6 +4,9 @@ namespace InvestmentStory.Core.Services;
 
 internal static class CsvFileEncoding
 {
+    // Parsers currently materialize CSV records, so reject oversized inputs before decoding them.
+    private const long MaxCsvBytes = 32L * 1024 * 1024;
+
     public static string[] ReadAllLines(string filePath)
     {
         return File.ReadAllLines(filePath, Detect(filePath));
@@ -44,6 +47,9 @@ internal static class CsvFileEncoding
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         using var stream = File.OpenRead(filePath);
+        if (stream.Length > MaxCsvBytes)
+            throw new InvalidOperationException(
+                $"CSVファイルが32 MiBの読込上限を超えています（{stream.Length / 1024d / 1024d:N1} MiB）。ファイルを分割してから取り込んでください。");
         Span<byte> bom = stackalloc byte[3];
         var read = stream.Read(bom);
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);

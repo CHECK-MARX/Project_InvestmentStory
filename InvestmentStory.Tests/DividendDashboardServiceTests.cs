@@ -46,8 +46,41 @@ public sealed class DividendDashboardServiceTests
         Assert.Equal(new[] { "実績", "未照合", "予定", "推定" }, result.Entries.Select(x => x.DataQuality));
         Assert.Equal(1_000m, result.ActualNetJpy);
         Assert.Equal(800m, result.UpcomingNetJpy);
-        Assert.Equal(2_000m, result.YearEndForecastJpy);
+        Assert.Equal(1_800m, result.YearEndForecastJpy);
+        Assert.Equal(200m, result.Months[2].UnmatchedJpy);
+        Assert.Equal(0m, result.Months[2].ForecastJpy);
+        Assert.Equal(result.YearEndForecastJpy, result.Months.Sum(x => x.ForecastJpy));
         Assert.Equal(1, result.UnmatchedCount);
+    }
+
+    [Fact]
+    public void FuturePaymentDueStaysUpcomingUntilScheduledDate()
+    {
+        var payment = Payment(5, _asOf.AddDays(3), DividendConstants.PaymentDue, 250m);
+        var result = _service.Build([payment], 2026, 0m, _asOf);
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal(DividendDashboardService.StatusUpcoming, entry.DisplayStatus);
+        Assert.False(entry.IsUnmatched);
+        Assert.Equal(250m, result.YearEndForecastJpy);
+    }
+
+    [Fact]
+    public void OverdueAmountIsVisibleForReviewButExcludedFromForecastAndRanking()
+    {
+        var actual = Payment(6, new DateTime(2026, 2, 10), DividendConstants.Actual, 100m, "AAA");
+        var overdue = Payment(7, new DateTime(2026, 3, 10), DividendConstants.Planned, 200m, "BBB");
+        overdue.GrossAmountJpy = 250m;
+        overdue.DomesticTaxAmountJpy = 50m;
+        var result = _service.Build([actual, overdue], 2026, 1_200m, _asOf);
+        Assert.Equal(1, result.UnmatchedCount);
+        Assert.Equal(200m, result.Months[2].UnmatchedJpy);
+        Assert.Equal(0m, result.Months[2].ForecastJpy);
+        Assert.Equal(100m, result.YearEndForecastJpy);
+        Assert.Equal(100m, result.GrossTotalJpy);
+        Assert.Equal(0m, result.DomesticTaxTotalJpy);
+        Assert.Equal("AAA", Assert.Single(result.Rankings).Ticker);
+        Assert.Equal(100m, result.Months[^1].CumulativeForecastJpy);
+        Assert.Equal(100m / 1_200m * 100m, result.AchievementRate);
     }
 
     [Fact]
@@ -55,6 +88,7 @@ public sealed class DividendDashboardServiceTests
     {
         var actual = Payment(10, new DateTime(2026, 6, 15), DividendConstants.Actual, 5_000m);
         var matchedPlan = Payment(11, new DateTime(2026, 6, 20), DividendConstants.Planned, 5_000m);
+        matchedPlan.MatchedActualDividendId = actual.Id;
 
         var result = _service.Build(new[] { actual, matchedPlan }, 2026, 0m, _asOf);
 
@@ -63,6 +97,21 @@ public sealed class DividendDashboardServiceTests
         Assert.Equal(5_000m, result.YearEndForecastJpy);
         Assert.Equal(5_000m, result.Months[5].ForecastJpy);
         Assert.Equal(0, result.UnmatchedCount);
+    }
+
+    [Fact]
+    public void UnlinkedMatchingActualKeepsPlanAsReviewWithoutDoubleCounting()
+    {
+        var actual = Payment(15, new DateTime(2026, 6, 15), DividendConstants.Actual, 5_000m);
+        var plan = Payment(16, new DateTime(2026, 6, 20), DividendConstants.Planned, 5_000m);
+        var result = _service.Build([actual, plan], 2026, 0m, _asOf);
+        Assert.Equal(2, result.Entries.Count);
+        Assert.Equal(DividendDashboardService.StatusNeedsReview,
+            result.Entries.Single(x => x.Payment.Id == plan.Id).DisplayStatus);
+        Assert.Equal(1, result.UnmatchedCount);
+        Assert.Equal(5_000m, result.YearEndForecastJpy);
+        Assert.Equal(5_000m, result.Months[5].UnmatchedJpy);
+        Assert.Equal(5_000m, result.Months[5].ForecastJpy);
     }
 
     [Fact]
@@ -130,6 +179,18 @@ public sealed class DividendDashboardServiceTests
 
         Assert.Equal(2, result.Entries.Count);
         Assert.Equal(1_600m, result.YearEndForecastJpy);
+    }
+
+    [Fact]
+    public void YearBoundaryActualPreventsPreviousYearPlanFromRemainingOverdue()
+    {
+        var planned = Payment(80, new DateTime(2025, 12, 30), DividendConstants.Planned, 200m);
+        var actual = Payment(81, new DateTime(2026, 1, 3), DividendConstants.Actual, 200m);
+        planned.MatchedActualDividendId = actual.Id;
+        var result = _service.Build([planned, actual], 2025, 0m, new DateTime(2026, 1, 10));
+        Assert.Empty(result.Entries);
+        var notices = new ReminderService().Build([planned, actual], [], new DateTime(2026, 1, 10));
+        Assert.Empty(notices);
     }
 
     private static DividendPayment Payment(

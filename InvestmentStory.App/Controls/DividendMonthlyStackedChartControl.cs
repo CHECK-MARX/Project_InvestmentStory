@@ -48,7 +48,8 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
         }
 
         var left = 76d;
-        var top = 68d;
+        var legendBottom = DrawLegend(dc, text);
+        var top = legendBottom + 53d;
         var right = 24d;
         var bottom = 42d;
         var width = ActualWidth - left - right;
@@ -58,8 +59,8 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
             .Select(month => entries.Where(x => x.Month == month).Sum(x => x.NetJpyValue))
             .Max() * 1.15m);
 
-        DrawLegend(dc, text, secondary);
-        DrawText(dc, "税引後配当額（円）", 11, 4, 28, secondary);
+        DrawText(dc, "棒の色＝入金状態  ／  棒の区切り＝銘柄別", 11, 4, legendBottom + 7, secondary);
+        DrawText(dc, "税引後配当額（円）  ・  凡例クリックで表示切替／棒にマウスを重ねると銘柄・金額を表示", 10, 4, legendBottom + 25, secondary);
         for (var tick = 0; tick <= 4; tick++)
         {
             var y = top + height - height * tick / 4d;
@@ -73,6 +74,8 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
                 .OrderByDescending(x => x.IsActual)
                 .ThenBy(x => x.Ticker)
                 .ToList();
+            var visibleEntries = monthEntries.Where(x => x.NetJpyValue > 0m
+                && IsSeriesVisible($"status:{x.ScheduleStatus}")).ToList();
             var center = left + slot * (month - 1) + slot / 2d;
             var barWidth = Math.Clamp(slot * 0.58d, 12d, 44d);
             var y = top + height;
@@ -81,20 +84,27 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
                 : BuildMonthTooltip(month, monthEntries);
             AddHitTarget(new Rect(left + slot * (month - 1), top, slot, height + 30),
                 monthTooltip, month: month, seriesKey: "month:summary");
-            foreach (var entry in monthEntries)
+            foreach (var entry in visibleEntries)
             {
-                if (entry.NetJpyValue <= 0m) continue;
                 var seriesKey = $"status:{entry.ScheduleStatus}";
-                if (!IsSeriesVisible(seriesKey)) continue;
-                var segmentHeight = Math.Max(3d, (double)(entry.NetJpyValue / max) * height);
+                var segmentHeight = Math.Max(1d, (double)(entry.NetJpyValue / max) * height);
                 var rectangle = new Rect(center - barWidth / 2d, y - segmentHeight, barWidth, segmentHeight);
                 var opacity = InteractionOpacity(entry.Ticker, month, entry.ScheduleStatus);
-                var brush = DividendChartColorRegistry.SecurityBrush(entry.Ticker, entry.ScheduleStatus, opacity);
+                var brush = DividendChartColorRegistry.StatusBrush(entry.ScheduleStatus, opacity);
                 var visual = DividendChartColorRegistry.ForStatus(entry.ScheduleStatus);
-                var outline = new Pen(new SolidColorBrush(DividendChartColorRegistry.ColorForSecurity(entry.Ticker)),
-                    entry.ScheduleStatus == InvestmentStory.Core.Models.DividendScheduleStatus.Paid ? .7 : 1.4);
+                var outline = new Pen(visual.DashPattern is null
+                        ? new SolidColorBrush(Color.FromRgb(15, 23, 42))
+                        : text,
+                    visual.DashPattern is null ? .8 : 1.4);
                 if (visual.DashPattern is not null) outline.DashStyle = new DashStyle(visual.DashPattern, 0);
                 dc.DrawRoundedRectangle(brush, outline, rectangle, 2, 2);
+                if (segmentHeight >= 20d && barWidth >= 30d)
+                {
+                    var tickerText = FormatText(entry.Ticker, 9, Brushes.Black);
+                    if (tickerText.Width <= barWidth - 5d)
+                        dc.DrawText(tickerText, new Point(center - tickerText.Width / 2d,
+                            rectangle.Y + (segmentHeight - tickerText.Height) / 2d));
+                }
                 var hitRectangle = rectangle;
                 if (hitRectangle.Height < 10d)
                 {
@@ -104,6 +114,12 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
                 AddHitTarget(hitRectangle, BuildEntryTooltip(entry, monthEntries, entries), entry.Ticker,
                     month, entry.ScheduleStatus, seriesKey);
                 y -= segmentHeight;
+            }
+
+            if (ActualWidth >= 850d && visibleEntries.Count > 0)
+            {
+                var totalText = FormatText(FormatBarTotal(visibleEntries.Sum(x => x.NetJpyValue)), 10, text);
+                dc.DrawText(totalText, new Point(center - totalText.Width / 2d, Math.Max(top, y - totalText.Height - 3d)));
             }
 
             DrawText(dc, $"{month}月", 11, center - 14, top + height + 10, secondary);
@@ -139,31 +155,35 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
                $"銘柄数: {entries.Select(x => x.Ticker).Distinct(StringComparer.OrdinalIgnoreCase).Count()}件";
     }
 
-    private void DrawLegend(DrawingContext dc, Brush text, Brush secondary)
+    private double DrawLegend(DrawingContext dc, Brush text)
     {
         var x = 4d;
         var y = 4d;
         foreach (var visual in DividendChartColorRegistry.Legend)
         {
             var seriesKey = $"status:{visual.Status}";
+            var hitWidth = 18 + Math.Max(48, visual.DisplayName.Length * 11);
+            if (x > 4d && x + hitWidth > ActualWidth - 8d)
+            {
+                x = 4d;
+                y += 22d;
+            }
             var rect = new Rect(x, y, 13, 13);
             var pen = new Pen(new SolidColorBrush(visual.Color), 1.2);
             if (visual.DashPattern is not null) pen.DashStyle = new DashStyle(visual.DashPattern, 0);
             dc.DrawRoundedRectangle(DividendChartColorRegistry.StatusBrush(visual.Status,
                 IsSeriesVisible(seriesKey) ? 1d : .22d), pen, rect, 2, 2);
             DrawText(dc, visual.DisplayName, 10, x + 18, y - 2, text);
-            var hitWidth = 18 + Math.Max(48, visual.DisplayName.Length * 11);
             AddHitTarget(new Rect(x, y - 2, hitWidth, 18), $"{visual.DisplayName}の表示を切り替えます。",
                 status: visual.Status, seriesKey: seriesKey, isLegend: true);
             x += hitWidth + 8;
-            if (x > Math.Max(420, ActualWidth - 180))
-            {
-                x = 4;
-                y += 22;
-            }
         }
-        DrawText(dc, "凡例クリック: 表示切替 / 棒クリック: 関連グラフを選択", 10, 4, 46, secondary);
+        return y + 13d;
     }
+
+    private static string FormatBarTotal(decimal value) => value >= 10_000m
+        ? $"{value / 10_000m:N1}万"
+        : $"{value:N0}円";
 
     private Brush ResourceBrush(string key, Brush fallback) => TryFindResource(key) as Brush ?? fallback;
 
@@ -174,9 +194,12 @@ public sealed class DividendMonthlyStackedChartControl : InteractiveDividendChar
         _ => $"{value:N0}"
     };
 
+    private static FormattedText FormatText(string value, double size, Brush brush) =>
+        new(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            new Typeface("Yu Gothic UI"), size, brush, 1.0);
+
     private static void DrawText(DrawingContext dc, string value, double size, double x, double y, Brush brush) =>
-        dc.DrawText(new FormattedText(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-            new Typeface("Yu Gothic UI"), size, brush, 1.0), new Point(x, y));
+        dc.DrawText(FormatText(value, size, brush), new Point(x, y));
 
     private static void OnItemsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {

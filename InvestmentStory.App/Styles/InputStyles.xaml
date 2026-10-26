@@ -2,7 +2,7 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework">
     <Style x:Key="InputTextBoxStyle" TargetType="TextBox">
-        <Setter Property="Height" Value="34" />
+        <Setter Property="Height" Value="{DynamicResource UiInputHeight}" />
         <Setter Property="Padding" Value="9,5" />
         <Setter Property="Margin" Value="0,0,14,10" />
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
@@ -22,7 +22,7 @@
     <Style TargetType="TextBox" BasedOn="{StaticResource InputTextBoxStyle}" />
 
     <Style TargetType="PasswordBox">
-        <Setter Property="Height" Value="34" />
+        <Setter Property="Height" Value="{DynamicResource UiInputHeight}" />
         <Setter Property="Padding" Value="9,5" />
         <Setter Property="Margin" Value="0,0,14,10" />
         <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
@@ -77,7 +77,7 @@
     </Style>
 
     <Style TargetType="ComboBox">
-        <Setter Property="Height" Value="34" />
+        <Setter Property="Height" Value="{DynamicResource UiInputHeight}" />
         <Setter Property="Padding" Value="9,5" />
         <Setter Property="Background" Value="{DynamicResource SurfaceBackgroundBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />

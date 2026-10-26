@@ -11,26 +11,83 @@ public sealed class DashboardViewModel : ObservableObject
     private readonly Action _recordSnapshot;
     private readonly PortfolioAnalyticsService _analyticsService = new();
     private DashboardSummary _summary = new();
+    private CashAssetSummary _cashAssets = new();
     private IReadOnlyList<StockSnapshot> _snapshots = Array.Empty<StockSnapshot>();
     private IReadOnlyList<PortfolioSnapshot> _portfolioSnapshots = Array.Empty<PortfolioSnapshot>();
-    private string _selectedCompositionMode = "国別";
+    private string _selectedCompositionMode = "分野別";
     private string _selectedHistoryPeriod = "1年";
+    private DateTime? _lastCsvImportAtUtc;
+    private TodayReviewOverview _todayReview = new(DateTime.Today, [], "");
 
-    public DashboardViewModel(Action? recordSnapshot = null)
+    public DashboardViewModel(Action? recordSnapshot = null, Action<TodayReviewKind>? openReview = null,
+        Action<TodayReviewItem>? openReviewItem = null)
     {
         _recordSnapshot = recordSnapshot ?? (() => { });
-        CompositionModes = new[] { "国別", "通貨別", "証券会社別", "資産種別別", "口座区分別", "セクター別" };
+        CompositionModes = new[] { "分野別", "国別", "通貨別", "証券会社別", "資産種別別", "口座区分別" };
         HistoryPeriods = new[] { "1か月", "3か月", "6か月", "1年", "3年", "全期間" };
-        RecordSnapshotCommand = new RelayCommand(_recordSnapshot);
+        RecordSnapshotCommand = new RelayCommand(_recordSnapshot,
+            () => _snapshots.All(x => x.HasKnownCurrentMarketValueJpy && x.HasKnownPurchaseCostJpy));
+        OpenReviewCommand = new RelayCommand(value =>
+        {
+            if (value is TodayReviewKind kind) openReview?.Invoke(kind);
+        });
+        OpenReviewItemCommand = new RelayCommand(value =>
+        {
+            if (value is TodayReviewItem item) openReviewItem?.Invoke(item);
+        });
     }
 
-    public string TotalCurrentMarketValue => Formatters.Jpy(_summary.TotalCurrentMarketValueJpy);
-    public string TotalUnrealizedGain => Formatters.SignedJpy(_summary.TotalUnrealizedGainJpy);
-    public string TotalUnrealizedGainRate => Formatters.SignedPercent(_summary.TotalUnrealizedGainRate);
+    private bool HasIncompleteValuation => _summary.UnknownCurrentMarketValuePositionCount > 0;
+    private bool HasIncompleteGain => HasIncompleteValuation || _summary.UnknownPurchaseCostPositionCount > 0;
+    public string TotalCurrentMarketValue => HasIncompleteValuation ? "算出不可" : Formatters.Jpy(_summary.TotalCurrentMarketValueJpy);
+    public string RegisteredCashTotal => _cashAssets.TotalRegisteredCashJpy is decimal amount
+        ? Formatters.Jpy(amount) : "算出不可";
+    public string SecuritiesAndRegisteredCashTotal => !HasIncompleteValuation && _cashAssets.TotalRegisteredCashJpy is decimal cash
+        ? Formatters.Jpy(_summary.TotalCurrentMarketValueJpy + cash) : "算出不可";
+    public string CashCoverageStatus => _cashAssets.Error.Length > 0 ? _cashAssets.Error
+        : _cashAssets.Balances.Count == 0 ? "現金残高未登録。0円とは扱いません。"
+        : $"基準日 {_cashAssets.AsOfDate:yyyy/MM/dd} / 円換算可能 {_cashAssets.IncludedCount} 件 / 集計できない口座・通貨 {_cashAssets.Balances.Count - _cashAssets.IncludedCount} 件";
+    public string KnownCashSubtotal => _cashAssets.KnownSubtotalJpy is decimal amount
+        ? $"確認できた現金の小計: {Formatters.Jpy(amount)}" : "確認できた現金の小計: 未確認";
+    public string CashTotalScopeNote => "株・投信の評価額＋登録口座の照合済み現金。未登録口座の現金は含みません。外貨は参考為替で換算します。受取配当は現金残高に含まれるため、別途加算しません。";
+    public ObservableCollection<CashAssetBalanceRowViewModel> CashBalances { get; } = new();
+
+    public void UpdateCashAssets(CashAssetSummary cashAssets)
+    {
+        _cashAssets = cashAssets;
+        CashBalances.Clear();
+        foreach (var balance in cashAssets.Balances) CashBalances.Add(new(balance));
+        OnPropertyChanged(nameof(RegisteredCashTotal));
+        OnPropertyChanged(nameof(SecuritiesAndRegisteredCashTotal));
+        OnPropertyChanged(nameof(CashCoverageStatus));
+        OnPropertyChanged(nameof(KnownCashSubtotal));
+    }
+    public string UnrealizedGainLabel => _summary.ReferencePurchaseCostPositionCount > 0 ? "含み損益（概算）" : "含み損益";
+    public string TotalUnrealizedGain => HasIncompleteGain
+        ? "算出不可" : Formatters.SignedJpy(_summary.TotalUnrealizedGainJpy);
+    public bool HasPositiveGain => !HasIncompleteGain && _summary.TotalUnrealizedGainJpy > 0m;
+    public bool HasNegativeGain => !HasIncompleteGain && _summary.TotalUnrealizedGainJpy < 0m;
+    public bool HasPositiveReturn => !HasIncompleteGain && _summary.TotalReturnJpy > 0m;
+    public bool HasNegativeReturn => !HasIncompleteGain && _summary.TotalReturnJpy < 0m;
+    public string TotalUnrealizedGainRate => HasIncompleteValuation
+        ? $"評価額未取得 {_summary.UnknownCurrentMarketValuePositionCount}件"
+        : _summary.UnknownPurchaseCostPositionCount > 0
+        ? $"取得原価未確認 {_summary.UnknownPurchaseCostPositionCount}件"
+        : _summary.ReferencePurchaseCostPositionCount > 0
+            ? $"参考取得額 {_summary.ReferencePurchaseCostPositionCount}件 / {Formatters.SignedPercent(_summary.TotalUnrealizedGainRate)}"
+            : Formatters.SignedPercent(_summary.TotalUnrealizedGainRate);
+    public string UnrealizedGainRateExplanation => "現在保有の含み損益 ÷ 現在保有の取得額（期間利回りではありません）";
+    public string ReferencePurchaseCostNote => _summary.ReferencePurchaseCostPositionCount == 0
+        ? string.Empty
+        : "一部の取得額は参考為替で換算した値です。証券会社の円建て決済額・税務上の取得価額ではありません。";
     public string ForeignAssetTotalUsd => Formatters.Money(_summary.ForeignAssetTotalUsd, "USD");
-    public string ForeignAssetTotalJpy => Formatters.Jpy(_summary.ForeignAssetTotalJpy);
-    public string FxIncludedUnrealizedGain => Formatters.SignedJpy(_summary.FxIncludedUnrealizedGainJpy);
-    public string CurrentUsdJpy => _summary.CurrentUsdJpyRate == 0m ? "-" : $"{_summary.CurrentUsdJpyRate:N2} JPY/USD";
+    public string ForeignAssetTotalJpy => _snapshots.Any(x =>
+        x.Position.Stock.Currency.Equals("USD", StringComparison.OrdinalIgnoreCase) && !x.HasKnownCurrentMarketValueJpy)
+        ? "算出不可" : Formatters.Jpy(_summary.ForeignAssetTotalJpy);
+    public string FxIncludedUnrealizedGain => HasIncompleteGain ? "算出不可"
+        : (_summary.ReferencePurchaseCostPositionCount > 0 ? "概算 " : string.Empty) + Formatters.SignedJpy(_summary.FxIncludedUnrealizedGainJpy);
+    public string CurrentUsdJpy => !PositionEvidenceService.HasUsableForeignExchangeRate(_summary.CurrentUsdJpyRate)
+        ? "未確認" : $"{_summary.CurrentUsdJpyRate:N2} JPY/USD";
     public string ExchangeRateAcquiredAt => _summary.ExchangeRateAcquiredAt == DateTime.MinValue
         ? "-"
         : _summary.ExchangeRateAcquiredAt.ToString("yyyy/MM/dd HH:mm");
@@ -44,26 +101,82 @@ public sealed class DashboardViewModel : ObservableObject
     public string AnnualGoalAchievementRate => Formatters.Percent(_summary.AnnualGoalAchievementRate);
     public string AnnualGoalGap => Formatters.Jpy(_summary.AnnualGoalGapJpy);
     public string Monthly100kGap => Formatters.Jpy(Math.Max(0m, 100_000m - _summary.MonthlyAveragePassiveIncomeForecastJpy));
-    public string TotalReturn => Formatters.SignedJpy(_summary.TotalReturnJpy);
-    public string TotalReturnRate => Formatters.SignedPercent(_summary.TotalReturnRate);
+    public string TotalReturn => HasIncompleteGain
+        ? "算出不可" : Formatters.SignedJpy(_summary.TotalReturnJpy);
+    public string TotalReturnLabel => _summary.ReferencePurchaseCostPositionCount > 0
+        ? "記録済み損益合計（概算）" : "記録済み損益合計（参考）";
+    public string TotalReturnExplanation => "現在保有の含み損益＋記録済み売却損益＋確認済み受取配当。未記録の取引・配当は含みません。";
+    public string PeriodReturnAvailability => "期間利回りは『運用成績』で、両時点の評価根拠・現金残高・外部入出金を確認して計算できます。";
     public string CumulativeDividend => Formatters.Jpy(_summary.CumulativeDividendJpy);
     public string RealizedGainLoss => Formatters.SignedJpy(_summary.RealizedGainLossJpy);
-    public string CapitalRecoveryRate => Formatters.Percent(_summary.CapitalRecoveryRate);
-    public string Top5ConcentrationRate => Formatters.Percent(_summary.Top5ConcentrationRate);
-    public string TotalAssetDayChange => _summary.TotalAssetDayChangeJpy is null ? "比較データなし" : Formatters.SignedJpy(_summary.TotalAssetDayChangeJpy.Value);
-    public string TotalAssetMonthChange => _summary.TotalAssetMonthChangeJpy is null ? "比較データなし" : Formatters.SignedJpy(_summary.TotalAssetMonthChangeJpy.Value);
+    public string CapitalRecoveryAvailability => "元本回収率: 通算投下元本が未確認のため算出不可";
+    public string Top5ConcentrationRate => HasIncompleteValuation ? "算出不可" : Formatters.Percent(_summary.Top5ConcentrationRate);
+    public string TotalAssetDayChange => HasIncompleteValuation || _summary.TotalAssetDayChangeJpy is null ? "比較データなし" : Formatters.SignedJpy(_summary.TotalAssetDayChangeJpy.Value);
+    public string TotalAssetMonthChange => HasIncompleteValuation || _summary.TotalAssetMonthChangeJpy is null ? "比較データなし" : Formatters.SignedJpy(_summary.TotalAssetMonthChangeJpy.Value);
     public double AnnualGoalProgressValue => (double)Math.Min(Math.Max(_summary.AnnualGoalAchievementRate, 0m), 100m);
     public string MarketDataStatus => $"USD/JPY {CurrentUsdJpy} / 為替更新 {ExchangeRateAcquiredAt}";
-    public string DataUpdateStatus => string.IsNullOrWhiteSpace(_summary.ExchangeRateSource)
-        ? "データ取得元: 未取得"
-        : $"データ取得元: {_summary.ExchangeRateSource}";
+    public string DataUpdateStatus
+    {
+        get
+        {
+            var current = _snapshots.Where(x => x.Position.CurrentHolding.CurrentShares > 0m ||
+                x.Position.MutualFund.UnitsHeld > 0m).ToList();
+            var holdingDate = LatestDate(current.Select(x => x.Position.CurrentHolding.UpdatedAt));
+            var priceDate = LatestDate(current.Select(x => x.Position.IsMutualFund
+                ? x.Position.MutualFund.NavDate : x.Position.CurrentHolding.CurrentPriceAcquiredAt));
+            var fxDate = LatestDate(current.Where(x => !x.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Position.CurrentHolding.ExchangeRateAcquiredAt));
+            var importDate = _lastCsvImportAtUtc?.ToLocalTime().ToString("yyyy/MM/dd HH:mm") ?? "記録なし";
+            return $"保有残高基準日 {holdingDate} / 株価・基準価額 {priceDate} / 為替 {fxDate} / CSV取込 {importDate}";
+        }
+    }
+
+    public string DataCoverageStatus
+    {
+        get
+        {
+            var coverage = PositionEvidenceCoverage.Build(_snapshots, DateTime.Today);
+            return $"取得額: 確定 {coverage.ConfirmedCostCount} 件 / " +
+                   $"概算 {coverage.EstimatedCostCount} 件（評価額 {CoverageAmount(coverage.EstimatedCostMarketValueJpy)}） / " +
+                   $"未確認 {coverage.UnconfirmedCostCount} 件（損益集計対象外の評価額 {CoverageAmount(coverage.ExcludedMarketValueJpy)}） / " +
+                   $"評価額未取得 {coverage.UnknownMarketValueCount} 件 / " +
+                   $"株価・基準価額: 未取得 {coverage.MissingPriceCount} 件 / 更新遅れ {coverage.DelayedPriceCount} 件 / 時刻不明 {coverage.UnknownPriceTimeCount} 件 / " +
+                   $"為替: 未取得 {coverage.MissingFxCount} 件 / 更新遅れ {coverage.DelayedFxCount} 件 / 時刻不明 {coverage.UnknownFxTimeCount} 件";
+        }
+    }
+
+    private static string CoverageAmount(decimal? amount) =>
+        amount is decimal known ? Formatters.Jpy(known) : "算出不可";
+
+    private static string LatestDate(IEnumerable<DateTime> dates)
+    {
+        var latest = dates.Where(x => x != DateTime.MinValue).DefaultIfEmpty(DateTime.MinValue).Max();
+        return latest == DateTime.MinValue ? "未取得" : latest.ToString("yyyy/MM/dd");
+    }
     public IReadOnlyList<string> CompositionModes { get; }
     public IReadOnlyList<string> HistoryPeriods { get; }
     public ICommand RecordSnapshotCommand { get; }
+    public ICommand OpenReviewCommand { get; }
+    public ICommand OpenReviewItemCommand { get; }
+    public IReadOnlyList<TodayReviewCard> TodayReviewCards => _todayReview.Cards;
+    public string TodayReviewScope => _todayReview.ScopeNote;
+    public string TodayReviewDate => $"基準日 {_todayReview.AsOfDate:yyyy/MM/dd}";
+    public string RecordSnapshotStatus => _snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy || !x.HasKnownPurchaseCostJpy)
+        ? "取得額・評価額・現在為替が未確認の銘柄があるため、今日の資産履歴は記録できません。" : string.Empty;
     public ObservableCollection<ChartBarRowViewModel> AssetBars { get; } = new();
     public ObservableCollection<PortfolioSnapshotRowViewModel> PortfolioHistoryRows { get; } = new();
-    public ObservableCollection<ChartBarRowViewModel> CompositionBars { get; } = new();
+    public ObservableCollection<CompositionCategoryViewModel> CompositionCategories { get; } = new();
+    public string CompositionTotal => HasIncompleteValuation ? "算出不可" :
+        Formatters.Jpy(_snapshots.Where(x => x.CurrentMarketValueJpy > 0m).Sum(x => x.CurrentMarketValueJpy));
+    public string CompositionSummary => CompositionCategories.Count == 0
+        ? HasIncompleteValuation
+            ? $"評価額未取得が{_summary.UnknownCurrentMarketValuePositionCount}件あるため、資産構成を算出できません。"
+            : "評価額のある保有銘柄がありません。"
+        : $"{CompositionCategories.Count}分野・区分 / {CompositionCategories.SelectMany(x => x.Holdings.Select(h => h.Label)).Distinct().Count()}銘柄";
     public ObservableCollection<FxSensitivityRowViewModel> FxSensitivityRows { get; } = new();
+    public string CompositionBasisNote => SelectedCompositionMode == "国別"
+        ? "国別は銘柄の登録国による分類です。日本で保有する海外株式型投信も、登録国に従って表示します。"
+        : "保有株・投信の評価額に対する割合です。現金・MRFは含みません。";
     public ObservableCollection<NisaDashboardSummaryViewModel> NisaSummaries { get; } = new();
 
     public string SelectedCompositionMode
@@ -74,6 +187,7 @@ public sealed class DashboardViewModel : ObservableObject
             if (SetProperty(ref _selectedCompositionMode, value))
             {
                 RebuildCompositionBars();
+                OnPropertyChanged(nameof(CompositionBasisNote));
             }
         }
     }
@@ -96,7 +210,7 @@ public sealed class DashboardViewModel : ObservableObject
         {
             if (PortfolioHistoryRows.Count == 0)
             {
-                return "履歴データがまだありません。今後の起動時またはAPI/CSV更新時に日次スナップショットを記録します。";
+                return "履歴データがまだありません。取得額と評価額が揃った日の起動時またはAPI/CSV更新時に記録します。";
             }
 
             return PortfolioHistoryRows.Count == 1
@@ -108,11 +222,18 @@ public sealed class DashboardViewModel : ObservableObject
     public void Update(
         DashboardSummary summary,
         IReadOnlyList<StockSnapshot> snapshots,
-        IReadOnlyList<PortfolioSnapshot> portfolioSnapshots)
+        IReadOnlyList<PortfolioSnapshot> portfolioSnapshots,
+        DateTime? lastCsvImportAtUtc = null,
+        CashAssetSummary? cashAssets = null,
+        TodayReviewOverview? todayReview = null)
     {
         _summary = summary;
+        UpdateCashAssets(cashAssets ?? new CashAssetSummary());
         _snapshots = snapshots;
         _portfolioSnapshots = portfolioSnapshots;
+        _lastCsvImportAtUtc = lastCsvImportAtUtc;
+        if (todayReview is not null) _todayReview = todayReview;
+        ((RelayCommand)RecordSnapshotCommand).RaiseCanExecuteChanged();
         RebuildAssetBars();
         RebuildPortfolioHistoryRows(portfolioSnapshots);
         RebuildCompositionBars();
@@ -124,6 +245,10 @@ public sealed class DashboardViewModel : ObservableObject
     private void RebuildAssetBars()
     {
         AssetBars.Clear();
+        if (HasIncompleteValuation)
+        {
+            return;
+        }
         var values = new[]
         {
             Math.Abs(_summary.TotalCurrentMarketValueJpy),
@@ -133,13 +258,13 @@ public sealed class DashboardViewModel : ObservableObject
         var max = values.Max();
         if (max <= 0m)
         {
-            AssetBars.Add(new ChartBarRowViewModel("総資産", 0m, 1m));
+            AssetBars.Add(new ChartBarRowViewModel("株・投信の評価額", 0m, 1m));
             AssetBars.Add(new ChartBarRowViewModel("投資元本", 0m, 1m));
             AssetBars.Add(new ChartBarRowViewModel("含み損益", 0m, 1m, signed: true));
             return;
         }
 
-        AssetBars.Add(new ChartBarRowViewModel("総資産", _summary.TotalCurrentMarketValueJpy, max));
+        AssetBars.Add(new ChartBarRowViewModel("株・投信の評価額", _summary.TotalCurrentMarketValueJpy, max));
         AssetBars.Add(new ChartBarRowViewModel("投資元本", _summary.TotalPurchaseAmountJpy, max));
         AssetBars.Add(new ChartBarRowViewModel("含み損益", _summary.TotalUnrealizedGainJpy, max, signed: true));
     }
@@ -150,14 +275,13 @@ public sealed class DashboardViewModel : ObservableObject
         var fromDate = ResolveHistoryStartDate(DateTime.Today);
         var values = portfolioSnapshots
             .Where(x => fromDate is null || x.SnapshotDate.Date >= fromDate.Value)
-            .OrderByDescending(x => x.SnapshotDate)
-            .Take(20)
+            .GroupBy(x => x.SnapshotDate.Date)
+            .Select(group => group.OrderByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id).First())
             .OrderBy(x => x.SnapshotDate)
             .ToList();
-        var max = values.Count == 0 ? 0m : values.Max(x => x.TotalMarketValueJpy);
         foreach (var value in values)
         {
-            PortfolioHistoryRows.Add(new PortfolioSnapshotRowViewModel(value, max));
+            PortfolioHistoryRows.Add(new PortfolioSnapshotRowViewModel(value));
         }
 
         OnPropertyChanged(nameof(PortfolioHistoryMessage));
@@ -165,76 +289,54 @@ public sealed class DashboardViewModel : ObservableObject
 
     private void RebuildCompositionBars()
     {
-        CompositionBars.Clear();
-        var groups = BuildCompositionGroups().ToList();
-        if (groups.Count == 0)
+        CompositionCategories.Clear();
+        if (HasIncompleteValuation)
         {
-            CompositionBars.Add(new ChartBarRowViewModel("データなし", 0m, 1m));
+            OnPropertyChanged(nameof(CompositionTotal));
+            OnPropertyChanged(nameof(CompositionSummary));
             return;
         }
-
-        var top = groups
+        var valuedSnapshots = _snapshots.Where(x => x.CurrentMarketValueJpy > 0m).ToList();
+        var total = valuedSnapshots.Sum(x => x.CurrentMarketValueJpy);
+        var groups = valuedSnapshots.GroupBy(ResolveCompositionLabel)
+            .Select(group => new
+            {
+                Label = group.Key,
+                Amount = group.Sum(x => x.CurrentMarketValueJpy),
+                Holdings = group.GroupBy(x => SecuritySymbolNormalizer.NormalizeTicker(x.Position.Stock.Ticker))
+                    .Select(holding => new CompositionHoldingViewModel(holding.Key,
+                        holding.First().Position.Stock.Name, holding.Sum(x => x.CurrentMarketValueJpy)))
+                    .OrderByDescending(x => x.Amount)
+                    .ToList()
+            })
             .OrderByDescending(x => x.Amount)
-            .Take(5)
             .ToList();
-        var other = groups.Sum(x => x.Amount) - top.Sum(x => x.Amount);
-        if (other > 0m)
+        for (var index = 0; index < groups.Count; index++)
         {
-            top.Add(("その他", other));
+            var group = groups[index];
+            CompositionCategories.Add(new CompositionCategoryViewModel(
+                group.Label, group.Amount, total, group.Holdings, index));
         }
-
-        var max = top.Max(x => x.Amount);
-        foreach (var item in top)
-        {
-            CompositionBars.Add(new ChartBarRowViewModel(item.Label, item.Amount, max));
-        }
+        OnPropertyChanged(nameof(CompositionTotal));
+        OnPropertyChanged(nameof(CompositionSummary));
     }
 
-    private IEnumerable<(string Label, decimal Amount)> BuildCompositionGroups()
+    private string ResolveCompositionLabel(StockSnapshot snapshot)
     {
-        var valuedSnapshots = _snapshots
-            .Where(x => x.CurrentMarketValueJpy > 0m)
-            .ToList();
-
-        if (SelectedCompositionMode == "通貨別")
+        var stock = snapshot.Position.Stock;
+        return SelectedCompositionMode switch
         {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Currency) ? "未設定" : x.Position.Stock.Currency)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "証券会社別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Broker) ? "未設定" : x.Position.Stock.Broker)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "資産種別別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => x.Position.IsMutualFund ? "投資信託" : "株式")
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "口座区分別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.AccountType) ? "未設定" : x.Position.Stock.AccountType)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        if (SelectedCompositionMode == "セクター別")
-        {
-            return valuedSnapshots
-                .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Sector) ? "未設定" : x.Position.Stock.Sector)
-                .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
-        }
-
-        return valuedSnapshots
-            .GroupBy(x => string.IsNullOrWhiteSpace(x.Position.Stock.Country) ? "未設定" : x.Position.Stock.Country)
-            .Select(x => (x.Key, x.Sum(y => y.CurrentMarketValueJpy)));
+            "分野別" or "セクター別" => snapshot.Position.IsMutualFund
+                ? "投資信託" : StockSectorClassifier.Classify(stock).Sector,
+            "通貨別" => NonEmpty(stock.Currency),
+            "証券会社別" => NonEmpty(stock.Broker),
+            "資産種別別" => snapshot.Position.IsMutualFund ? "投資信託" : "株式",
+            "口座区分別" => NonEmpty(ResolveAccountType(snapshot)),
+            _ => NonEmpty(stock.Country)
+        };
     }
+
+    private static string NonEmpty(string value) => string.IsNullOrWhiteSpace(value) ? "未設定" : value.Trim();
 
     private void RebuildFxSensitivityRows()
     {
@@ -252,7 +354,7 @@ public sealed class DashboardViewModel : ObservableObject
         NisaSummaries.Clear();
         var order = new[] { AccountTypes.NisaGrowth, AccountTypes.NisaAccumulation, AccountTypes.NisaLegacy };
         var groups = _snapshots
-            .Where(x => x.CurrentMarketValueJpy > 0m || x.PurchaseTotalJpy > 0m)
+            .Where(x => x.Position.IsMutualFund ? x.Position.MutualFund.UnitsHeld > 0m : x.Position.CurrentHolding.CurrentShares > 0m)
             .GroupBy(ResolveAccountType)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.OrdinalIgnoreCase);
 

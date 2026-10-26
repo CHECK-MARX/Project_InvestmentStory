@@ -7,7 +7,7 @@
         <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
         <Style.Triggers>
             <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True">
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </DataTrigger>
         </Style.Triggers>
     </Style>
@@ -29,7 +29,7 @@
                 <Setter Property="Foreground" Value="{DynamicResource LossBrush}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}" Value="True">
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </DataTrigger>
         </Style.Triggers>
     </Style>
@@ -46,8 +46,8 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="RowBackground" Value="{DynamicResource RowBackground1Brush}" />
         <Setter Property="AlternatingRowBackground" Value="{DynamicResource RowBackground2Brush}" />
-        <Setter Property="RowHeight" Value="42" />
-        <Setter Property="ColumnHeaderHeight" Value="42" />
+        <Setter Property="RowHeight" Value="{DynamicResource UiGridRowHeight}" />
+        <Setter Property="ColumnHeaderHeight" Value="{DynamicResource UiGridHeaderHeight}" />
         <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderBrush}" />
         <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource BorderBrush}" />
         <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
@@ -72,7 +72,7 @@
             </Trigger>
             <Trigger Property="IsSelected" Value="True">
                 <Setter Property="Background" Value="{DynamicResource SelectedRowBackgroundBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -84,7 +84,7 @@
         <Style.Triggers>
             <Trigger Property="IsSelected" Value="True">
                 <Setter Property="Background" Value="{DynamicResource SelectedRowBackgroundBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
             </Trigger>
         </Style.Triggers>
     </Style>

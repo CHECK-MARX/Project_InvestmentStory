@@ -22,6 +22,9 @@ public sealed class StockSnapshot
     public decimal CurrentDividendYield { get; init; }
     public decimal ShareChangeRatio { get; init; }
     public decimal PurchaseTotalJpy { get; init; }
+    public bool HasKnownPurchaseCostJpy { get; init; } = true;
+    public bool IsReferencePurchaseCostJpy { get; init; }
+    public bool HasKnownCurrentMarketValueJpy { get; init; } = true;
     public decimal CurrentMarketValueJpy { get; init; }
     public decimal UnrealizedGainJpy { get; init; }
     public decimal CurrencyImpactJpy { get; init; }

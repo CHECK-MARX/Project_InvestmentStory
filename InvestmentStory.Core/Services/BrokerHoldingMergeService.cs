@@ -52,7 +52,7 @@ public sealed class BrokerHoldingMergeService
                 foreach (var group in candidates
                              .Where(x => string.Equals(BuildScopeKey(x), scopeGroup.Key, StringComparison.OrdinalIgnoreCase) &&
                                          x.CurrentHolding.CurrentShares > 0m &&
-                                         x.CurrentHolding.UpdatedAt.Date <= latestDate &&
+                                         ResolveHoldingSnapshotDate(x) <= latestDate &&
                                          x.Stock.DataSource.Contains("CSV", StringComparison.OrdinalIgnoreCase))
                              .GroupBy(PositionIdentityService.BuildKey, StringComparer.OrdinalIgnoreCase))
                 {
@@ -158,7 +158,7 @@ public sealed class BrokerHoldingMergeService
             }
 
             var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
-            if (existing.CurrentHolding.UpdatedAt.Date > snapshotAt.Date)
+            if (ResolveHoldingSnapshotDate(existing) > snapshotAt.Date)
             {
                 return NeedsReview(source, $"古い保有残高です（既存 {existing.CurrentHolding.UpdatedAt:yyyy/MM/dd}、CSV {snapshotAt:yyyy/MM/dd}）。");
             }
@@ -254,6 +254,9 @@ public sealed class BrokerHoldingMergeService
         DateTime acquiredAt,
         List<string> changedFields)
     {
+        var purchaseBasisChanged = target.Purchase.Shares != source.Shares ||
+            (source.AverageAcquisitionPrice > 0m && target.Purchase.UnitPrice != source.AverageAcquisitionPrice) ||
+            !string.Equals(target.Stock.Currency, NormalizeCurrency(source.Currency), StringComparison.OrdinalIgnoreCase);
         SetIfChanged(target.Stock.Ticker, NormalizeTickerForDisplay(source.Ticker), value => target.Stock.Ticker = value, "ティッカー", changedFields);
         SetIfChanged(target.Stock.Broker, source.Broker.Trim(), value => target.Stock.Broker = value, "証券会社", changedFields);
         SetIfChanged(target.Stock.AccountType, NormalizeSourceAccountType(source), value => target.Stock.AccountType = value, "口座区分", changedFields);
@@ -263,10 +266,18 @@ public sealed class BrokerHoldingMergeService
             SetIfChanged(target.Stock.Name, source.Name.Trim(), value => target.Stock.Name = value, "銘柄名", changedFields);
         }
 
-        if (!string.IsNullOrWhiteSpace(source.Product))
+        if (!string.IsNullOrWhiteSpace(source.Product) &&
+            !StockSectorClassifier.IsGenericProductType(source.Product) &&
+            StockSectorClassifier.IsGenericProductType(target.Stock.Sector))
         {
-            SetIfChanged(target.Stock.Sector, source.Product.Trim(), value => target.Stock.Sector = value, "商品種別", changedFields);
+            SetIfChanged(target.Stock.Sector, source.Product.Trim(), value => target.Stock.Sector = value, "分野", changedFields);
         }
+
+        var classification = StockSectorClassifier.Classify(target.Stock);
+        if (StockSectorClassifier.IsGenericProductType(target.Stock.Sector) && classification.Sector != "未分類")
+            SetIfChanged(target.Stock.Sector, classification.Sector, value => target.Stock.Sector = value, "分野", changedFields);
+        if (string.IsNullOrWhiteSpace(target.Stock.Industry) && classification.Industry.Length > 0)
+            SetIfChanged(target.Stock.Industry, classification.Industry, value => target.Stock.Industry = value, "業種", changedFields);
 
         if (!string.IsNullOrWhiteSpace(source.Market))
         {
@@ -299,6 +310,30 @@ public sealed class BrokerHoldingMergeService
         }
 
         SetIfChanged(target.Purchase.Shares, source.Shares, value => target.Purchase.Shares = value, "購入株数", changedFields);
+        if (source.AcquisitionAmountJpy > 0m)
+        {
+            SetIfChanged(target.Purchase.AcquisitionAmountJpy, source.AcquisitionAmountJpy,
+                value => target.Purchase.AcquisitionAmountJpy = value, "円建て取得金額", changedFields);
+            SetIfChanged(target.Purchase.AcquisitionAmountSource,
+                string.IsNullOrWhiteSpace(source.Source) ? "CSV" : source.Source,
+                value => target.Purchase.AcquisitionAmountSource = value, "取得額の根拠", changedFields);
+            if (changedFields.Contains("円建て取得金額") || changedFields.Contains("取得額の根拠"))
+                target.Purchase.AcquisitionAmountConfirmedAt = acquiredAt;
+        }
+        else if (purchaseBasisChanged)
+        {
+            SetIfChanged(target.Purchase.AcquisitionAmountJpy, 0m,
+                value => target.Purchase.AcquisitionAmountJpy = value, "円建て取得金額（未確認）", changedFields);
+            target.Purchase.AcquisitionAmountSource = string.Empty;
+            target.Purchase.AcquisitionAmountConfirmedAt = DateTime.MinValue;
+        }
+        if (purchaseBasisChanged && target.Purchase.ReferenceAcquisitionAmountJpy > 0m)
+        {
+            target.Purchase.ReferenceAcquisitionAmountJpy = 0m;
+            target.Purchase.ReferenceAcquisitionForeignAmount = 0m;
+            target.Purchase.ReferenceAcquisitionSource = string.Empty;
+            changedFields.Add("参考取得額（取得条件変更のため解除）");
+        }
         SetIfChanged(target.CurrentHolding.CurrentShares, source.Shares, value => target.CurrentHolding.CurrentShares = value, "現在保有株数", changedFields);
 
         if (source.AverageAcquisitionPrice > 0m)
@@ -306,11 +341,14 @@ public sealed class BrokerHoldingMergeService
             SetIfChanged(target.Purchase.UnitPrice, source.AverageAcquisitionPrice, value => target.Purchase.UnitPrice = value, "購入単価", changedFields);
         }
 
-        if (source.CurrentPrice > 0m)
+        var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
+        var canReplacePrice = target.CurrentHolding.CurrentPriceAcquiredAt.Date <= snapshotAt.Date;
+        var canReplaceCurrentFx = target.CurrentHolding.ExchangeRateAcquiredAt.Date <= snapshotAt.Date;
+        if (source.CurrentPrice > 0m && canReplacePrice)
         {
             SetIfChanged(target.CurrentHolding.CurrentPrice, source.CurrentPrice, value => target.CurrentHolding.CurrentPrice = value, "現在株価", changedFields);
         }
-        else if (source.MarketValue > 0m && source.Shares > 0m)
+        else if (source.MarketValue > 0m && source.Shares > 0m && canReplacePrice)
         {
             SetIfChanged(target.CurrentHolding.CurrentPrice, decimal.Round(source.MarketValue / source.Shares, 6), value => target.CurrentHolding.CurrentPrice = value, "現在株価", changedFields);
         }
@@ -326,23 +364,45 @@ public sealed class BrokerHoldingMergeService
             {
                 SetIfChanged(target.Purchase.ExchangeRate, source.PurchaseExchangeRate, value => target.Purchase.ExchangeRate = value, "購入時為替", changedFields);
             }
+            else if (purchaseBasisChanged)
+            {
+                SetIfChanged(target.Purchase.ExchangeRate, 0m, value => target.Purchase.ExchangeRate = value, "購入時為替（未確認）", changedFields);
+            }
 
-            if (source.CurrentExchangeRate > 0m)
+            if (source.CurrentExchangeRate > 0m && canReplaceCurrentFx)
             {
                 SetIfChanged(target.CurrentHolding.CurrentExchangeRate, source.CurrentExchangeRate, value => target.CurrentHolding.CurrentExchangeRate = value, "現在為替", changedFields);
             }
         }
 
-        var snapshotAt = source.SnapshotDate == DateTime.MinValue ? acquiredAt : source.SnapshotDate;
         target.Purchase.ExchangeRateAcquiredAt = snapshotAt;
         target.Purchase.ExchangeRateSource = sourceLabel;
         target.Purchase.ExchangeRateInputType = "CSV";
-        target.CurrentHolding.ExchangeRateAcquiredAt = snapshotAt;
-        target.CurrentHolding.ExchangeRateSource = sourceLabel;
-        target.CurrentHolding.ExchangeRateInputType = "CSV";
+        if (canReplaceCurrentFx)
+        {
+            target.CurrentHolding.ExchangeRateAcquiredAt = snapshotAt;
+            target.CurrentHolding.ExchangeRateSource = sourceLabel;
+            target.CurrentHolding.ExchangeRateInputType = "CSV";
+        }
         target.CurrentHolding.UpdatedAt = snapshotAt.Date;
-        target.CurrentHolding.CurrentPriceAcquiredAt = snapshotAt;
-        target.CurrentHolding.CurrentPriceSource = sourceLabel;
+        if (canReplacePrice)
+        {
+            target.CurrentHolding.CurrentPriceAcquiredAt = snapshotAt;
+            target.CurrentHolding.CurrentPriceSource = sourceLabel;
+        }
+    }
+
+    private static DateTime ResolveHoldingSnapshotDate(StockPosition position)
+    {
+        var updated = position.CurrentHolding.UpdatedAt.Date;
+        var csvDate = position.Purchase.ExchangeRateAcquiredAt.Date;
+        var quoteDate = position.CurrentHolding.CurrentPriceAcquiredAt.Date == updated ||
+                        position.CurrentHolding.ExchangeRateAcquiredAt.Date == updated;
+        if (quoteDate && csvDate > DateTime.MinValue.Date && csvDate < updated &&
+            string.Equals(position.Purchase.ExchangeRateInputType, "CSV", StringComparison.OrdinalIgnoreCase) &&
+            position.Stock.DataSource.Contains("CSV", StringComparison.OrdinalIgnoreCase))
+            return csvDate;
+        return updated;
     }
 
     private static void ApplyMutualFundHolding(
@@ -434,28 +494,35 @@ public sealed class BrokerHoldingMergeService
             ? 1m
             : source.CurrentExchangeRate > 0m ? source.CurrentExchangeRate : purchaseExchangeRate;
 
+        var stock = new Stock
+        {
+            Ticker = NormalizeTickerForDisplay(source.Ticker),
+            Name = string.IsNullOrWhiteSpace(source.Name) ? NormalizeTickerForDisplay(source.Ticker) : source.Name.Trim(),
+            Broker = source.Broker.Trim(),
+            AccountType = NormalizeSourceAccountType(source),
+            CustodyType = source.Account.Trim(),
+            Currency = currency,
+            Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本"
+                : currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "米国" : string.Empty,
+            Sector = source.Product,
+            Market = source.Market,
+            DataSource = sourceLabel
+        };
+        StockSectorClassifier.FillMissingClassification(stock);
+
         return new StockPosition
         {
-            Stock = new Stock
-            {
-                Ticker = NormalizeTickerForDisplay(source.Ticker),
-                Name = string.IsNullOrWhiteSpace(source.Name) ? NormalizeTickerForDisplay(source.Ticker) : source.Name.Trim(),
-                Broker = source.Broker.Trim(),
-                AccountType = NormalizeSourceAccountType(source),
-                CustodyType = source.Account.Trim(),
-                Currency = currency,
-                Country = currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "日本"
-                    : currency.Equals("USD", StringComparison.OrdinalIgnoreCase) ? "米国" : string.Empty,
-                Sector = source.Product,
-                Market = source.Market,
-                DataSource = sourceLabel
-            },
+            Stock = stock,
             Purchase = new Purchase
             {
-                PurchaseDate = snapshotAt.Date,
+                PurchaseDate = DateTime.MinValue,
                 Shares = source.Shares,
                 UnitPrice = source.AverageAcquisitionPrice,
                 ExchangeRate = purchaseExchangeRate,
+                AcquisitionAmountJpy = source.AcquisitionAmountJpy,
+                AcquisitionAmountSource = source.AcquisitionAmountJpy > 0m
+                    ? string.IsNullOrWhiteSpace(source.Source) ? "CSV" : source.Source : string.Empty,
+                AcquisitionAmountConfirmedAt = source.AcquisitionAmountJpy > 0m ? acquiredAt : DateTime.MinValue,
                 ExchangeRateAcquiredAt = snapshotAt,
                 ExchangeRateSource = sourceLabel,
                 ExchangeRateInputType = "CSV"
@@ -513,7 +580,7 @@ public sealed class BrokerHoldingMergeService
             },
             Purchase = new Purchase
             {
-                PurchaseDate = snapshotAt.Date,
+                PurchaseDate = DateTime.MinValue,
                 Shares = unitsHeld,
                 UnitPrice = averageCostNav,
                 ExchangeRate = 1m,
@@ -591,6 +658,12 @@ public sealed class BrokerHoldingMergeService
                 Shares = source.Purchase.Shares,
                 UnitPrice = source.Purchase.UnitPrice,
                 ExchangeRate = source.Purchase.ExchangeRate,
+                AcquisitionAmountJpy = source.Purchase.AcquisitionAmountJpy,
+                AcquisitionAmountSource = source.Purchase.AcquisitionAmountSource,
+                AcquisitionAmountConfirmedAt = source.Purchase.AcquisitionAmountConfirmedAt,
+                ReferenceAcquisitionAmountJpy = source.Purchase.ReferenceAcquisitionAmountJpy,
+                ReferenceAcquisitionForeignAmount = source.Purchase.ReferenceAcquisitionForeignAmount,
+                ReferenceAcquisitionSource = source.Purchase.ReferenceAcquisitionSource,
                 ExchangeRateAcquiredAt = source.Purchase.ExchangeRateAcquiredAt,
                 ExchangeRateSource = source.Purchase.ExchangeRateSource,
                 ExchangeRateInputType = source.Purchase.ExchangeRateInputType,

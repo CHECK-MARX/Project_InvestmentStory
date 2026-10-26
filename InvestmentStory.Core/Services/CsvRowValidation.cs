@@ -33,4 +33,17 @@ internal static class CsvRowValidation
 
         return normalizedHeaders;
     }
+
+    public static void ValidateKnownHeaders(
+        IReadOnlyList<string> headers, string formatVersion, params string[] knownHeaders)
+    {
+        var normalizedHeaders = ValidateHeaders(headers);
+        var unknown = normalizedHeaders.Select((header, index) =>
+                header.Length == 0 ? $"{index + 1}列目（見出し空欄）" : header)
+            .Where(header => !knownHeaders.Contains(header, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+        if (unknown.Length > 0)
+            throw new InvalidOperationException(
+                $"CSV形式 {formatVersion} に未登録の列があります: {string.Join("、", unknown)}。取込前に列対応を確認してください。");
+    }
 }

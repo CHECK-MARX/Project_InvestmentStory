@@ -15,18 +15,25 @@ public sealed class DividendsViewModel : ObservableObject
     private readonly Func<IReadOnlyList<TaxProfile>> _getTaxProfiles;
     private readonly Func<TaxProfile, int> _saveTaxProfile;
     private readonly Func<int, IncomeGoal?> _getGoal;
+    private readonly Func<int, IReadOnlyList<DividendReviewDecision>> _loadReviewHistory;
+    private readonly Action<int, string, int?, string>? _applyReview;
+    private readonly Action _afterReview;
     private readonly DividendDashboardService _dashboardService = new();
     private List<DividendPayment> _allPayments = new();
     private IncomeGoal? _fallbackGoal;
     private DateTime _asOf = DateTime.Today;
     private DividendDashboardAnalysis _analysis = new();
     private DividendPaymentRowViewModel? _selectedPayment;
+    private DividendReviewCandidateRow? _selectedActualCandidate;
+    private string _reviewReason = string.Empty;
     private TaxProfile? _selectedTaxProfile;
     private int _paymentId;
     private int _selectedStockId;
     private bool _showDetails;
     private string _message = string.Empty;
     private int _selectedYear = DateTime.Today.Year;
+    private int _reportMonth = DateTime.Today.Month;
+    private bool _maskReport = true;
 
     public DividendsViewModel(
         Action<DividendPayment> save,
@@ -34,7 +41,10 @@ public sealed class DividendsViewModel : ObservableObject
         Action? updateSchedules = null,
         Func<IReadOnlyList<TaxProfile>>? getTaxProfiles = null,
         Func<TaxProfile, int>? saveTaxProfile = null,
-        Func<int, IncomeGoal?>? getGoal = null)
+        Func<int, IncomeGoal?>? getGoal = null,
+        Func<int, IReadOnlyList<DividendReviewDecision>>? loadReviewHistory = null,
+        Action<int, string, int?, string>? applyReview = null,
+        Action? afterReview = null)
     {
         _save = save;
         _delete = delete;
@@ -42,31 +52,70 @@ public sealed class DividendsViewModel : ObservableObject
         _getTaxProfiles = getTaxProfiles ?? (() => Array.Empty<TaxProfile>());
         _saveTaxProfile = saveTaxProfile ?? (_ => 0);
         _getGoal = getGoal ?? (_ => null);
+        _loadReviewHistory = loadReviewHistory ?? (_ => []);
+        _applyReview = applyReview;
+        _afterReview = afterReview ?? (() => { });
         NewCommand = new RelayCommand(NewPayment);
         SaveCommand = new RelayCommand(Save);
         DeleteCommand = new RelayCommand(Delete, () => SelectedPayment is not null);
         ToggleDetailsCommand = new RelayCommand(ToggleDetails);
         UpdateSchedulesCommand = new RelayCommand(UpdateSchedules);
         SaveTaxProfileCommand = new RelayCommand(SaveTaxProfile, () => SelectedTaxProfile is not null);
+        LinkActualCommand = new RelayCommand(() => Review("Linked"), () => CanReview && SelectedActualCandidate is not null);
+        HoldReviewCommand = new RelayCommand(() => Review("Held"), () => CanReview);
+        ExcludeReviewCommand = new RelayCommand(() => Review("Excluded"), () => CanReview);
     }
 
     public ObservableCollection<StockOption> StockOptions { get; } = new();
     public ObservableCollection<DividendPaymentRowViewModel> Payments { get; } = new();
+
+    public bool FocusPayment(int paymentId)
+    {
+        var payment = _allPayments.FirstOrDefault(x => x.Id == paymentId);
+        if (payment is null) { SelectedPayment = null; return false; }
+        SelectedYear = payment.PaymentDate.Year;
+        var row = Payments.Concat(ReplacedPayments).FirstOrDefault(x => x.Id == paymentId);
+        if (row is null) { SelectedPayment = null; return false; }
+        SelectedPayment = row;
+        return true;
+    }
     public ObservableCollection<DividendPaymentRowViewModel> ActualPayments { get; } = new();
     public ObservableCollection<DividendPaymentRowViewModel> PlannedPayments { get; } = new();
     public ObservableCollection<DividendPaymentRowViewModel> ReplacedPayments { get; } = new();
+    public ObservableCollection<DividendReviewCandidateRow> ActualCandidates { get; } = new();
+    public ObservableCollection<DividendReviewHistoryRow> ReviewHistory { get; } = new();
+    public DividendReviewCandidateRow? SelectedActualCandidate
+    {
+        get => _selectedActualCandidate;
+        set { if (SetProperty(ref _selectedActualCandidate, value)) LinkActualCommand.RaiseCanExecuteChanged(); }
+    }
+    public string ReviewReason { get => _reviewReason; set => SetProperty(ref _reviewReason, value); }
+    public bool CanReview => _applyReview is not null && SelectedPayment is { Id: > 0 } selected &&
+        DividendConstants.IsUnconfirmed(selected.Payment.DividendStatus) &&
+        selected.Payment.MatchedActualDividendId is null &&
+        selected.Payment.ReplacedByDividendId is null;
     public ObservableCollection<int> YearOptions { get; } = new();
+    public IReadOnlyList<int> ReportMonthOptions { get; } = Enumerable.Range(1, 12).ToArray();
+    public int ReportMonth { get => _reportMonth; set => SetProperty(ref _reportMonth, value); }
+    public bool MaskReport { get => _maskReport; set => SetProperty(ref _maskReport, value); }
+    public MonthlyDividendReport BuildMonthlyReport() =>
+        new MonthlyDividendReportService().Build(_analysis, ReportMonth, _asOf, MaskReport);
+    public void ShowExportMessage(string message) => Message = message;
     public ObservableCollection<DividendDashboardEntryViewModel> DividendChartEntries { get; } = new();
     public ObservableCollection<DividendMonthlySummaryRowViewModel> MonthlySummaryRows { get; } = new();
     public ObservableCollection<DividendAnnualRankingRowViewModel> AnnualRankingRows { get; } = new();
     public ObservableCollection<TaxProfile> TaxProfiles { get; } = new();
     public DividendChartInteractionState DividendChartInteraction { get; } = new();
+    public DateTime AsOfDate => _asOf;
     public ICommand NewCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand ToggleDetailsCommand { get; }
     public ICommand UpdateSchedulesCommand { get; }
     public RelayCommand DeleteCommand { get; }
     public RelayCommand SaveTaxProfileCommand { get; }
+    public RelayCommand LinkActualCommand { get; }
+    public RelayCommand HoldReviewCommand { get; }
+    public RelayCommand ExcludeReviewCommand { get; }
 
     public int SelectedYear
     {
@@ -109,6 +158,7 @@ public sealed class DividendsViewModel : ObservableObject
                 {
                     LoadPayment(value.Payment);
                 }
+                RefreshReview();
             }
         }
     }
@@ -184,6 +234,7 @@ public sealed class DividendsViewModel : ObservableObject
         _allPayments = payments.ToList();
         _fallbackGoal = currentGoal;
         _asOf = (asOf ?? DateTime.Today).Date;
+        OnPropertyChanged(nameof(AsOfDate));
         var selectedStockId = SelectedStockId;
         StockOptions.Clear();
         foreach (var position in positions.OrderBy(x => x.Stock.Ticker))
@@ -200,7 +251,8 @@ public sealed class DividendsViewModel : ObservableObject
 
         ReplacedPayments.Clear();
         foreach (var payment in _allPayments
-                     .Where(x => string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase))
+                     .Where(x => string.Equals(x.DividendStatus, DividendConstants.Replaced, StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(x.DividendStatus, DividendConstants.Excluded, StringComparison.OrdinalIgnoreCase))
                      .OrderByDescending(x => x.PaymentDate))
         {
             var row = new DividendPaymentRowViewModel(payment);
@@ -237,6 +289,7 @@ public sealed class DividendsViewModel : ObservableObject
 
     private void RebuildDashboard()
     {
+        var selectedPaymentId = SelectedPayment?.Id;
         var goal = _getGoal(SelectedYear);
         if (goal is null && _fallbackGoal?.TargetYear == SelectedYear)
         {
@@ -263,11 +316,14 @@ public sealed class DividendsViewModel : ObservableObject
                 entry.DisplayStatus,
                 entry.DataQuality);
             Payments.Add(paymentRow);
-            PlannedPayments.Add(paymentRow);
             DividendChartEntries.Add(new DividendDashboardEntryViewModel(entry));
             if (entry.IsActual)
             {
                 ActualPayments.Add(paymentRow);
+            }
+            else
+            {
+                PlannedPayments.Add(paymentRow);
             }
         }
 
@@ -282,7 +338,58 @@ public sealed class DividendsViewModel : ObservableObject
             AnnualRankingRows.Add(item);
         }
 
+        if (selectedPaymentId is not null)
+            SelectedPayment = Payments.Concat(ReplacedPayments).FirstOrDefault(x => x.Id == selectedPaymentId);
         RefreshAllProperties();
+    }
+
+    private void RefreshReview()
+    {
+        ActualCandidates.Clear();
+        ReviewHistory.Clear();
+        SelectedActualCandidate = null;
+        if (SelectedPayment is { } selected)
+        {
+            foreach (var candidate in new DividendReconciliationService()
+                         .FindActualCandidates(selected.Payment, _allPayments))
+                ActualCandidates.Add(new DividendReviewCandidateRow(selected.Payment, candidate));
+            try
+            {
+                foreach (var item in _loadReviewHistory(selected.Id)) ReviewHistory.Add(new DividendReviewHistoryRow(item));
+            }
+            catch (Exception ex) { Message = "照合履歴を読み込めませんでした: " + ex.Message; }
+        }
+        OnPropertyChanged(nameof(CanReview));
+        LinkActualCommand.RaiseCanExecuteChanged();
+        HoldReviewCommand.RaiseCanExecuteChanged();
+        ExcludeReviewCommand.RaiseCanExecuteChanged();
+    }
+
+    private void Review(string action)
+    {
+        if (!CanReview || SelectedPayment is null) return;
+        if (string.IsNullOrWhiteSpace(ReviewReason))
+        {
+            Message = "判断理由を入力してください。";
+            return;
+        }
+        var plannedId = SelectedPayment.Id;
+        var actualId = action == "Linked" ? SelectedActualCandidate?.Id : null;
+        try
+        {
+            _applyReview!(plannedId, action, actualId, ReviewReason);
+        }
+        catch (Exception ex) { Message = "配当照合を保存できませんでした: " + ex.Message; return; }
+        SelectedPayment = null;
+        ReviewReason = string.Empty;
+        try { _afterReview(); }
+        catch (Exception ex) { Message = "判断は保存しましたが、画面の再読み込みに失敗しました: " + ex.Message; return; }
+        Message = action switch
+        {
+            "Linked" => "予定と実績を紐付け、判断理由を保存しました。",
+            "Held" => "確認を保留し、判断理由を保存しました。未照合件数には残ります。",
+            _ => "予定を対象外にし、判断理由を保存しました。"
+        };
     }
 
     private void NewPayment()
@@ -531,5 +638,57 @@ public sealed class DividendsViewModel : ObservableObject
     private static decimal NormalizeExchangeRateForCurrency(string currency, decimal exchangeRate)
     {
         return currency == "JPY" ? 1m : exchangeRate;
+    }
+}
+
+public sealed class DividendReviewHistoryRow(DividendReviewDecision decision)
+{
+    public string Date => decision.AtUtc.ToLocalTime().ToString("yyyy/MM/dd HH:mm");
+    public string Action => decision.Action switch
+    {
+        "Linked" => "実績と紐付け",
+        "Held" => "保留",
+        "Excluded" => "対象外",
+        _ => decision.Action
+    };
+    public string Actual => decision.ActualDividendId?.ToString() ?? "-";
+    public string Reason => decision.Reason;
+}
+
+public sealed class DividendReviewCandidateRow(DividendPayment planned, DividendPayment actual)
+{
+    private readonly DividendPaymentRowViewModel _row = new(actual);
+    public int Id => actual.Id;
+    public string PaymentDate => _row.PaymentDate;
+    public string Ticker => _row.Ticker;
+    public string Broker => _row.Broker;
+    public string AccountType => _row.AccountType;
+    public string Quantity => _row.Quantity;
+    public string JpyAmount => _row.JpyAmount;
+    public string Currency => _row.Currency;
+    public string ExchangeRateInfo => _row.ExchangeRateInfo;
+    public string Evidence
+    {
+        get
+        {
+            var notes = new List<string>
+            {
+                $"入金日差 {(actual.PaymentDate.Date - planned.PaymentDate.Date).Days:+#;-#;0}日"
+            };
+            if (DividendConstants.NormalizeAccountType(planned.AccountType) == DividendConstants.AccountUnknown ||
+                DividendConstants.NormalizeAccountType(actual.AccountType) == DividendConstants.AccountUnknown)
+                notes.Add("口座要確認");
+            if (!string.Equals(planned.Currency, actual.Currency, StringComparison.OrdinalIgnoreCase))
+                notes.Add("通貨差・換算根拠要確認");
+            if (planned.Quantity > 0m && actual.Quantity > 0m && planned.Quantity != actual.Quantity)
+                notes.Add("数量差・企業行動要確認");
+            if (planned.RecordDate != DateTime.MinValue && actual.RecordDate != DateTime.MinValue &&
+                planned.RecordDate.Date != actual.RecordDate.Date)
+                notes.Add("権利確定日差");
+            if (planned.ExDividendDate != DateTime.MinValue && actual.ExDividendDate != DateTime.MinValue &&
+                planned.ExDividendDate.Date != actual.ExDividendDate.Date)
+                notes.Add("権利落ち日差");
+            return string.Join(" / ", notes);
+        }
     }
 }

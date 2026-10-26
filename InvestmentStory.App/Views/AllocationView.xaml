@@ -1,0 +1,77 @@
+<UserControl x:Class="InvestmentStory.App.Views.AllocationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="AllocationTextCell" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellTextStyle}">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="5,6" />
+        </Style>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <TextBlock Text="資産配分目標" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="保有中の株式・投資信託の円評価額を分類します。現金・未決済代金は対象外。国は銘柄マスターの登録国、通貨は取引通貨で、投資先の内訳ではありません。"
+                       TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,8,0,12" />
+            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,10" />
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <WrapPanel>
+                        <StackPanel Margin="0,0,12,8">
+                            <TextBlock Text="集計軸" Style="{StaticResource LabelTextStyle}" />
+                            <ComboBox ItemsSource="{Binding Dimensions}" SelectedItem="{Binding SelectedDimension}" DisplayMemberPath="Label" Width="190" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,12,8">
+                            <TextBlock Text="追加資金の仮定（円）" Style="{StaticResource LabelTextStyle}" />
+                            <TextBox Text="{Binding AdditionalFunding, UpdateSourceTrigger=PropertyChanged}" Width="150" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ValuationStatus}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="12,0,0,0" />
+                    </WrapPanel>
+                    <TextBlock Text="分類根拠も表示します。『未分類』は独立した分類です。表の目標比率を編集し、合計100%で計算してください。新しい分類を追加する場合は分類キーと表示名を入力します。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="目標分類を追加" Command="{Binding AddCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="選択した分類を除く" Command="{Binding RemoveCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="保存版を再読込" Command="{Binding ReloadCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                    </WrapPanel>
+                    <DataGrid ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget}" AutoGenerateColumns="False"
+                              CanUserAddRows="False" IsReadOnly="False" Height="300" RowHeight="46">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="分類キー" Binding="{Binding Key, UpdateSourceTrigger=PropertyChanged}" Width="140" />
+                            <DataGridTextColumn Header="表示名" Binding="{Binding Label, UpdateSourceTrigger=PropertyChanged}" Width="145" />
+                            <DataGridTextColumn Header="目標 (%)" Binding="{Binding Percent, UpdateSourceTrigger=PropertyChanged}" Width="80" />
+                            <DataGridTextColumn Header="把握済み評価額" Binding="{Binding CurrentValue}" IsReadOnly="True" Width="130" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="分類根拠" Binding="{Binding Evidence}" IsReadOnly="True" Width="*" MinWidth="160" ElementStyle="{StaticResource AllocationTextCell}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <WrapPanel Margin="0,10,0,0">
+                        <Button Content="この目標で計算" Command="{Binding CalculateCommand}" Style="{StaticResource ActionButtonStyle}" />
+                        <Button Content="目標を履歴付きで保存" Command="{Binding SaveCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="配分と差額（参考計算）" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="{Binding AnalysisNotes}" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Margin="0,6" />
+                    <TextBlock Text="{Binding MinimumFunding}" TextWrapping="Wrap" Margin="0,4" />
+                    <TextBlock Text="{Binding FundingStatus}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                    <TextBlock Text="売買案は新規資金0円で目標に合わせるための差額（＋買い、−売り）。追加資金案は指定した資金だけで目標に到達可能な場合のみ表示します。手数料・税・売買単位・市場変動は計算外です。注文は行いません。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DataGrid ItemsSource="{Binding Results}" AutoGenerateColumns="False" CanUserAddRows="False"
+                              IsReadOnly="True" Height="330" RowHeight="48">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="分類" Binding="{Binding Label}" Width="150" ElementStyle="{StaticResource AllocationTextCell}" />
+                            <DataGridTextColumn Header="現在（円）" Binding="{Binding CurrentJpy, StringFormat={}{0:N0}, TargetNullValue=未確定}" Width="115" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="現在 (%)" Binding="{Binding CurrentPercent, StringFormat={}{0:N1}, TargetNullValue=未確定}" Width="90" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="目標 (%)" Binding="{Binding TargetPercent, StringFormat={}{0:N1}}" Width="85" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="目標差（pt）" Binding="{Binding GapPercentPoints, StringFormat={}{0:+0.0;-0.0;0.0}, TargetNullValue=未確定}" Width="105" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="追加資金で買う（円）" Binding="{Binding AdditionalFundingPurchaseJpy, StringFormat={}{0:N0}, TargetNullValue=算出不可}" Width="145" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="売買案（円）" Binding="{Binding BuySellJpy, StringFormat={}{0:N0}, TargetNullValue=算出不可}" Width="110" ElementStyle="{StaticResource RightAlignedCellTextStyle}" />
+                            <DataGridTextColumn Header="分類根拠" Binding="{Binding ClassificationEvidence}" Width="*" MinWidth="180" ElementStyle="{StaticResource AllocationTextCell}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

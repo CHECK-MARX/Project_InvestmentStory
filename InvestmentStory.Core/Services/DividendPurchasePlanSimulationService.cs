@@ -269,6 +269,7 @@ public sealed class DividendPurchasePlanSimulationService
     {
         var history = payments
             .Where(x => Matches(item, x))
+            .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus))
             .Where(x => x.PaymentDate != default)
             .OrderByDescending(x => x.PaymentDate)
             .ToList();
@@ -299,7 +300,8 @@ public sealed class DividendPurchasePlanSimulationService
         // Public calendar data is exact only when the provider published the date.
         // A missing payment date is estimated, while the published ex/record date is retained.
         foreach (var calendar in item.DividendEvents
-                     .Where(x => EventYear(x) == targetYear)
+                     .Where(x => EventYear(x) == targetYear ||
+                                 (x.PaymentDate is null && EventYear(x) == targetYear - 1))
                      .OrderBy(x => x.PaymentDate ?? x.ExDividendDate ?? x.RecordDate ?? x.DeclarationDate))
         {
             var exDate = calendar.ExDividendDate?.Date;
@@ -308,6 +310,7 @@ public sealed class DividendPurchasePlanSimulationService
             var eventQuality = calendar.IsConfirmed && paymentDate is not null
                 ? DividendPlanDataQuality.Acquired
                 : DividendPlanDataQuality.Estimated;
+            var source = string.IsNullOrWhiteSpace(calendar.Source) ? "公開配当カレンダー" : calendar.Source;
             if (paymentDate is null)
             {
                 var anchor = recordDate ?? exDate ?? calendar.DeclarationDate?.Date;
@@ -315,7 +318,16 @@ public sealed class DividendPurchasePlanSimulationService
                 {
                     continue;
                 }
-                paymentDate = NextBusinessDay(anchor.Value.AddDays(IsJpy(item.Currency) ? 60 : 14));
+                paymentDate = EstimatePaymentFromExDate(anchor.Value, history, item.Currency);
+                source += history.Count > 0
+                    ? "（権利落ち日等は公開情報、支払日は過去の入金月から推定）"
+                    : "（権利落ち日等は公開情報、支払日は経過日数から推定）";
+            }
+            // An ex-dividend date in December may pay in January of the next year.
+            // Never show that payment in the selected year's January column.
+            if (paymentDate.Value.Year != targetYear)
+            {
+                continue;
             }
 
             var lastRightsDate = exDate is not null
@@ -329,27 +341,12 @@ public sealed class DividendPurchasePlanSimulationService
                 recordDate,
                 Math.Max(0m, calendar.AmountPerShare),
                 eventQuality,
-                string.IsNullOrWhiteSpace(calendar.Source) ? "公開配当カレンダー" : calendar.Source,
+                source,
                 false,
                 null));
         }
 
-        var configuredMonths = ParseMonths(item.DividendMonths);
-        var historyMonths = history.Select(x => x.PaymentDate.Month).Distinct().Order().ToList();
-        var calendarMonths = item.DividendEvents
-            .Select(x => x.PaymentDate ?? x.ExDividendDate ?? x.RecordDate)
-            .Where(x => x is not null)
-            .Select(x => x!.Value.Month)
-            .Distinct()
-            .Order()
-            .ToList();
-        var months = configuredMonths.Count > 0
-            ? configuredMonths
-            : historyMonths.Count > 0
-                ? historyMonths
-                : calendarMonths.Count > 0
-                    ? calendarMonths
-                    : Array.Empty<int>();
+        var months = ResolveForecastPaymentMonths(item, history, events, targetYear);
 
         if (months.Count == 0 && item.DividendPaymentDate is not null)
         {
@@ -363,9 +360,11 @@ public sealed class DividendPurchasePlanSimulationService
 
         // Fill only months for which no actual or published target-year event exists.
         // These rows remain estimates and are never presented as confirmed dates.
+        var expectedFrequency = ExpectedFrequency(item.DividendFrequency);
         foreach (var month in months)
         {
-            if (events.Any(x => x.PaymentDate.Month == month))
+            if (events.Any(x => x.PaymentDate.Month == month) ||
+                (expectedFrequency > 0 && MergeScheduleEvents(events).Count >= expectedFrequency))
             {
                 continue;
             }
@@ -420,6 +419,76 @@ public sealed class DividendPurchasePlanSimulationService
             merged,
             quality,
             sources.Count == 0 ? "配当情報未取得" : string.Join(" / ", sources));
+    }
+
+    private static IReadOnlyList<int> ResolveForecastPaymentMonths(
+        DividendGrowthPlanItem item,
+        IReadOnlyList<DividendPayment> actualHistory,
+        IReadOnlyList<ScheduleEvent> targetYearEvents,
+        int targetYear)
+    {
+        var frequency = ExpectedFrequency(item.DividendFrequency);
+        var priorYears = actualHistory
+            .Where(x => x.PaymentDate.Year < targetYear)
+            .GroupBy(x => x.PaymentDate.Year)
+            .OrderByDescending(x => x.Key)
+            .Select(group => group.Select(x => x.PaymentDate.Month).Distinct().Order().ToArray())
+            .ToList();
+        // A complete recent year is a stronger cadence than a stale free-text month list.
+        var completeYear = priorYears.FirstOrDefault(x => frequency > 0 && x.Length == frequency);
+        if (completeYear is not null) return completeYear;
+
+        var knownMonths = targetYearEvents.Select(x => x.PaymentDate.Month).Distinct().Order().ToArray();
+        if (frequency == 4 && knownMonths.Length >= 2 &&
+            knownMonths.All(month => (month - knownMonths[0]) % 3 == 0))
+        {
+            var firstMonth = (knownMonths[0] - 1) % 3 + 1;
+            return Enumerable.Range(0, 4).Select(index => firstMonth + index * 3).ToArray();
+        }
+
+        var configured = ParseMonths(item.DividendMonths);
+        if (configured.Count > 0 && (frequency == 0 || configured.Count <= frequency)) return configured;
+
+        var recentYear = priorYears.FirstOrDefault(x => x.Length >= 2 &&
+                                                         (frequency == 0 || x.Length <= frequency));
+        if (recentYear is not null) return recentYear;
+
+        // A single known payment cannot establish a quarterly or semiannual pattern.
+        // Published target-year events are handled separately above.
+        if (frequency == 1 && actualHistory.Count > 0)
+            return new[] { actualHistory[0].PaymentDate.Month };
+        if (item.DividendPaymentDate is { } paymentDate &&
+            (frequency == 0 || frequency == 1))
+            return new[] { paymentDate.Month };
+        return Array.Empty<int>();
+    }
+
+    private static int ExpectedFrequency(string value) =>
+        int.TryParse(new string((value ?? string.Empty).Where(char.IsDigit).ToArray()), out var frequency) &&
+        frequency is 1 or 2 or 4 or 12 ? frequency : 0;
+
+    private static DateTime EstimatePaymentFromExDate(
+        DateTime anchor,
+        IReadOnlyList<DividendPayment> actualHistory,
+        string currency)
+    {
+        var candidates = actualHistory
+            .GroupBy(x => x.PaymentDate.Month)
+            .Select(group => group.OrderByDescending(x => x.PaymentDate).First())
+            .Select(payment =>
+            {
+                var projected = SafeDate(anchor.Year, payment.PaymentDate.Month, payment.PaymentDate.Day);
+                return projected < anchor ? projected.AddYears(1) : projected;
+            })
+            .Where(date => date >= anchor && date <= anchor.AddDays(120))
+            .OrderBy(date => date)
+            .ToList();
+        if (candidates.Count > 0) return candidates[0];
+
+        // Without a payment history, Japanese fiscal-period dividends normally
+        // need several months after the March/September record date. The date
+        // remains explicitly marked as an estimate until published.
+        return NextBusinessDay(IsJpy(currency) ? anchor.AddMonths(3) : anchor.AddDays(14));
     }
 
     private DividendTaxCalculation CalculateTax(
@@ -771,7 +840,7 @@ public sealed class DividendPurchasePlanSimulationService
         }
         return left.IsPaid != right.IsPaid &&
                left.PaymentDate.Year == right.PaymentDate.Year &&
-               Math.Abs((left.PaymentDate - right.PaymentDate).TotalDays) <= 21;
+               Math.Abs((left.PaymentDate - right.PaymentDate).TotalDays) <= 45;
     }
 
     private static int ScheduleRank(ScheduleEvent item) => item.IsPaid

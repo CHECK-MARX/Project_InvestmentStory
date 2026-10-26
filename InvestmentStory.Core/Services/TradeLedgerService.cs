@@ -93,7 +93,9 @@ public sealed class TradeLedgerService
                 RealizedGainLossJpy = realizedJpy,
                 AfterTradeQuantity = currentQuantity,
                 AfterTradeAverageCost = currentQuantity > 0m ? remainingCost / currentQuantity : 0m,
-                Source = string.IsNullOrWhiteSpace(trade.Source) ? "取引履歴CSV" : trade.Source
+                Source = string.IsNullOrWhiteSpace(trade.Source) ? "取引履歴CSV" : trade.Source,
+                SourceFile = trade.SourceFile,
+                SourceRowNumber = trade.SourceRowNumber
             });
         }
 

@@ -174,6 +174,7 @@ public sealed class DividendMonthMapControl : InteractiveDividendChartControl
             new Pen(text, 1.8),
             CreateDiamond(exCenter, 5));
         DrawText(dc, "権利落ち日", 9, 122, 30, text);
+        DrawText(dc, "1銘柄・1月に各記号1個。●と◇は同じ配当の異なる日付です。", 9, 220, 30, text);
     }
 
     private static Geometry CreateDiamond(Point center, double radius)

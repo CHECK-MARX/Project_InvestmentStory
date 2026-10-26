@@ -1,0 +1,144 @@
+<UserControl x:Class="InvestmentStory.App.Views.PerformanceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="PerformanceCell" TargetType="TextBlock" BasedOn="{StaticResource DataGridCellTextStyle}">
+            <Setter Property="TextWrapping" Value="Wrap" /><Setter Property="Margin" Value="4,6" />
+        </Style>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <TextBlock Text="運用成績 — 期間と根拠を確認して計算" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="株・投信等＋現金を円で評価し、外部入出金を差し引いた成績を計算します。資産推移の過去記録は自動採用せず、両時点の明細と現金台帳で対象範囲を確認します。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,12" />
+            <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+            <StackPanel IsEnabled="{Binding IsIdle}">
+                <Border Style="{StaticResource MetricCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="1. 期首・期末の評価額" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="現金を除いた株・投信等の円評価額を入力してください。未決済代金の債権・債務も調整し、両時点で同じ管理範囲にそろえます。不明は空欄、残高なしは0です。"
+                                   Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8" />
+                        <UniformGrid Columns="2">
+                            <StackPanel><TextBlock Text="期首（この日の日末）" Style="{StaticResource LabelTextStyle}" /><DatePicker SelectedDate="{Binding StartDate}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期末（この日の日末）" Style="{StaticResource LabelTextStyle}" /><DatePicker SelectedDate="{Binding EndDate}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期首の株・投信等（円・現金を除く）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding Opening, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期末の株・投信等（円・現金を除く）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding Closing, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期首の根拠（明細・対象口座・換算方法）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding OpeningEvidence, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期末の根拠（明細・対象口座・換算方法）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding ClosingEvidence, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        </UniformGrid>
+                        <CheckBox IsChecked="{Binding SecuritiesConfirmed}" Margin="0,5"><TextBlock Text="両時点の全保有評価額・未決済分の調整・円換算の根拠を確認した" TextWrapping="Wrap" /></CheckBox>
+                        <CheckBox IsChecked="{Binding AccountsConfirmed}" Margin="0,5"><TextBlock Text="同じ管理範囲のすべての現金口座・通貨を台帳に登録した（閉鎖口座も必要な期間は残高0で照合）" TextWrapping="Wrap" /></CheckBox>
+                        <CheckBox IsChecked="{Binding NoInKindConfirmed}" Margin="0,5"><TextBlock Text="期間中に管理対象外との株・投信等の現物入出庫がないことを確認した" TextWrapping="Wrap" /></CheckBox>
+                        <TextBlock Text="{Binding RequiredCashPeriod}" TextWrapping="Wrap" Foreground="{DynamicResource AccentBlueBrush}" Margin="0,8" />
+                        <Button Content="現金台帳で残高を照合する" Command="{Binding DataContext.ShowCashLedgerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+                <Expander Header="2. 外貨現金・外貨の外部入出金の換算根拠" Margin="0,12">
+                    <StackPanel>
+                        <TextBlock Text="円のみの場合は入力不要です。外貨は期首・期末と外部入出金日のレートを記録します。公表日は当日または直前7日以内。現在のレートや1円で代用しません。参考レートの換算差も円ベースの成績に含まれます。"
+                                   TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,8" />
+                        <WrapPanel>
+                            <Button Content="必要な日付の欄を作成" Command="{Binding PrepareFxCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                            <Button Content="行を追加" Command="{Binding AddFxCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                            <Button Content="選択行を除く" Command="{Binding RemoveFxCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        </WrapPanel>
+                        <DataGrid ItemsSource="{Binding FxRows}" SelectedItem="{Binding SelectedFx}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" Height="230" Margin="0,8" RowHeight="NaN" MinRowHeight="45">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="換算対象日" Width="140"><DataGridTemplateColumn.CellTemplate><DataTemplate><DatePicker SelectedDate="{Binding Date}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                                <DataGridTextColumn Header="通貨" Binding="{Binding Currency, UpdateSourceTrigger=PropertyChanged}" Width="65" />
+                                <DataGridTextColumn Header="1通貨あたり円" Binding="{Binding Rate, UpdateSourceTrigger=PropertyChanged}" Width="115" />
+                                <DataGridTemplateColumn Header="実際の公表日" Width="140"><DataGridTemplateColumn.CellTemplate><DataTemplate><DatePicker SelectedDate="{Binding QuoteDate}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                                <DataGridTextColumn Header="出所・確認根拠" Binding="{Binding Evidence, UpdateSourceTrigger=PropertyChanged}" Width="*" MinWidth="200" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Expander>
+                <Expander Header="入出金直前・直後の評価（時間加重収益率を計算する場合）" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="外部入出金ごとに、同じ価格・換算条件による直前と直後の総資産額（株・投信等＋現金）を指定します。直後−直前は入出金の円額と一致する必要があります。根拠に評価時点も記載し、同じ日に複数ある場合は実際の順序を入力してください。日末の評価額で代用しないでください。"
+                                   TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,8" />
+                        <Button Content="台帳から外部入出金の欄を作成" Command="{Binding PrepareFlowsCommand}" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" />
+                        <DataGrid ItemsSource="{Binding FlowValuations}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" Height="250" Margin="0,8" RowHeight="NaN" MinRowHeight="42">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="日付" Binding="{Binding Date, StringFormat=yyyy/MM/dd}" IsReadOnly="True" Width="105" />
+                                <DataGridTextColumn Header="口座・入出金" Binding="{Binding Details}" IsReadOnly="True" Width="165" ElementStyle="{StaticResource PerformanceCell}" />
+                                <DataGridTextColumn Header="当日順" Binding="{Binding Sequence, UpdateSourceTrigger=PropertyChanged}" Width="65" />
+                                <DataGridTextColumn Header="直前総額（円）" Binding="{Binding Before, UpdateSourceTrigger=PropertyChanged}" Width="115" />
+                                <DataGridTextColumn Header="直後総額（円）" Binding="{Binding After, UpdateSourceTrigger=PropertyChanged}" Width="115" />
+                                <DataGridTextColumn Header="評価時点・確認根拠" Binding="{Binding Evidence, UpdateSourceTrigger=PropertyChanged}" Width="*" MinWidth="155" />
+                                <DataGridCheckBoxColumn Header="確認" Binding="{Binding Confirmed, UpdateSourceTrigger=PropertyChanged}" Width="55" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Expander>
+                <WrapPanel Margin="0,0,0,12">
+                    <Button Content="3. 条件を確認して計算" Command="{Binding CalculateCommand}" Style="{StaticResource ActionButtonStyle}" />
+                    <Button Content="結果と根拠を保存" Command="{Binding SaveCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                </WrapPanel>
+            </StackPanel>
+            <ItemsControl ItemsSource="{Binding Result.Problems}" Margin="0,0,0,12">
+                <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4" /></DataTemplate></ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="計算結果（円ベース）" Style="{StaticResource SectionTitleStyle}" />
+                    <UniformGrid Columns="2" Margin="0,10">
+                        <StackPanel><TextBlock Text="期首総資産" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding OpeningTotal}" FontSize="22" /></StackPanel>
+                        <StackPanel><TextBlock Text="期末総資産" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding ClosingTotal}" FontSize="22" /></StackPanel>
+                        <StackPanel Margin="0,10,0,0"><TextBlock Text="外部入出金（入金＋・出金−）" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding ExternalTotal}" FontSize="22" /></StackPanel>
+                        <StackPanel Margin="0,10,0,0"><TextBlock Text="期間損益（期末−期首−外部入出金）" Style="{StaticResource LabelTextStyle}" /><TextBlock Text="{Binding Profit}" FontSize="22" /></StackPanel>
+                    </UniformGrid>
+                    <TextBlock Text="配当は現金残高に含まれるため別加算しません。税・手数料の支払いは残高を通じて成績に反映されます。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,10" />
+                    <TextBlock Text="時間加重収益率 TWR（期間）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding Twr}" FontSize="26" />
+                    <TextBlock Text="{Binding Result.TimeWeighted.Status}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,12" />
+                    <TextBlock Text="金額加重収益率 XIRR（年率・365日基準）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding Xirr}" FontSize="26" />
+                    <TextBlock Text="{Binding Result.MoneyWeighted.Status}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,12" />
+                    <TextBlock Text="修正ディーツ法（概算・期間）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding Dietz}" FontSize="26" />
+                    <TextBlock Text="{Binding Result.ModifiedDietz.Status}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,8" />
+                    <TextBlock Text="XIRRの年率と、TWR・修正ディーツ法の期間率はそのまま比較できません。短期間の年率は大きく振れます。入力根拠に基づく参考成績で、税務用の確定損益ではありません。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" />
+                </StackPanel>
+            </Border>
+            <Expander Header="計算に使った口座別残高と外部入出金" Margin="0,12">
+                <StackPanel>
+                    <DataGrid ItemsSource="{Binding Result.Balances}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="220" RowHeight="NaN" MinRowHeight="40">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="口座" Binding="{Binding Account}" Width="160" ElementStyle="{StaticResource PerformanceCell}" />
+                            <DataGridTextColumn Header="通貨" Binding="{Binding Currency}" Width="60" />
+                            <DataGridTextColumn Header="期首（現地通貨）" Binding="{Binding Opening, TargetNullValue=未確認}" Width="130" />
+                            <DataGridTextColumn Header="期末（現地通貨）" Binding="{Binding Closing, TargetNullValue=未確認}" Width="130" />
+                            <DataGridTextColumn Header="照合状態" Binding="{Binding Status}" Width="*" MinWidth="180" ElementStyle="{StaticResource PerformanceCell}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DataGrid ItemsSource="{Binding Result.Flows}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="220" Margin="0,8" RowHeight="NaN" MinRowHeight="40">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="日付" Binding="{Binding Date, StringFormat=yyyy/MM/dd}" Width="105" />
+                            <DataGridTextColumn Header="口座" Binding="{Binding Account}" Width="150" ElementStyle="{StaticResource PerformanceCell}" />
+                            <DataGridTextColumn Header="通貨" Binding="{Binding Currency}" Width="60" />
+                            <DataGridTextColumn Header="増減額" Binding="{Binding Amount}" Width="110" />
+                            <DataGridTextColumn Header="円換算" Binding="{Binding JpyAmount, TargetNullValue=未確認}" Width="110" />
+                            <DataGridTextColumn Header="根拠" Binding="{Binding Evidence}" Width="*" MinWidth="150" ElementStyle="{StaticResource PerformanceCell}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Expander>
+            <TextBlock Text="保存した成績（直近200件・保存時点の値）" Style="{StaticResource SectionTitleStyle}" Margin="0,8" />
+            <DataGrid ItemsSource="{Binding History}" SelectedItem="{Binding SelectedHistory}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="220" RowHeight="NaN" MinRowHeight="40">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="対象期間" Binding="{Binding Period}" Width="220" />
+                    <DataGridTextColumn Header="保存日時" Binding="{Binding SavedAt}" Width="150" />
+                    <DataGridTextColumn Header="期間損益" Binding="{Binding Profit}" Width="120" />
+                    <DataGridTextColumn Header="XIRR（年率）" Binding="{Binding Xirr}" Width="120" />
+                    <DataGridTextColumn Header="台帳との比較" Binding="{Binding Status}" Width="*" MinWidth="160" ElementStyle="{StaticResource PerformanceCell}" />
+                </DataGrid.Columns>
+            </DataGrid>
+            <Button Content="選択記録の条件を読み込んで再確認" Command="{Binding UseHistoryCommand}" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Margin="0,8" />
+            <TextBlock Text="{Binding SelectedHistory.Details}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

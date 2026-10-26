@@ -1,0 +1,71 @@
+<UserControl x:Class="InvestmentStory.App.Views.CashCsvImportView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel>
+        <TextBlock Text="野村の取引履歴・SBI国内約定・SBI米国株約定CSVに対応。受渡日・決済通貨・受渡金額を現金台帳へ記録します。株数・配当一覧は変更しません。"
+                   Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8" />
+        <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
+        <StackPanel IsEnabled="{Binding IsIdle}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="CSVを選択" Command="{Binding BrowseCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                <TextBox Text="{Binding FilePath, UpdateSourceTrigger=PropertyChanged}" ToolTip="取り込むCSVファイルのパス" />
+            </DockPanel>
+            <TextBlock Text="入出金先の現金口座（例: 野村証券 / 現金口座）" Style="{StaticResource LabelTextStyle}" />
+            <TextBox Text="{Binding Account, UpdateSourceTrigger=PropertyChanged}" />
+            <TextBlock Text="税区分の『特定・NISA』とは別に、実際に資金を管理する口座名を統一してください。通貨別の残高は自動で分かれます。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <Expander Header="決済通貨が空欄の行を補う（明細で確認できた場合のみ）" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="空欄のままでは取り込みません。発行通貨は決済通貨の根拠にできません。この指定は通貨欄が空の行だけに適用します。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8" />
+                    <ComboBox ItemsSource="{Binding EmptyCurrencies}" SelectedItem="{Binding EmptyCurrency}" HorizontalAlignment="Left" MinWidth="130" />
+                    <TextBlock Text="確認根拠（明細名・記載箇所など）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBox Text="{Binding MappingReason, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+            </Expander>
+            <WrapPanel>
+                <Button Content="1. プレビュー" Command="{Binding PreviewCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                <Button Content="重複候補のない行を追加対象にする" Command="{Binding SelectCandidatesCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+            </WrapPanel>
+            <DataGrid ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Height="260" Margin="0,8" RowHeight="NaN" MinRowHeight="40">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="明細" Binding="{Binding Number}" Width="58" />
+                    <DataGridTextColumn Header="受渡日" Binding="{Binding Date}" Width="110" />
+                    <DataGridTextColumn Header="種類" Binding="{Binding Kind}" Width="90" />
+                    <DataGridTextColumn Header="増減額" Binding="{Binding Amount}" Width="145" />
+                    <DataGridTextColumn Header="確認状態" Binding="{Binding Status}" Width="*" MinWidth="150">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource DataGridCellTextStyle}">
+                                <Setter Property="TextWrapping" Value="Wrap" /><Setter Property="ToolTip" Value="{Binding Status}" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="取込方法" Binding="{Binding Resolution}" Width="150" />
+                </DataGrid.Columns>
+            </DataGrid>
+            <Border Style="{StaticResource MetricCardStyle}" DataContext="{Binding SelectedRow}">
+                <StackPanel>
+                    <TextBlock Text="2. 選択行の取込方法を確認" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="同日・同額でも別取引の場合があります。重複候補は自動削除せず、明細を照合して判断してください。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,4,0,8" />
+                    <StackPanel IsEnabled="{Binding CanChoose}">
+                        <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding Resolution}" HorizontalAlignment="Left" MinWidth="200" />
+                        <TextBlock Text="照合先（『既存と照合』の場合）" Style="{StaticResource LabelTextStyle}" />
+                        <ComboBox ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" HorizontalAlignment="Stretch" ToolTip="{Binding SelectedMatch}" />
+                        <TextBlock Text="同一／別取引と判断した根拠（重複候補では必須）" Style="{StaticResource LabelTextStyle}" />
+                        <TextBox Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <Expander Header="元のCSV明細を表示">
+                        <TextBox Text="{Binding RawRecord, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="120" VerticalScrollBarVisibility="Auto" />
+                    </Expander>
+                </StackPanel>
+            </Border>
+            <CheckBox IsChecked="{Binding ExternalFlowsConfirmed}" Margin="0,10">
+                <TextBlock Text="振込明細を含む場合：管理対象口座の外部との入出金であることを確認した（管理口座間の資金移動は、両側を『振替』として手動登録）" TextWrapping="Wrap" />
+            </CheckBox>
+            <TextBlock Text="選択した行をまとめて保存します。保留・要確認は追加されません。取込済みのCSV行は、取消後も自動で再追加しません。取り込み後は期首・期末残高と明細の漏れを再照合してください。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8" />
+            <Button Content="3. 指定した明細を取り込む" Command="{Binding ImportCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" />
+        </StackPanel>
+    </StackPanel>
+</UserControl>

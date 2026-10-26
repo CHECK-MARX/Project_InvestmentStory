@@ -13,25 +13,68 @@
         </Grid.RowDefinitions>
 
         <Border Style="{StaticResource MetricCardStyle}" Margin="0,0,0,14">
-            <DockPanel>
-                <StackPanel Orientation="Horizontal">
+            <StackPanel>
+                <WrapPanel>
                     <Button Content="新規登録" Command="{Binding NewCommand}" Style="{StaticResource ActionButtonStyle}" />
                     <Button Content="編集" Command="{Binding EditCommand}" Style="{StaticResource SecondaryButtonStyle}" />
                     <Button Content="詳細" Command="{Binding DetailCommand}" Style="{StaticResource SecondaryButtonStyle}" />
                     <Button Content="削除" Command="{Binding DeleteCommand}" Style="{StaticResource DangerButtonStyle}" />
+                </WrapPanel>
+                <WrapPanel Margin="0,10,0,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="検索" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="220" ToolTip="コード・銘柄名・ファンド名" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="表示" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding Filters}" SelectedItem="{Binding SelectedFilter, Mode=TwoWay}" Width="150" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="単位" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding GroupingModes}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Width="130" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="列" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding DisplayModes}" SelectedItem="{Binding SelectedDisplayMode, Mode=TwoWay}" Width="120" />
+                    </StackPanel>
+                </WrapPanel>
+                <Expander x:Name="AdvancedFiltersExpander" Header="詳細条件・口座別展開・API更新" Margin="0,8,0,0"
+                          Foreground="{DynamicResource SecondaryTextBrush}">
+                  <StackPanel>
+                  <WrapPanel Margin="0,8,0,0">
+                    <Button Content="選択銘柄を口座別に展開" Command="{Binding ExpandSelectedCommand}"
+                            Style="{StaticResource SecondaryButtonStyle}" />
                     <Button Content="選択銘柄のAPI更新" Command="{Binding RefreshSelectedCommand}" Style="{StaticResource ActionButtonStyle}" />
                     <Button Content="未取得だけAPI更新" Command="{Binding RefreshMissingCommand}" Style="{StaticResource ActionButtonStyle}" />
                     <Button Content="全保有銘柄のAPI更新" Command="{Binding RefreshAllCommand}" Style="{StaticResource ActionButtonStyle}" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
-                    <TextBlock Text="表示" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
-                    <ComboBox ItemsSource="{Binding Filters}" SelectedItem="{Binding SelectedFilter, Mode=TwoWay}" Width="150" Margin="0,0,10,0" />
-                    <TextBlock Text="単位" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
-                    <ComboBox ItemsSource="{Binding GroupingModes}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Width="130" Margin="0,0,10,0" />
-                    <TextBlock Text="列" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
-                    <ComboBox ItemsSource="{Binding DisplayModes}" SelectedItem="{Binding SelectedDisplayMode, Mode=TwoWay}" Width="120" />
-                </StackPanel>
-            </DockPanel>
+                  </WrapPanel>
+                  <WrapPanel Margin="0,8,0,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="証券会社" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding BrokerFilters}" SelectedItem="{Binding SelectedBroker, Mode=TwoWay}" Width="135" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="口座" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding AccountFilters}" SelectedItem="{Binding SelectedAccount, Mode=TwoWay}" Width="125" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="分野" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding SectorFilters}" SelectedItem="{Binding SelectedSector, Mode=TwoWay}" Width="160" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                        <TextBlock Text="品質・取得日" Style="{StaticResource LabelTextStyle}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{Binding QualityFilters}" SelectedItem="{Binding SelectedQuality, Mode=TwoWay}" Width="145" />
+                    </StackPanel>
+                    <Button Content="条件を解除" Command="{Binding ResetFiltersCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                    <Button Content="条件を保存" Command="{Binding SaveFiltersCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                  </WrapPanel>
+                  </StackPanel>
+                </Expander>
+                <TextBlock Text="{Binding VisibleSummary}" Foreground="{DynamicResource SecondaryTextBrush}"
+                           TextWrapping="Wrap" Margin="0,8,0,0" />
+                <TextBlock Text="コード・銘柄名・口座は固定表示。列幅と並び順は変更後に自動保存します。"
+                           Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,4,0,0" />
+            </StackPanel>
         </Border>
 
         <Grid Grid.Row="1">
@@ -43,20 +86,20 @@
                        Foreground="{DynamicResource WarningBrush}"
                        Margin="0,0,0,8"
                        TextWrapping="Wrap" />
-            <DataGrid Grid.Row="1"
+            <DataGrid x:Name="StockGrid" Grid.Row="1"
                       ItemsSource="{Binding Rows}"
                       SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-                      FrozenColumnCount="2">
+                      EnableRowVirtualization="True"
+                      EnableColumnVirtualization="True"
+                      FrozenColumnCount="3">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="コード" Binding="{Binding Ticker}" Width="100" ElementStyle="{StaticResource DataGridCellTextStyle}" />
-                    <DataGridTextColumn Header="銘柄名" Binding="{Binding Name}" Width="190" ElementStyle="{StaticResource DataGridCellTextStyle}" />
+                    <DataGridTextColumn Header="コード" Binding="{Binding Ticker}" Width="100" CanUserReorder="False" ElementStyle="{StaticResource DataGridCellTextStyle}" />
+                    <DataGridTextColumn Header="銘柄名" Binding="{Binding Name}" Width="190" CanUserReorder="False" ElementStyle="{StaticResource DataGridCellTextStyle}" />
+                    <DataGridTextColumn Header="口座" Binding="{Binding AccountType}" Width="115" CanUserReorder="False" ElementStyle="{StaticResource CenterCellTextStyle}" />
 
                     <DataGridTextColumn Header="種別" Binding="{Binding AssetTypeLabel}" Width="90"
                                         Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="120"
-                                        Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
-                    <DataGridTextColumn Header="口座区分" Binding="{Binding AccountType}" Width="110"
-                                        ElementStyle="{StaticResource CenterCellTextStyle}"
                                         Visibility="{Binding Data.ShowBasicColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="取得額" Binding="{Binding CostBasisJpy}" Width="130"
                                         ElementStyle="{StaticResource RightAlignedCellTextStyle}"
@@ -74,8 +117,6 @@
                     <DataGridTextColumn Header="種別" Binding="{Binding AssetTypeLabel}" Width="90"
                                         Visibility="{Binding Data.ShowFundColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="ファンド名" Binding="{Binding FundName}" Width="260"
-                                        Visibility="{Binding Data.ShowFundColumns, Source={StaticResource VmProxy}}" />
-                    <DataGridTextColumn Header="口座区分" Binding="{Binding FundAccountType}" Width="110"
                                         Visibility="{Binding Data.ShowFundColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="保有口数" Binding="{Binding FundUnitsHeld}" Width="120"
                                         ElementStyle="{StaticResource RightAlignedCellTextStyle}"
@@ -169,6 +210,10 @@
                                         ElementStyle="{StaticResource ProfitLossCellTextStyle}"
                                         Visibility="{Binding Data.ShowExchangeColumns, Source={StaticResource VmProxy}}" />
 
+                    <DataGridTextColumn Header="取得額品質" Binding="{Binding CostQuality}" Width="100"
+                                        Visibility="{Binding Data.ShowDataColumns, Source={StaticResource VmProxy}}" />
+                    <DataGridTextColumn Header="価格鮮度" Binding="{Binding PriceFreshness}" Width="100"
+                                        Visibility="{Binding Data.ShowDataColumns, Source={StaticResource VmProxy}}" />
                     <DataGridTextColumn Header="株価更新日時" Binding="{Binding PriceAcquiredAt}" Width="140"
                                         ElementStyle="{StaticResource CenterCellTextStyle}"
                                         Visibility="{Binding Data.ShowDataColumns, Source={StaticResource VmProxy}}" />

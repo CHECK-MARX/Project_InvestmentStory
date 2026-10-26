@@ -23,10 +23,14 @@ public sealed class SbiStatementCsvParser
     public BrokerStatementImport ParseFiles(IEnumerable<string> filePaths)
     {
         var files = filePaths
-            .Where(File.Exists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        foreach (var file in files)
+        {
+            if (!File.Exists(file))
+                throw new FileNotFoundException("選択したCSVファイルが見つかりません。プレビューをやり直してください。", file);
+        }
         var holdings = new List<BrokerHoldingRecord>();
         var unresolvedHoldings = new List<BrokerHoldingRecord>();
         var completeScopes = new List<CompleteHoldingSnapshotScope>();
@@ -34,10 +38,10 @@ public sealed class SbiStatementCsvParser
         var unresolvedDividends = new List<BrokerUnresolvedDividend>();
         var trades = new List<BrokerTradeRecord>();
         var unresolvedTrades = new List<BrokerTradeRecord>();
-        var ignoredRows = 0;
         var reviewMessages = new List<string>();
         var sourceRowCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var sourceRowAudits = new Dictionary<string, CsvSourceRowAudit>(StringComparer.OrdinalIgnoreCase);
+        var sourceFormatVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var file in files)
         {
@@ -48,6 +52,7 @@ public sealed class SbiStatementCsvParser
                 unresolvedDividends.AddRange(parsed.UnresolvedDividends);
                 sourceRowCounts[file] = parsed.Dividends.Count;
                 sourceRowAudits[file] = parsed.SourceRowAudits[file];
+                sourceFormatVersions[file] = parsed.SourceFormatVersions[file];
                 continue;
             }
 
@@ -55,59 +60,77 @@ public sealed class SbiStatementCsvParser
             var rowAudit = new CsvSourceRowAuditBuilder();
             if (LooksLikeJapanStockHoldings(lines))
             {
+                var unresolvedStart = unresolvedHoldings.Count;
                 var parsedHoldings = ParseJapanStockAndFundHoldings(lines, rowAudit, unresolvedHoldings);
                 var exportDate = TryReadExportDate(file);
                 foreach (var holding in parsedHoldings)
                 {
+                    holding.SourceFile = Path.GetFullPath(file);
                     holding.SnapshotDate = exportDate;
                     if (holding.IsMutualFund) holding.NavDate = exportDate;
                 }
+                foreach (var unresolved in unresolvedHoldings.Skip(unresolvedStart))
+                    unresolved.SourceFile = Path.GetFullPath(file);
                 completeScopes.AddRange(FindCompleteHoldingScopes(lines, exportDate));
                 holdings.AddRange(parsedHoldings);
                 sourceRowCounts[file] = parsedHoldings.Count;
                 sourceRowAudits[file] = rowAudit.Build();
+                sourceFormatVersions[file] = DescribeHoldingFormats(lines);
                 continue;
             }
 
             if (LooksLikeForeignStockTrades(lines))
             {
+                var unresolvedStart = unresolvedTrades.Count;
                 var parsed = ParseForeignStockTrades(lines, rowAudit, unresolvedTrades);
+                foreach (var trade in parsed) trade.SourceFile = Path.GetFullPath(file);
+                foreach (var trade in unresolvedTrades.Skip(unresolvedStart)) trade.SourceFile = Path.GetFullPath(file);
                 trades.AddRange(parsed);
                 sourceRowCounts[file] = parsed.Count;
                 sourceRowAudits[file] = rowAudit.Build();
+                sourceFormatVersions[file] = "SbiForeignTrades-v1";
                 continue;
             }
 
             if (LooksLikePaymentRecords(lines))
             {
+                var unresolvedStart = unresolvedTrades.Count;
                 var parsed = ParsePaymentRecords(lines, rowAudit, unresolvedTrades);
+                foreach (var trade in parsed) trade.SourceFile = Path.GetFullPath(file);
+                foreach (var trade in unresolvedTrades.Skip(unresolvedStart)) trade.SourceFile = Path.GetFullPath(file);
                 trades.AddRange(parsed);
                 sourceRowCounts[file] = parsed.Count;
                 sourceRowAudits[file] = rowAudit.Build();
+                sourceFormatVersions[file] = "SbiPaymentRecords-v1";
                 continue;
             }
 
             if (LooksLikeAccumulationOrders(lines))
             {
                 var parsed = ParseAccumulationOrders(lines, rowAudit);
+                foreach (var trade in parsed) trade.SourceFile = Path.GetFullPath(file);
                 trades.AddRange(parsed);
                 sourceRowCounts[file] = parsed.Count;
                 sourceRowAudits[file] = rowAudit.Build();
+                sourceFormatVersions[file] = "SbiAccumulation-v1";
                 continue;
             }
 
             if (LooksLikeDomesticOrFundTrades(lines))
             {
+                var unresolvedStart = unresolvedTrades.Count;
                 var parsed = ParseDomesticOrFundTrades(lines, rowAudit, unresolvedTrades);
+                foreach (var trade in parsed) trade.SourceFile = Path.GetFullPath(file);
+                foreach (var trade in unresolvedTrades.Skip(unresolvedStart)) trade.SourceFile = Path.GetFullPath(file);
                 trades.AddRange(parsed);
                 sourceRowCounts[file] = parsed.Count;
                 sourceRowAudits[file] = rowAudit.Build();
+                sourceFormatVersions[file] = "SbiDomesticTrades-v1";
                 continue;
             }
 
-            ignoredRows += Math.Max(0, lines.Count - 1);
-            sourceRowCounts[file] = 0;
-            sourceRowAudits[file] = rowAudit.Build();
+            throw new InvalidOperationException(
+                $"SBI CSVの形式を判定できません: {Path.GetFileName(file)}。列名を確認してください。未対応形式は取り込みません。");
         }
 
         var distinctHoldings = new List<BrokerHoldingRecord>();
@@ -121,7 +144,13 @@ public sealed class SbiStatementCsvParser
                     x.MarketValue != newest[0].MarketValue ||
                     x.AcquisitionAmount != newest[0].AcquisitionAmount))
             {
-                reviewMessages.Add($"同一日時の保有残高が食い違います: {newest[0].Broker} {newest[0].Ticker} {newest[0].Account}");
+                var reason = $"同一日時の保有残高が食い違います: {newest[0].Broker} {newest[0].Ticker} {newest[0].Account}";
+                reviewMessages.Add(reason);
+                foreach (var holding in newest)
+                {
+                    holding.ReviewReason = reason;
+                    unresolvedHoldings.Add(holding);
+                }
                 conflictingHoldingKeys.Add(group.Key);
                 continue;
             }
@@ -143,11 +172,26 @@ public sealed class SbiStatementCsvParser
             UnresolvedDividends = unresolvedDividends,
             Trades = trades,
             UnresolvedTrades = unresolvedTrades,
-            IgnoredRowCount = ignoredRows,
+            IgnoredRowCount = 0,
             ReviewMessages = reviewMessages,
             SourceRowCounts = sourceRowCounts,
-            SourceRowAudits = sourceRowAudits
+            SourceRowAudits = sourceRowAudits,
+            SourceFormatVersions = sourceFormatVersions
         };
+    }
+
+    private static string DescribeHoldingFormats(IReadOnlyList<string> lines)
+    {
+        var formats = new List<string>();
+        if (FindHeaderIndexes(lines, "銘柄コード", "銘柄名称", "保有株数", "評価額").Any())
+            formats.Add("SbiStockHoldings-v1");
+        foreach (var index in FindHeaderIndexes(lines, "ファンド名", "保有口数", "基準価額", "評価額"))
+        {
+            var headers = ParseCsvLine(lines[index]);
+            formats.Add(headers.Contains("保有口数 (口)", StringComparer.OrdinalIgnoreCase)
+                ? "SbiFundHoldings-v2" : "SbiFundHoldings-v1");
+        }
+        return string.Join("+", formats.Distinct(StringComparer.Ordinal));
     }
 
     public static bool LooksLikeSbiStatementCsv(string filePath)
@@ -260,7 +304,12 @@ public sealed class SbiStatementCsvParser
         var headerIndex = FindHeaderIndex(lines, "国内約定日", "注文種別", "商品区分", "国内受渡日");
         var headers = ParseCsvLine(lines[headerIndex]);
         CsvRowValidation.ValidateHeaders(headers, "国内約定日", "注文種別", "商品区分",
-            "国内受渡日", "銘柄コード", "約定数量", "約定単価");
+            "国内受渡日", "銘柄コード", "銘柄", "取引", "約定数量", "約定単価",
+            "受渡金額/決済損益");
+        CsvRowValidation.ValidateKnownHeaders(headers, "SbiPaymentRecords-v1",
+            "国内約定日", "銘柄", "銘柄コード", "市場", "商品区分", "注文種別",
+            "取引", "預り区分", "約定数量", "約定単価", "国内受渡日",
+            "受渡金額/決済損益");
         var records = new List<BrokerTradeRecord>();
         foreach (var (line, index) in lines.Select((line, index) => (line, index))
                      .Skip(headerIndex + 1).Where(x => !string.IsNullOrWhiteSpace(x.line)))
@@ -277,7 +326,8 @@ public sealed class SbiStatementCsvParser
                     Product = Get(row, "商品区分"), Name = Get(row, "銘柄"),
                     TradeDate = ParseDate(Get(row, "国内約定日")),
                     SettlementDate = ParseDate(Get(row, "国内受渡日")),
-                    Quantity = ParseDecimal(Get(row, "約定数量")), Source = "SBI米株約定CSV"
+                    Quantity = ParseDecimal(Get(row, "約定数量")), Source = "SBI米株約定CSV",
+                    SourceRowNumber = index + 1
                 });
                 continue;
             }
@@ -290,6 +340,7 @@ public sealed class SbiStatementCsvParser
             records.Add(new BrokerTradeRecord
             {
                 Broker = "SBI証券", Account = Get(row, "預り区分"), Product = Get(row, "商品区分"),
+                SourceRowNumber = index + 1,
                 TradeDate = ParseDate(Get(row, "国内約定日")),
                 SettlementDate = ParseDate(Get(row, "国内受渡日")),
                 TradeType = NormalizeTradeType(Get(row, "取引")),
@@ -315,7 +366,11 @@ public sealed class SbiStatementCsvParser
     {
         var headerIndex = FindHeaderIndex(lines, "発注日", "注文状況", "ファンド名", "約定数量");
         var headers = ParseCsvLine(lines[headerIndex]);
-        CsvRowValidation.ValidateHeaders(headers, "発注日", "注文状況", "ファンド名", "約定数量", "約定単価");
+        CsvRowValidation.ValidateHeaders(headers, "発注日", "注文状況", "ファンド名",
+            "注文金額", "約定数量", "約定単価");
+        CsvRowValidation.ValidateKnownHeaders(headers, "SbiAccumulation-v1",
+            "発注日", "注文状況", "ファンド名", "協会コード", "預り区分",
+            "取引種別", "コース", "注文金額", "手数料等", "税額", "約定単価", "約定数量");
         var records = new List<BrokerTradeRecord>();
         foreach (var (line, index) in lines.Select((line, index) => (line, index))
                      .Skip(headerIndex + 1).Where(x => !string.IsNullOrWhiteSpace(x.line)))
@@ -336,6 +391,7 @@ public sealed class SbiStatementCsvParser
             records.Add(new BrokerTradeRecord
             {
                 Broker = "SBI証券", Account = Get(row, "預り区分"), Product = "投資信託",
+                SourceRowNumber = index + 1,
                 TradeDate = orderDate, SettlementDate = orderDate,
                 TradeType = "現物買付", Ticker = SecuritySymbolNormalizer.NormalizeTicker($"FUND:{name}"), Name = name,
                 Quantity = quantity, SignedQuantity = quantity, UnitPrice = nav / 10000m,
@@ -359,7 +415,11 @@ public sealed class SbiStatementCsvParser
         }
 
         var headers = ParseCsvLine(lines[headerIndex]);
-        CsvRowValidation.ValidateHeaders(headers, "国内約定日", "銘柄名", "約定数量", "約定単価", "国内受渡日", "通貨");
+        CsvRowValidation.ValidateHeaders(headers, "国内約定日", "銘柄名", "取引", "約定数量",
+            "約定単価", "国内受渡日", "受渡金額", "通貨");
+        CsvRowValidation.ValidateKnownHeaders(headers, "SbiForeignTrades-v1",
+            "国内約定日", "通貨", "銘柄名", "取引", "預り区分",
+            "約定数量", "約定単価", "国内受渡日", "受渡金額");
         var records = new List<BrokerTradeRecord>();
         foreach (var (line, index) in lines.Select((line, index) => (line, index))
                      .Skip(headerIndex + 1).Where(x => !string.IsNullOrWhiteSpace(x.line)))
@@ -377,7 +437,8 @@ public sealed class SbiStatementCsvParser
                     Name = rawName, TradeDate = ParseJapaneseDate(Get(row, "国内約定日")),
                     SettlementDate = ParseShortDate(Get(row, "国内受渡日")),
                     Quantity = ParseDecimal(Get(row, "約定数量")),
-                    Currency = ResolveCurrency(Get(row, "通貨")), Source = "SBI米国株約定CSV"
+                    Currency = ResolveCurrency(Get(row, "通貨")), Source = "SBI米国株約定CSV",
+                    SourceRowNumber = index + 1
                 });
                 continue;
             }
@@ -403,6 +464,7 @@ public sealed class SbiStatementCsvParser
             records.Add(new BrokerTradeRecord
             {
                 Broker = "SBI証券",
+                SourceRowNumber = index + 1,
                 TradeDate = ParseJapaneseDate(Get(row, "国内約定日")),
                 SettlementDate = ParseShortDate(Get(row, "国内受渡日")),
                 Account = Get(row, "預り区分"),
@@ -432,7 +494,11 @@ public sealed class SbiStatementCsvParser
         {
             var account = ResolvePreviousSectionTitle(lines, headerIndex);
             var headers = ParseCsvLine(lines[headerIndex]);
-            CsvRowValidation.ValidateHeaders(headers, "銘柄コード", "銘柄名称", "保有株数", "評価額");
+            CsvRowValidation.ValidateHeaders(headers, "銘柄コード", "銘柄名称", "保有株数",
+                "取得単価", "現在値", "取得金額", "評価額", "評価損益");
+            CsvRowValidation.ValidateKnownHeaders(headers, "SbiStockHoldings-v1",
+                "銘柄コード", "銘柄名称", "保有株数", "売却注文中", "取得単価",
+                "現在値", "取得金額", "評価額", "評価損益");
             foreach (var (line, index) in lines.Select((line, index) => (line, index)).Skip(headerIndex + 1))
             {
                 if (string.IsNullOrWhiteSpace(line))
@@ -452,7 +518,7 @@ public sealed class SbiStatementCsvParser
                     {
                         Broker = "SBI証券", Account = account, AssetType = AssetTypes.Stock,
                         Ticker = ticker, Name = name, Shares = shares,
-                        Currency = "JPY", Source = "SBI日本株保有CSV"
+                        Currency = "JPY", Source = "SBI日本株保有CSV", SourceRowNumber = index + 1
                     });
                     continue;
                 }
@@ -469,6 +535,7 @@ public sealed class SbiStatementCsvParser
                     AverageAcquisitionPrice = ParseDecimal(Get(row, "取得単価")),
                     CurrentPrice = ParseDecimal(Get(row, "現在値")),
                     AcquisitionAmount = ParseDecimal(Get(row, "取得金額")),
+                    AcquisitionAmountJpy = ParseDecimal(Get(row, "取得金額")),
                     MarketValue = ParseDecimal(Get(row, "評価額")),
                     MarketValueJpy = ParseDecimal(Get(row, "評価額")),
                     UnrealizedGainLossJpy = ParseDecimal(Get(row, "評価損益")),
@@ -476,7 +543,7 @@ public sealed class SbiStatementCsvParser
                     PurchaseExchangeRate = 1m,
                     CurrentExchangeRate = 1m,
                     SnapshotDate = DateTime.Today,
-                    Source = "SBI日本株保有CSV"
+                    Source = "SBI日本株保有CSV", SourceRowNumber = index + 1
                 });
                 rowAudit.Parsed();
             }
@@ -486,7 +553,24 @@ public sealed class SbiStatementCsvParser
         {
             var account = ResolvePreviousSectionTitle(lines, headerIndex);
             var headers = ParseCsvLine(lines[headerIndex]);
-            CsvRowValidation.ValidateHeaders(headers, "ファンド名");
+            if (headers.Contains("保有口数 (口)", StringComparer.OrdinalIgnoreCase))
+            {
+                CsvRowValidation.ValidateHeaders(headers, "ファンド名", "保有口数 (口)",
+                    "取得単価 (円)", "基準価額 (円)", "取得金額 (円)", "評価額 (円)", "評価損益 (円)");
+                CsvRowValidation.ValidateKnownHeaders(headers, "SbiFundHoldings-v2",
+                    "ファンド名", "積立設定中", "定期売却設定中", "保有口数 (口)",
+                    "売却注文中 (口)", "基準価額 (円)", "取得単価 (円)", "評価額 (円)",
+                    "取得金額 (円)", "評価損益 (円)", "評価損益 (率・%)",
+                    "評価損益 前日比 (円)", "評価損益 前日比 (率・%)");
+            }
+            else
+            {
+                CsvRowValidation.ValidateHeaders(headers, "ファンド名", "保有口数", "取得単価",
+                    "基準価額", "取得金額", "評価額", "評価損益");
+                CsvRowValidation.ValidateKnownHeaders(headers, "SbiFundHoldings-v1",
+                    "ファンド名", "保有口数", "取得単価", "基準価額", "取得金額", "評価額",
+                    "評価損益", "預り区分", "分配金受取方法", "売却注文中");
+            }
             foreach (var (line, index) in lines.Select((line, index) => (line, index)).Skip(headerIndex + 1))
             {
                 if (string.IsNullOrWhiteSpace(line))
@@ -505,7 +589,7 @@ public sealed class SbiStatementCsvParser
                     {
                         Broker = "SBI証券", Account = account, AssetType = AssetTypes.MutualFund,
                         Name = name, Shares = shares, UnitsHeld = shares,
-                        Currency = "JPY", Source = "SBI投信保有CSV"
+                        Currency = "JPY", Source = "SBI投信保有CSV", SourceRowNumber = index + 1
                     });
                     continue;
                 }
@@ -536,6 +620,7 @@ public sealed class SbiStatementCsvParser
                     CurrentExchangeRate = 1m,
                     SnapshotDate = DateTime.Today,
                     Source = "SBI投信保有CSV",
+                    SourceRowNumber = index + 1,
                     FundName = name.Trim(),
                     FundCode = SecuritySymbolNormalizer.NormalizeTicker(ResolveDomesticTicker(string.Empty, name)),
                     UnitsHeld = shares,
@@ -563,7 +648,12 @@ public sealed class SbiStatementCsvParser
         }
 
         var headers = ParseCsvLine(lines[headerIndex]);
-        CsvRowValidation.ValidateHeaders(headers, "約定日", "受渡日", "銘柄", "約定数量", "約定単価");
+        CsvRowValidation.ValidateHeaders(headers, "約定日", "受渡日", "銘柄", "取引",
+            "約定数量", "約定単価", "受渡金額/決済損益");
+        CsvRowValidation.ValidateKnownHeaders(headers, "SbiDomesticTrades-v1",
+            "約定日", "銘柄", "銘柄コード", "市場", "取引", "期限", "預り",
+            "課税", "約定数量", "約定単価", "手数料/諸経費等", "税額",
+            "受渡日", "受渡金額/決済損益");
         var records = new List<BrokerTradeRecord>();
         foreach (var (line, index) in lines.Select((line, index) => (line, index))
                      .Skip(headerIndex + 1).Where(x => !string.IsNullOrWhiteSpace(x.line)))
@@ -580,7 +670,8 @@ public sealed class SbiStatementCsvParser
                     Ticker = Get(row, "銘柄コード"), TradeDate = ParseDate(Get(row, "約定日")),
                     SettlementDate = ParseDate(Get(row, "受渡日")),
                     Quantity = ParseDecimal(Get(row, "約定数量")),
-                    Currency = "JPY", Source = "SBI国内約定CSV"
+                    Currency = "JPY", Source = "SBI国内約定CSV",
+                    SourceRowNumber = index + 1
                 });
                 continue;
             }
@@ -597,6 +688,7 @@ public sealed class SbiStatementCsvParser
             records.Add(new BrokerTradeRecord
             {
                 Broker = "SBI証券",
+                SourceRowNumber = index + 1,
                 TradeDate = ParseDate(Get(row, "約定日")),
                 SettlementDate = ParseDate(Get(row, "受渡日")),
                 Account = Get(row, "預り"),
@@ -726,6 +818,7 @@ public sealed class SbiStatementCsvParser
                     CurrentExchangeRate = 1m,
                     SnapshotDate = holdings.Max(x => x.SnapshotDate),
                     Source = first.Source,
+                    SourceRowNumber = first.SourceRowNumber,
                     FundName = first.FundName,
                     FundCode = first.FundCode,
                     AssociationCode = first.AssociationCode,
@@ -756,6 +849,7 @@ public sealed class SbiStatementCsvParser
                 AverageAcquisitionPrice = shares > 0m ? acquisitionAmount / shares : 0m,
                 CurrentPrice = shares > 0m ? marketValue / shares : 0m,
                 AcquisitionAmount = acquisitionAmount,
+                AcquisitionAmountJpy = first.Currency == "JPY" ? acquisitionAmount : 0m,
                 MarketValue = marketValue,
                 MarketValueJpy = marketValueJpy,
                 UnrealizedGainLossJpy = holdings.Sum(x => x.UnrealizedGainLossJpy),
@@ -763,7 +857,7 @@ public sealed class SbiStatementCsvParser
                 PurchaseExchangeRate = 1m,
                 CurrentExchangeRate = 1m,
                 SnapshotDate = holdings.Max(x => x.SnapshotDate),
-                Source = first.Source
+                Source = first.Source, SourceRowNumber = first.SourceRowNumber
             });
         }
 

@@ -5,42 +5,35 @@ namespace InvestmentStory.App.ViewModels;
 
 public sealed class MonthlyDividendBreakdownRowViewModel
 {
-    private const double MaxBarWidth = 260d;
-
-    public MonthlyDividendBreakdownRowViewModel(MonthlyDividendBreakdown value, decimal maxAmount)
+    public MonthlyDividendBreakdownRowViewModel(MonthlyDividendBreakdown value)
     {
+        Year = value.Year;
+        Month = value.Month;
         Label = value.Label;
-        Actual = Formatters.Jpy(value.ActualJpy);
-        Planned = Formatters.Jpy(value.PlannedJpy);
-        Forecast = Formatters.Jpy(value.ForecastJpy);
-        PreviousYear = Formatters.Jpy(value.PreviousYearActualJpy);
-        Goal = Formatters.Jpy(value.MonthlyGoalJpy);
-        ActualBarWidth = CalculateBarWidth(value.ActualJpy, maxAmount);
-        PlannedBarWidth = CalculateBarWidth(value.PlannedJpy, maxAmount);
-        PreviousBarWidth = CalculateBarWidth(value.PreviousYearActualJpy, maxAmount);
-        GoalBarWidth = CalculateBarWidth(value.MonthlyGoalJpy, maxAmount);
-        ToolTip = $"{value.Year}/{value.Month:00} 実績 {Actual} / 予定 {Planned} / 見込み {Forecast} / 前年 {PreviousYear} / 目標 {Goal}";
+        ActualJpy = value.ActualJpy;
+        PlannedJpy = value.PlannedJpy;
+        ForecastJpy = value.ForecastJpy;
+        PreviousYearActualJpy = value.PreviousYearActualJpy;
+        MonthlyGoalJpy = value.MonthlyGoalJpy;
+        Actual = Year > DateTime.Today.Year || Year == DateTime.Today.Year && Month > DateTime.Today.Month
+            ? "—" : Formatters.Jpy(ActualJpy);
+        Planned = Formatters.Jpy(PlannedJpy);
+        Forecast = Formatters.Jpy(ForecastJpy);
+        PreviousYear = Formatters.Jpy(PreviousYearActualJpy);
+        Goal = Formatters.Jpy(MonthlyGoalJpy);
     }
 
+    public int Year { get; }
+    public int Month { get; }
     public string Label { get; }
+    public decimal ActualJpy { get; }
+    public decimal PlannedJpy { get; }
+    public decimal ForecastJpy { get; }
+    public decimal PreviousYearActualJpy { get; }
+    public decimal MonthlyGoalJpy { get; }
     public string Actual { get; }
     public string Planned { get; }
     public string Forecast { get; }
     public string PreviousYear { get; }
     public string Goal { get; }
-    public double ActualBarWidth { get; }
-    public double PlannedBarWidth { get; }
-    public double PreviousBarWidth { get; }
-    public double GoalBarWidth { get; }
-    public string ToolTip { get; }
-
-    private static double CalculateBarWidth(decimal amount, decimal maxAmount)
-    {
-        if (amount <= 0m || maxAmount <= 0m)
-        {
-            return 0d;
-        }
-
-        return Math.Max(4d, (double)(amount / maxAmount) * MaxBarWidth);
-    }
 }

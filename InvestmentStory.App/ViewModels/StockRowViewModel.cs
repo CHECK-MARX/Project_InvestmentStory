@@ -37,10 +37,10 @@ public sealed class StockRowViewModel
     public string Currency => Snapshot.Position.Stock.Currency;
     public string Broker => SameOrMultiple(Snapshots.Select(x => x.Position.Stock.Broker));
     public string AccountType => SameOrMultiple(Snapshots.Select(x => ResolveAccountType(x.Position)));
-    public string CostBasisJpy => Formatters.Jpy(PurchaseTotalJpy);
-    public string MarketValueJpy => Formatters.Jpy(CurrentMarketValueJpyValue);
-    public string GainLossJpy => Formatters.SignedJpy(UnrealizedGainJpyValue);
-    public string GainLossRateJpy => Formatters.SignedPercent(UnrealizedGainRateJpyValue);
+    public string CostBasisJpy => Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : ReferencePrefix + Formatters.Jpy(PurchaseTotalJpy);
+    public string MarketValueJpy => HasUnknownMarketValue ? "算出不可" : Formatters.Jpy(CurrentMarketValueJpyValue);
+    public string GainLossJpy => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : ReferencePrefix + Formatters.SignedJpy(UnrealizedGainJpyValue);
+    public string GainLossRateJpy => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : ReferencePrefix + Formatters.SignedPercent(UnrealizedGainRateJpyValue);
     public string CurrentShares => IsMutualFund
         ? $"{Formatters.Number(Snapshots.Sum(x => x.Position.MutualFund.UnitsHeld))}口"
         : Formatters.Number(Snapshots.Sum(x => x.Position.CurrentHolding.CurrentShares));
@@ -49,41 +49,65 @@ public sealed class StockRowViewModel
         : Formatters.Money(Snapshot.EffectiveAcquisitionPrice, Snapshot.Position.Stock.Currency);
     public string CurrentPrice => IsMutualFund
         ? FundCurrentNav
-        : Snapshot.Position.CurrentHolding.CurrentPrice == 0m &&
-        string.IsNullOrWhiteSpace(Snapshot.Position.CurrentHolding.CurrentPriceSource)
+        : Snapshot.Position.CurrentHolding.CurrentPrice <= 0m
             ? "未取得"
             : Formatters.Money(Snapshot.Position.CurrentHolding.CurrentPrice, Snapshot.Position.Stock.Currency);
     public string CurrentMarketValue => IsAggregated
-        ? Formatters.Jpy(CurrentMarketValueJpyValue)
-        : Formatters.Money(Snapshot.CurrentMarketValue, Snapshot.Position.Stock.Currency);
-    public string CurrentMarketValueJpy => Formatters.Jpy(CurrentMarketValueJpyValue);
+        ? MarketValueJpy
+        : Snapshot.Position.CurrentHolding.CurrentShares > 0m && Snapshot.Position.CurrentHolding.CurrentPrice <= 0m
+            ? "未取得" : Formatters.Money(Snapshot.CurrentMarketValue, Snapshot.Position.Stock.Currency);
+    public string CurrentMarketValueJpy => MarketValueJpy;
     public string UnrealizedGain => IsAggregated
-        ? Formatters.SignedJpy(UnrealizedGainJpyValue)
-        : Formatters.SignedMoney(Snapshot.UnrealizedGain, Snapshot.Position.Stock.Currency);
+        ? GainLossJpy
+        : Snapshot.PurchaseTotal <= 0m ? "未確認"
+        : Snapshot.Position.CurrentHolding.CurrentShares > 0m && Snapshot.Position.CurrentHolding.CurrentPrice <= 0m
+            ? "算出不可" : Formatters.SignedMoney(Snapshot.UnrealizedGain, Snapshot.Position.Stock.Currency);
     public string UnrealizedGainRate => IsAggregated
-        ? Formatters.SignedPercent(UnrealizedGainRateJpyValue)
+        ? GainLossRateJpy
+        : Snapshot.PurchaseTotal <= 0m ? "未確認"
+        : Snapshot.Position.CurrentHolding.CurrentShares > 0m && Snapshot.Position.CurrentHolding.CurrentPrice <= 0m
+            ? "算出不可"
         : Formatters.SignedPercent(Snapshot.UnrealizedGainRate);
-    public string UnrealizedGainJpy => Formatters.SignedJpy(UnrealizedGainJpyValue);
-    public string UnrealizedGainRateJpy => Formatters.SignedPercent(UnrealizedGainRateJpyValue);
-    public bool HasPositiveGain => UnrealizedGainJpyValue > 0m;
-    public bool HasNegativeGain => UnrealizedGainJpyValue < 0m;
-    public string PurchaseExchangeRate => $"{Snapshot.Position.Purchase.ExchangeRate:N2}";
-    public string CurrentExchangeRate => $"{Snapshot.Position.CurrentHolding.CurrentExchangeRate:N2}";
+    public string UnrealizedGainJpy => GainLossJpy;
+    public string UnrealizedGainRateJpy => GainLossRateJpy;
+    public bool HasPositiveGain => !HasUnknownMarketValue && Snapshots.All(x => x.HasKnownPurchaseCostJpy) && UnrealizedGainJpyValue > 0m;
+    public bool HasNegativeGain => !HasUnknownMarketValue && Snapshots.All(x => x.HasKnownPurchaseCostJpy) && UnrealizedGainJpyValue < 0m;
+    public string PurchaseExchangeRate => Snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+        ? "対象外"
+        : PositionEvidenceService.HasUsableForeignExchangeRate(Snapshot.Position.Purchase.ExchangeRate)
+            ? Snapshot.HasKnownPurchaseCostJpy ? $"{Snapshot.Position.Purchase.ExchangeRate:N2}"
+                : $"未採用 {Snapshot.Position.Purchase.ExchangeRate:N2}"
+            : Snapshot.IsReferencePurchaseCostJpy && Snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount > 0m
+                ? $"概算 {Snapshot.Position.Purchase.ReferenceAcquisitionAmountJpy / Snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount:N2}"
+                : "未確認";
+    public string CurrentExchangeRate => Snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+        ? "対象外"
+        : PositionEvidenceService.HasUsableForeignExchangeRate(Snapshot.Position.CurrentHolding.CurrentExchangeRate)
+            ? $"{Snapshot.Position.CurrentHolding.CurrentExchangeRate:N2}" : "未確認";
     public string AnnualDividendForecast => HasMissingDividendInfo
         ? "未入力"
         : IsAggregated ? Formatters.Jpy(Snapshots.Sum(x => x.AnnualDividendForecastJpy)) : Formatters.Money(Snapshot.AnnualDividendForecast, Snapshot.Position.Stock.Currency);
     public string AnnualDividendForecastJpy => HasMissingDividendInfo
         ? "未入力"
         : Formatters.Jpy(Snapshots.Sum(x => x.AnnualDividendForecastJpy));
-    public string YieldOnCost => HasMissingDividendInfo
+    public string YieldOnCost => Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : HasMissingDividendInfo
         ? "未入力"
-        : Formatters.Percent(PurchaseTotalJpy <= 0m ? 0m : Snapshots.Sum(x => x.AnnualDividendForecastJpy) / PurchaseTotalJpy * 100m);
+        : ReferencePrefix + Formatters.Percent(PurchaseTotalJpy <= 0m ? 0m : Snapshots.Sum(x => x.AnnualDividendForecastJpy) / PurchaseTotalJpy * 100m);
     public string CurrentDividendYield => HasMissingDividendInfo
         ? "未入力"
+        : HasUnknownMarketValue ? "算出不可"
         : Formatters.Percent(CurrentMarketValueJpyValue <= 0m ? 0m : Snapshots.Sum(x => x.AnnualDividendForecastJpy) / CurrentMarketValueJpyValue * 100m);
     public string PriceAcquiredAt => Snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt == DateTime.MinValue
-        ? "未取得"
+        ? Snapshot.Position.CurrentHolding.CurrentPrice > 0m ? "時刻不明" : "未取得"
         : Snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt.ToString("yyyy/MM/dd HH:mm");
+    public string CostQuality => Snapshots.Any(x => PositionEvidenceService.CostQuality(x) == AcquisitionCostQuality.Unconfirmed)
+        ? "未確認" : Snapshots.Any(x => PositionEvidenceService.CostQuality(x) == AcquisitionCostQuality.Estimated)
+            ? "概算" : "確定";
+    public string PriceFreshness => Snapshots.Any(x => x.Position.IsMutualFund
+        ? x.Position.MutualFund.CurrentNav <= 0m : x.Position.CurrentHolding.CurrentPrice <= 0m)
+        ? "未取得" : Snapshots.Any(x => PositionEvidenceService.PriceFreshness(x.Position, DateTime.Today) == DataFreshness.TimeUnknown)
+            ? "時刻不明" : Snapshots.Any(x => PositionEvidenceService.PriceFreshness(x.Position, DateTime.Today) == DataFreshness.Delayed)
+                ? "更新遅れ" : "最新";
     public string CurrentPriceSource => string.IsNullOrWhiteSpace(Snapshot.Position.CurrentHolding.CurrentPriceSource)
         ? "未取得"
         : Snapshot.Position.CurrentHolding.CurrentPriceSource;
@@ -94,19 +118,20 @@ public sealed class StockRowViewModel
         ? "-"
         : SameOrMultiple(Snapshots.Select(x => x.Position.MutualFund.AccountType));
     public string FundUnitsHeld => $"{Formatters.Number(Snapshots.Sum(x => x.Position.MutualFund.UnitsHeld))}口";
-    public string FundAverageCostNav => FormatFundNav(Snapshot.Position.MutualFund.AverageCostNav, Snapshot.Position.MutualFund.UnitBase);
+    public string FundAverageCostNav => Snapshot.Position.MutualFund.AverageCostNav <= 0m
+        ? "未確認" : FormatFundNav(Snapshot.Position.MutualFund.AverageCostNav, Snapshot.Position.MutualFund.UnitBase);
     public string FundCurrentNav => Snapshot.Position.MutualFund.CurrentNav <= 0m
         ? "基準価額未更新"
         : FormatFundNav(Snapshot.Position.MutualFund.CurrentNav, Snapshot.Position.MutualFund.UnitBase);
-    public string FundAcquisitionAmount => Formatters.Jpy(PurchaseTotalJpy);
-    public string FundMarketValue => Formatters.Jpy(CurrentMarketValueJpyValue);
-    public string FundUnrealizedGainLoss => Formatters.SignedJpy(UnrealizedGainJpyValue);
-    public string FundUnrealizedGainLossRate => Formatters.SignedPercent(UnrealizedGainRateJpyValue);
+    public string FundAcquisitionAmount => Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : Formatters.Jpy(PurchaseTotalJpy);
+    public string FundMarketValue => MarketValueJpy;
+    public string FundUnrealizedGainLoss => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : Formatters.SignedJpy(UnrealizedGainJpyValue);
+    public string FundUnrealizedGainLossRate => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : Formatters.SignedPercent(UnrealizedGainRateJpyValue);
     public string FundNavDate => Snapshot.Position.MutualFund.NavDate == DateTime.MinValue
-        ? "基準価額未更新"
+        ? Snapshot.Position.MutualFund.CurrentNav > 0m ? "時刻不明" : "基準価額未更新"
         : Snapshot.Position.MutualFund.NavDate.ToString("yyyy/MM/dd");
     public string FundNavSource => string.IsNullOrWhiteSpace(Snapshot.Position.MutualFund.NavSource)
-        ? "基準価額未更新"
+        ? Snapshot.Position.MutualFund.CurrentNav > 0m ? "取得元不明" : "基準価額未更新"
         : Snapshot.Position.MutualFund.NavSource;
     public string FundDistributionMethod => string.IsNullOrWhiteSpace(Snapshot.Position.MutualFund.DistributionMethod)
         ? "-"
@@ -119,6 +144,8 @@ public sealed class StockRowViewModel
     }
 
     private decimal PurchaseTotalJpy => Snapshots.Sum(x => x.PurchaseTotalJpy);
+    private bool HasUnknownMarketValue => Snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy);
+    private string ReferencePrefix => Snapshots.Any(x => x.IsReferencePurchaseCostJpy) ? "概算 " : string.Empty;
     private decimal CurrentMarketValueJpyValue => Snapshots.Sum(x => x.CurrentMarketValueJpy);
     private decimal UnrealizedGainJpyValue => CurrentMarketValueJpyValue - PurchaseTotalJpy;
     private decimal UnrealizedGainRateJpyValue => PurchaseTotalJpy <= 0m ? 0m : UnrealizedGainJpyValue / PurchaseTotalJpy * 100m;
@@ -128,10 +155,10 @@ public sealed class StockRowViewModel
     {
         if (position.IsMutualFund && !string.IsNullOrWhiteSpace(position.MutualFund.AccountType))
         {
-            return position.MutualFund.AccountType;
+            return AccountTypes.DisplayName(position.MutualFund.AccountType);
         }
 
-        return position.Stock.AccountType;
+        return AccountTypes.DisplayName(position.Stock.AccountType);
     }
 
     private static string SameOrMultiple(IEnumerable<string> values)

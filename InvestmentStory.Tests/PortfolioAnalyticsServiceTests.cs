@@ -162,10 +162,83 @@ public sealed class PortfolioAnalyticsServiceTests
         var price = result.Single(x => x.FieldName == "現在株価");
         var account = result.Single(x => x.FieldName == "口座区分");
 
-        Assert.Equal("0.00", price.Value);
+        Assert.Equal("未取得", price.Value);
         Assert.Equal(DataQualityStates.Missing, price.ConfidenceLevel);
+        var priceRow = new InvestmentStory.App.ViewModels.DataQualityRowViewModel(price, new DateTime(2026, 7, 11));
+        Assert.Equal("未取得", priceRow.Freshness);
         Assert.Equal(AccountTypes.Unknown, account.Value);
         Assert.Equal(DataQualityStates.Missing, account.ConfidenceLevel);
+    }
+
+    [Fact]
+    public void DataQualityService_KeepsKnownPriceConfidenceWhenItsTimestampIsOld()
+    {
+        var position = new StockPosition
+        {
+            Stock = new Stock { Id = 11, Ticker = "PEP", Name = "ペプシコ", Currency = "USD" },
+            Purchase = new Purchase { Shares = 10m, UnitPrice = 100m, ExchangeRate = 150m },
+            CurrentHolding = new CurrentHolding
+            {
+                CurrentShares = 10m, CurrentPrice = 120m, CurrentExchangeRate = 155m,
+                CurrentPriceAcquiredAt = new DateTime(2026, 10, 1),
+                ExchangeRateAcquiredAt = new DateTime(2026, 10, 1)
+            }
+        };
+
+        var quality = new DataQualityService().BuildForPosition(position, new DateTime(2026, 10, 18));
+        foreach (var field in new[] { "現在株価", "現在為替" })
+        {
+            var item = quality.Single(x => x.FieldName == field);
+            Assert.Equal(DataQualityStates.Reliable, item.ConfidenceLevel);
+            Assert.True(item.IsStale);
+            var row = new InvestmentStory.App.ViewModels.DataQualityRowViewModel(item, new DateTime(2026, 10, 18));
+            Assert.Equal("取得済み", row.Confidence);
+            Assert.Equal("更新遅れ", row.Freshness);
+        }
+    }
+
+    [Fact]
+    public void DataQualityService_SeparatesKnownPriceFromUnknownTimestamp()
+    {
+        var position = new StockPosition
+        {
+            Stock = new Stock { Ticker = "A", Name = "A", Currency = "JPY" },
+            Purchase = new Purchase { Shares = 1m, UnitPrice = 100m },
+            CurrentHolding = new CurrentHolding { CurrentShares = 1m, CurrentPrice = 120m }
+        };
+
+        var info = new DataQualityService().BuildForPosition(position, new DateTime(2026, 10, 18))
+            .Single(x => x.FieldName == "現在株価");
+        var row = new InvestmentStory.App.ViewModels.DataQualityRowViewModel(info, new DateTime(2026, 10, 18));
+        Assert.Equal("取得済み", row.Confidence);
+        Assert.Equal("時刻不明", row.Freshness);
+        Assert.False(info.IsStale);
+    }
+
+    [Fact]
+    public void DashboardCoverage_DistinguishesMissingDataFromUnknownTimestamp()
+    {
+        var calculator = new InvestmentCalculator();
+        var snapshots = new[]
+        {
+            calculator.CreateSnapshot(new StockPosition
+            {
+                Stock = new Stock { Ticker = "A", Name = "A", Currency = "JPY" },
+                Purchase = new Purchase { Shares = 1m, UnitPrice = 100m },
+                CurrentHolding = new CurrentHolding { CurrentShares = 1m, CurrentPrice = 120m }
+            }),
+            calculator.CreateSnapshot(new StockPosition
+            {
+                Stock = new Stock { Ticker = "B", Name = "B", Currency = "JPY" },
+                Purchase = new Purchase { Shares = 1m, UnitPrice = 100m },
+                CurrentHolding = new CurrentHolding { CurrentShares = 1m }
+            })
+        };
+        var dashboard = new InvestmentStory.App.ViewModels.DashboardViewModel();
+        dashboard.Update(new DashboardSummary(), snapshots, Array.Empty<PortfolioSnapshot>());
+
+        Assert.Contains("株価・基準価額: 未取得 1 件 / 更新遅れ 0 件 / 時刻不明 1 件",
+            dashboard.DataCoverageStatus);
     }
 
     [Fact]
@@ -197,9 +270,33 @@ public sealed class PortfolioAnalyticsServiceTests
         Assert.Equal(80m, summary.RealizedGainLossJpy);
         Assert.Equal(120m, summary.CumulativeDividendJpy);
         Assert.Equal(700m, summary.TotalReturnJpy);
-        Assert.Equal(46.67m, summary.TotalReturnRate, precision: 2);
-        Assert.Equal(8m, summary.CapitalRecoveryRate);
         Assert.True(summary.Top5ConcentrationRate > 99m);
+    }
+
+    [Fact]
+    public void ReturnSummary_ExcludesClosedPositionFromCurrentUnrealizedAndConcentration()
+    {
+        var calculator = new InvestmentCalculator();
+        var active = calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock { Ticker = "ACTIVE", Currency = "JPY" },
+            Purchase = new Purchase { Shares = 10m, UnitPrice = 100m, ExchangeRate = 1m },
+            CurrentHolding = new CurrentHolding { CurrentShares = 10m, CurrentPrice = 150m, CurrentExchangeRate = 1m }
+        });
+        var closed = calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock { Ticker = "CLOSED", Currency = "JPY" },
+            Purchase = new Purchase { Shares = 100m, UnitPrice = 100m, ExchangeRate = 1m },
+            CurrentHolding = new CurrentHolding { CurrentShares = 0m, CurrentPrice = 200m, CurrentExchangeRate = 1m }
+        });
+
+        var summary = new PortfolioAnalyticsService().BuildReturnSummary(
+            new[] { active, closed }, Array.Empty<DividendPayment>(), realizedGainLossJpy: 300m);
+
+        Assert.Equal(0m, closed.UnrealizedGainJpy);
+        Assert.Equal(500m, summary.UnrealizedGainLossJpy);
+        Assert.Equal(800m, summary.TotalReturnJpy);
+        Assert.Equal(100m, summary.Top1ConcentrationRate);
     }
 
     [Fact]

@@ -15,6 +15,9 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
     private readonly Func<AppSettings> _getSettings;
     private readonly Action<IEnumerable<ApiFetchLogEntry>> _saveApiLogs;
     private StockSnapshot? _preview;
+    private decimal _defaultUsdJpyRate;
+    private DateTime _defaultUsdJpyAcquiredAt;
+    private string _defaultUsdJpySource = string.Empty;
     private bool _isApplyingAutoDefaults;
     private string _message = string.Empty;
     private string _ticker = string.Empty;
@@ -76,6 +79,7 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
     public string Currency { get; set; } = "USD";
     public string Broker { get; set; } = string.Empty;
     public decimal PurchaseShares { get; set; }
+    public DateTime? PurchaseDate { get; set; }
     public decimal PurchaseUnitPrice { get; set; }
     public decimal PurchaseExchangeRate { get; set; } = 160m;
     public decimal CurrentShares { get; set; }
@@ -102,14 +106,23 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
 
     public string ShareChangeRatio => Formatters.Number(CalculateShareChangeRatio());
     public string PurchaseTotalUsd => PurchaseUnitPrice <= 0m ? "購入単価が未入力です" : Money(x => x.PurchaseTotalUsd);
-    public string PurchaseTotalJpy => PurchaseUnitPrice <= 0m ? "購入単価が未入力です" : Jpy(x => x.PurchaseTotalJpy);
+    public string PurchaseTotalJpy => PurchaseUnitPrice <= 0m ? "購入単価が未入力です" :
+        _preview is null ? "-" : !_preview.HasKnownPurchaseCostJpy ? "未確認" :
+        (_preview.IsReferencePurchaseCostJpy ? "概算 " : string.Empty) + Jpy(x => x.PurchaseTotalJpy);
     public string EffectiveAcquisitionPrice => Money(x => x.EffectiveAcquisitionPrice);
     public string CurrentMarketValueUsd => CurrentPrice <= 0m ? "現在株価が未入力です" : Money(x => x.CurrentMarketValueUsd);
-    public string CurrentMarketValueJpy => CurrentPrice <= 0m ? "現在株価が未入力です" : Jpy(x => x.CurrentMarketValueJpy);
-    public string UnrealizedGainUsd => SignedMoney(x => x.UnrealizedGainUsd);
-    public string UnrealizedGainJpy => SignedJpy(x => x.UnrealizedGainJpy);
-    public string UnrealizedGainRateUsd => SignedPercent(x => x.UnrealizedGainRateUsd);
-    public string UnrealizedGainRateJpy => SignedPercent(x => x.UnrealizedGainRateJpy);
+    public string CurrentMarketValueJpy => CurrentPrice <= 0m ? "現在株価が未入力です" :
+        _preview is not null && !_preview.HasKnownCurrentMarketValueJpy ? "換算不可" : Jpy(x => x.CurrentMarketValueJpy);
+    public string UnrealizedGainUsd => _preview is not null && (CurrentPrice <= 0m || PurchaseUnitPrice <= 0m)
+        ? "算出不可" : SignedMoney(x => x.UnrealizedGainUsd);
+    public string UnrealizedGainJpy => _preview is null ? "-" :
+        !_preview.HasKnownPurchaseCostJpy || !_preview.HasKnownCurrentMarketValueJpy ? "算出不可" :
+        (_preview.IsReferencePurchaseCostJpy ? "概算 " : string.Empty) + SignedJpy(x => x.UnrealizedGainJpy);
+    public string UnrealizedGainRateUsd => _preview is not null && (CurrentPrice <= 0m || PurchaseUnitPrice <= 0m)
+        ? "算出不可" : SignedPercent(x => x.UnrealizedGainRateUsd);
+    public string UnrealizedGainRateJpy => _preview is null ? "-" :
+        !_preview.HasKnownPurchaseCostJpy || !_preview.HasKnownCurrentMarketValueJpy ? "算出不可" :
+        (_preview.IsReferencePurchaseCostJpy ? "概算 " : string.Empty) + SignedPercent(x => x.UnrealizedGainRateJpy);
     public string AnnualDividendForecast => DividendStatus == "配当未入力" ? "配当情報が未入力です" : Money(x => x.AnnualDividendForecast);
     public string AnnualDividendForecastJpy => DividendStatus == "配当未入力" ? "配当情報が未入力です" : Jpy(x => x.AnnualDividendForecastJpy);
     public string MonthlyDividendForecast => DividendStatus == "配当未入力" ? "配当情報が未入力です" : Money(x => x.MonthlyPassiveIncomeForecast);
@@ -120,12 +133,16 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
     public void Reset()
     {
         var quote = _exchangeRateService.GetUsdJpyRate();
+        _defaultUsdJpyRate = quote.Rate;
+        _defaultUsdJpyAcquiredAt = quote.AcquiredAt;
+        _defaultUsdJpySource = quote.Source;
         Ticker = string.Empty;
         Name = string.Empty;
         Country = "米国";
         Currency = "USD";
         Broker = string.Empty;
         PurchaseShares = 0m;
+        PurchaseDate = null;
         PurchaseUnitPrice = 0m;
         PurchaseExchangeRate = quote.Rate;
         CurrentShares = 0m;
@@ -180,7 +197,9 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
             var position = BuildPosition();
             _preview = _calculator.CreateSnapshot(position);
             _save(position);
-            Message = HasProvisionalPrices()
+            Message = IsForeignWithoutPurchaseCost(position, _preview)
+                ? "保存しました。取得日の参考為替が確認できないため、円換算の取得原価と含み損益は算出不可です。詳細編集で取得日の参考為替または根拠のある円決済額を登録できます。"
+                : HasProvisionalPrices()
                 ? "仮登録しました。購入単価や現在株価は後で詳細登録・編集から更新できます。"
                 : "保存しました。銘柄詳細で計算結果を確認できます。";
             RefreshAllProperties();
@@ -220,6 +239,16 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
         var currency = NormalizeCurrency(Currency);
         var purchaseExchangeRate = NormalizeExchangeRateForCurrency(currency, PurchaseExchangeRate);
         var currentExchangeRate = NormalizeExchangeRateForCurrency(currency, CurrentExchangeRate);
+        var rateSource = purchaseExchangeRate == _defaultUsdJpyRate
+            ? _defaultUsdJpySource : "手入力";
+        var rateAcquiredAt = purchaseExchangeRate == _defaultUsdJpyRate
+            ? _defaultUsdJpyAcquiredAt : now;
+        var rateMatchesToday = purchaseExchangeRate != _defaultUsdJpyRate ||
+            _defaultUsdJpyAcquiredAt.Date == today;
+        var referenceForeignCost = currency != "JPY" && PurchaseDate.HasValue &&
+            rateMatchesToday &&
+            PositionEvidenceService.HasDatedReferencePurchaseRate(PurchaseDate.Value, today, purchaseExchangeRate) &&
+            PurchaseShares > 0m && PurchaseUnitPrice > 0m ? PurchaseShares * PurchaseUnitPrice : 0m;
 
         return new StockPosition
         {
@@ -238,13 +267,19 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
             },
             Purchase = new Purchase
             {
-                PurchaseDate = today,
+                PurchaseDate = PurchaseDate ?? DateTime.MinValue,
                 Shares = PurchaseShares,
                 UnitPrice = PurchaseUnitPrice,
-                ExchangeRate = purchaseExchangeRate,
-                ExchangeRateAcquiredAt = now,
-                ExchangeRateSource = "手入力",
-                ExchangeRateInputType = "手入力",
+                ExchangeRate = currency == "JPY" ? 1m : 0m,
+                ReferenceAcquisitionAmountJpy = referenceForeignCost * purchaseExchangeRate,
+                ReferenceAcquisitionForeignAmount = referenceForeignCost,
+                ReferenceAcquisitionSource = referenceForeignCost > 0m
+                    ? $"かんたん登録の参考為替 {purchaseExchangeRate:N4} / {rateSource} / 基準日 {today:yyyy/MM/dd}"
+                    : string.Empty,
+                ExchangeRateAcquiredAt = referenceForeignCost > 0m ? rateAcquiredAt : DateTime.MinValue,
+                ExchangeRateSource = currency == "JPY" ? "円建て換算不要" :
+                    referenceForeignCost > 0m ? rateSource : string.Empty,
+                ExchangeRateInputType = currency == "JPY" ? "対象外" : "参考",
                 Fee = 0m,
                 Memo = "かんたん登録"
             },
@@ -326,6 +361,10 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
 
     private bool HasProvisionalPrices() => PurchaseUnitPrice == 0m || CurrentPrice == 0m;
 
+    private static bool IsForeignWithoutPurchaseCost(StockPosition position, StockSnapshot preview) =>
+        position.Stock.Currency != "JPY" && position.Purchase.UnitPrice > 0m &&
+        !preview.HasKnownPurchaseCostJpy;
+
     private void ApplyAutoDefaults()
     {
         var lookup = ApplyLookupDefaults(Ticker, updateTicker: true, showMessage: false)
@@ -360,15 +399,6 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
         if (CurrentShares <= 0m && PurchaseShares > 0m)
         {
             CurrentShares = PurchaseShares;
-        }
-
-        if (CurrentPrice == 0m && PurchaseUnitPrice > 0m)
-        {
-            CurrentPrice = PurchaseUnitPrice;
-        }
-        else if (PurchaseUnitPrice == 0m && CurrentPrice > 0m)
-        {
-            PurchaseUnitPrice = CurrentPrice;
         }
 
         if (string.IsNullOrWhiteSpace(DividendFrequency))
@@ -635,6 +665,14 @@ public sealed class SimpleRegistrationViewModel : ObservableObject
         {
             PurchaseExchangeRate = 1m;
             CurrentExchangeRate = 1m;
+        }
+        else if (normalizedCurrency != "USD" && _defaultUsdJpyRate > 0m)
+        {
+            // The initial quote is USD/JPY and cannot be applied to another currency.
+            if (PurchaseExchangeRate == _defaultUsdJpyRate)
+                PurchaseExchangeRate = 0m;
+            if (CurrentExchangeRate == _defaultUsdJpyRate)
+                CurrentExchangeRate = 0m;
         }
 
         OnPropertyChanged(nameof(Currency));

@@ -8,7 +8,9 @@ public sealed class DividendTaxCalculator
     {
         ArgumentNullException.ThrowIfNull(input);
 
-        var exchangeRate = IsJpy(input.Currency) ? 1m : input.ExchangeRate <= 0m ? 1m : input.ExchangeRate;
+        if (!IsJpy(input.Currency) && input.ExchangeRate <= 0m)
+            throw new ArgumentOutOfRangeException(nameof(input), "A positive exchange rate is required for foreign-currency dividends.");
+        var exchangeRate = IsJpy(input.Currency) ? 1m : input.ExchangeRate;
         var grossAmount = input.Quantity * input.DividendPerShare;
         var foreignRate = input.TaxProfile.IsForeignTaxExempt
             ? 0m

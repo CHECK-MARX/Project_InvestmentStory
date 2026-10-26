@@ -1,6 +1,7 @@
 using System.Windows.Input;
 using InvestmentStory.App.Infrastructure;
 using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
 
 namespace InvestmentStory.App.ViewModels;
 
@@ -12,6 +13,21 @@ public sealed class StockEditorViewModel : ObservableObject
     private int _purchaseId;
     private int _splitId;
     private int _currentHoldingId;
+    private decimal _loadedPurchaseShares;
+    private decimal _loadedPurchaseUnitPrice;
+    private decimal _loadedPurchaseExchangeRate;
+    private decimal _loadedAcquisitionAmountJpy;
+    private decimal _loadedReferenceAcquisitionAmountJpy;
+    private decimal _loadedReferenceAcquisitionForeignAmount;
+    private string _loadedReferenceAcquisitionSource = string.Empty;
+    private string _loadedAcquisitionAmountSource = string.Empty;
+    private DateTime _loadedAcquisitionAmountConfirmedAt = DateTime.MinValue;
+    private decimal _confirmedAcquisitionAmountJpy;
+    private string _acquisitionEvidence = string.Empty;
+    private string _loadedCurrency = string.Empty;
+    private DateTime _loadedPurchaseDate;
+    private string _loadedAccountType = AccountTypes.Unknown;
+    private string _loadedCustodyType = string.Empty;
     private string _errorMessage = string.Empty;
 
     public StockEditorViewModel(Action<StockPosition> save, Action<int> delete)
@@ -54,10 +70,35 @@ public sealed class StockEditorViewModel : ObservableObject
     public string Market { get; set; } = string.Empty;
     public string DataSource { get; set; } = "手入力";
     public string StockMemo { get; set; } = string.Empty;
-    public DateTime PurchaseDate { get; set; } = DateTime.Today;
+    public DateTime PurchaseDate { get; set; } = DateTime.MinValue;
+    public DateTime? PurchaseDateSelection
+    {
+        get => PurchaseDate == DateTime.MinValue ? null : PurchaseDate;
+        set => PurchaseDate = value ?? DateTime.MinValue;
+    }
     public decimal PurchaseShares { get; set; }
     public decimal PurchaseUnitPrice { get; set; }
     public decimal PurchaseExchangeRate { get; set; } = 1m;
+    public decimal ConfirmedAcquisitionAmountJpy
+    {
+        get => _confirmedAcquisitionAmountJpy;
+        set
+        {
+            if (SetProperty(ref _confirmedAcquisitionAmountJpy, value))
+                OnPropertyChanged(nameof(ReferenceDifference));
+        }
+    }
+    public string AcquisitionEvidence
+    {
+        get => _acquisitionEvidence;
+        set => SetProperty(ref _acquisitionEvidence, value);
+    }
+    public string ReferenceAcquisitionSummary => _loadedReferenceAcquisitionAmountJpy > 0m
+        ? $"参考換算 {_loadedReferenceAcquisitionAmountJpy:N0}円 / {_loadedReferenceAcquisitionSource}"
+        : "参考換算の記録なし";
+    public string ReferenceDifference => _loadedReferenceAcquisitionAmountJpy > 0m && ConfirmedAcquisitionAmountJpy > 0m
+        ? $"確定額と参考換算の差 {ConfirmedAcquisitionAmountJpy - _loadedReferenceAcquisitionAmountJpy:+#,0;-#,0;0}円"
+        : string.Empty;
     public DateTime PurchaseExchangeRateAcquiredAt { get; set; } = DateTime.Now;
     public string PurchaseExchangeRateSource { get; set; } = "手入力";
     public string PurchaseExchangeRateInputType { get; set; } = "手入力";
@@ -98,16 +139,31 @@ public sealed class StockEditorViewModel : ObservableObject
         Ticker = position?.Stock.Ticker ?? string.Empty;
         Country = position?.Stock.Country ?? "米国";
         Currency = position?.Stock.Currency ?? "USD";
+        _loadedCurrency = NormalizeCurrency(Currency);
+        _loadedAccountType = position?.Stock.AccountType ?? AccountTypes.Unknown;
+        _loadedCustodyType = position?.Stock.CustodyType ?? string.Empty;
         Broker = position?.Stock.Broker ?? string.Empty;
         Sector = position?.Stock.Sector ?? string.Empty;
         Industry = position?.Stock.Industry ?? string.Empty;
         Market = position?.Stock.Market ?? string.Empty;
         DataSource = position?.Stock.DataSource ?? "手入力";
         StockMemo = position?.Stock.Memo ?? string.Empty;
-        PurchaseDate = position?.Purchase.PurchaseDate ?? DateTime.Today;
+        PurchaseDate = position?.Purchase.PurchaseDate ?? DateTime.MinValue;
+        _loadedPurchaseDate = PurchaseDate;
         PurchaseShares = position?.Purchase.Shares ?? 0m;
         PurchaseUnitPrice = position?.Purchase.UnitPrice ?? 0m;
         PurchaseExchangeRate = position?.Purchase.ExchangeRate ?? 1m;
+        _loadedPurchaseShares = PurchaseShares;
+        _loadedPurchaseUnitPrice = PurchaseUnitPrice;
+        _loadedPurchaseExchangeRate = PurchaseExchangeRate;
+        _loadedAcquisitionAmountJpy = position?.Purchase.AcquisitionAmountJpy ?? 0m;
+        ConfirmedAcquisitionAmountJpy = _loadedAcquisitionAmountJpy;
+        _loadedAcquisitionAmountSource = position?.Purchase.AcquisitionAmountSource ?? string.Empty;
+        _loadedAcquisitionAmountConfirmedAt = position?.Purchase.AcquisitionAmountConfirmedAt ?? DateTime.MinValue;
+        AcquisitionEvidence = _loadedAcquisitionAmountSource;
+        _loadedReferenceAcquisitionAmountJpy = position?.Purchase.ReferenceAcquisitionAmountJpy ?? 0m;
+        _loadedReferenceAcquisitionForeignAmount = position?.Purchase.ReferenceAcquisitionForeignAmount ?? 0m;
+        _loadedReferenceAcquisitionSource = position?.Purchase.ReferenceAcquisitionSource ?? string.Empty;
         PurchaseExchangeRateAcquiredAt = position?.Purchase.ExchangeRateAcquiredAt ?? DateTime.Now;
         PurchaseExchangeRateSource = position?.Purchase.ExchangeRateSource ?? "手入力";
         PurchaseExchangeRateInputType = position?.Purchase.ExchangeRateInputType ?? "手入力";
@@ -132,6 +188,8 @@ public sealed class StockEditorViewModel : ObservableObject
         DividendInfoSource = position?.CurrentHolding.DividendInfoSource ?? string.Empty;
         UpdatedAt = position?.CurrentHolding.UpdatedAt ?? DateTime.Today;
         ErrorMessage = string.Empty;
+        OnPropertyChanged(nameof(ReferenceAcquisitionSummary));
+        OnPropertyChanged(nameof(ReferenceDifference));
         RefreshAllProperties();
     }
 
@@ -163,8 +221,13 @@ public sealed class StockEditorViewModel : ObservableObject
 
         try
         {
-            _save(BuildPosition());
-            ErrorMessage = "保存しました。";
+            var position = BuildPosition();
+            _save(position);
+            var missingForeignCost = position.Stock.Currency != "JPY" &&
+                !new InvestmentCalculator().CreateSnapshot(position).HasKnownPurchaseCostJpy;
+            ErrorMessage = missingForeignCost
+                ? "保存しました。外貨の取得原価は、取得日と同じ基準日の参考為替、または根拠のある円決済額がないため算出不可です。"
+                : "保存しました。";
         }
         catch (Exception ex)
         {
@@ -187,6 +250,25 @@ public sealed class StockEditorViewModel : ObservableObject
         var currency = NormalizeCurrency(Currency);
         var purchaseExchangeRate = NormalizeExchangeRateForCurrency(currency, PurchaseExchangeRate);
         var currentExchangeRate = NormalizeExchangeRateForCurrency(currency, CurrentExchangeRate);
+        var samePurchaseBasis = currency == _loadedCurrency &&
+            PurchaseDate == _loadedPurchaseDate &&
+            PurchaseShares == _loadedPurchaseShares &&
+            PurchaseUnitPrice == _loadedPurchaseUnitPrice &&
+            purchaseExchangeRate == _loadedPurchaseExchangeRate;
+        var hasNewCostEvidence = ConfirmedAcquisitionAmountJpy > 0m &&
+            !string.IsNullOrWhiteSpace(AcquisitionEvidence) &&
+            (ConfirmedAcquisitionAmountJpy != _loadedAcquisitionAmountJpy ||
+             AcquisitionEvidence.Trim() != _loadedAcquisitionAmountSource);
+        var keepExactCost = ConfirmedAcquisitionAmountJpy > 0m && (samePurchaseBasis || hasNewCostEvidence);
+        var changedForeignBasis = currency != "JPY" && !keepExactCost &&
+            (StockId == 0 || !samePurchaseBasis);
+        var referenceFromInput = changedForeignBasis &&
+            PositionEvidenceService.HasDatedReferencePurchaseRate(
+                PurchaseDate, PurchaseExchangeRateAcquiredAt, purchaseExchangeRate) &&
+            !string.IsNullOrWhiteSpace(PurchaseExchangeRateSource) &&
+            (PurchaseDate.Date == DateTime.Today ||
+             !PurchaseExchangeRateSource.Trim().Equals("手入力", StringComparison.OrdinalIgnoreCase));
+        var referenceForeignCost = referenceFromInput ? PurchaseShares * PurchaseUnitPrice : 0m;
 
         return new StockPosition
         {
@@ -198,6 +280,8 @@ public sealed class StockEditorViewModel : ObservableObject
                 Country = Country.Trim(),
                 Currency = currency,
                 Broker = Broker.Trim(),
+                AccountType = _loadedAccountType,
+                CustodyType = _loadedCustodyType,
                 Sector = Sector.Trim(),
                 Industry = Industry.Trim(),
                 Market = Market.Trim(),
@@ -211,8 +295,20 @@ public sealed class StockEditorViewModel : ObservableObject
                 PurchaseDate = PurchaseDate,
                 Shares = PurchaseShares,
                 UnitPrice = PurchaseUnitPrice,
-                ExchangeRate = purchaseExchangeRate,
-                ExchangeRateAcquiredAt = PurchaseExchangeRateAcquiredAt,
+                ExchangeRate = changedForeignBasis ? 0m : purchaseExchangeRate,
+                AcquisitionAmountJpy = keepExactCost ? ConfirmedAcquisitionAmountJpy : 0m,
+                AcquisitionAmountSource = keepExactCost ? AcquisitionEvidence.Trim() : string.Empty,
+                AcquisitionAmountConfirmedAt = keepExactCost
+                    ? hasNewCostEvidence ? DateTime.Now : _loadedAcquisitionAmountConfirmedAt : DateTime.MinValue,
+                ReferenceAcquisitionAmountJpy = referenceFromInput ? referenceForeignCost * purchaseExchangeRate :
+                    samePurchaseBasis ? _loadedReferenceAcquisitionAmountJpy : 0m,
+                ReferenceAcquisitionForeignAmount = referenceFromInput ? referenceForeignCost :
+                    samePurchaseBasis ? _loadedReferenceAcquisitionForeignAmount : 0m,
+                ReferenceAcquisitionSource = referenceFromInput
+                    ? $"入力した参考為替 {purchaseExchangeRate:N4} / {PurchaseExchangeRateSource.Trim()} / {PurchaseExchangeRateAcquiredAt:yyyy/MM/dd}"
+                    : samePurchaseBasis ? _loadedReferenceAcquisitionSource : string.Empty,
+                ExchangeRateAcquiredAt = changedForeignBasis && !referenceFromInput
+                    ? DateTime.MinValue : PurchaseExchangeRateAcquiredAt,
                 ExchangeRateSource = PurchaseExchangeRateSource.Trim(),
                 ExchangeRateInputType = PurchaseExchangeRateInputType.Trim(),
                 Fee = PurchaseFee,
@@ -251,6 +347,18 @@ public sealed class StockEditorViewModel : ObservableObject
 
     private bool Validate()
     {
+        if (ConfirmedAcquisitionAmountJpy < 0m)
+        {
+            ErrorMessage = "確定した円決済額に負数は入力できません。";
+            return false;
+        }
+        if (ConfirmedAcquisitionAmountJpy > 0m &&
+            ConfirmedAcquisitionAmountJpy != _loadedAcquisitionAmountJpy &&
+            string.IsNullOrWhiteSpace(AcquisitionEvidence))
+        {
+            ErrorMessage = "確定した円決済額を変更する場合は、証券会社の取引報告書など根拠を入力してください。";
+            return false;
+        }
         if (string.IsNullOrWhiteSpace(Name))
         {
             ErrorMessage = "銘柄名を入力してください。";
@@ -269,8 +377,7 @@ public sealed class StockEditorViewModel : ObservableObject
             return false;
         }
 
-        if (NormalizeExchangeRateForCurrency(NormalizeCurrency(Currency), PurchaseExchangeRate) <= 0 ||
-            NormalizeExchangeRateForCurrency(NormalizeCurrency(Currency), CurrentExchangeRate) <= 0)
+        if (NormalizeExchangeRateForCurrency(NormalizeCurrency(Currency), CurrentExchangeRate) <= 0)
         {
             ErrorMessage = "為替レートは0より大きい値を入力してください。";
             return false;

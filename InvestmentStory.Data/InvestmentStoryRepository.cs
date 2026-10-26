@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.Json;
 using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using Microsoft.Data.Sqlite;
@@ -33,6 +35,7 @@ public sealed class InvestmentStoryRepository
         }
 
         using var connection = OpenConnection();
+        CreatePreImportBackup(connection);
         using var transaction = connection.BeginTransaction();
         _importConnection = connection;
         _importTransaction = transaction;
@@ -55,6 +58,127 @@ public sealed class InvestmentStoryRepository
             _importConnection = null;
         }
     }
+
+    public IReadOnlyList<CsvImportLogEntry> GetRecentCsvImportLogs(int limit = 100)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, BatchId, FileName, FileSize, FileHash, Broker, CsvType,
+                   ImportedAt, RowCount, ParsedRowCount, PendingRowCount,
+                   ExcludedRowCount, InsertedCount, UpdatedCount, SkippedCount,
+                   ConflictCount, Result, ErrorSummary, ParserVersion, FormatVersion
+            FROM CsvImportLogs ORDER BY Id DESC LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 1000));
+        using var reader = command.ExecuteReader();
+        var logs = new List<CsvImportLogEntry>();
+        while (reader.Read())
+        {
+            logs.Add(new CsvImportLogEntry
+            {
+                Id = reader.GetInt64(0), BatchId = reader.GetString(1),
+                FileName = reader.GetString(2), FileSize = reader.GetInt64(3),
+                FileHash = reader.GetString(4), Broker = reader.GetString(5),
+                CsvType = reader.GetString(6),
+                ImportedAtUtc = DateTime.SpecifyKind(
+                    DateTime.Parse(reader.GetString(7), System.Globalization.CultureInfo.InvariantCulture), DateTimeKind.Utc),
+                RowCount = reader.GetInt32(8), ParsedRowCount = reader.GetInt32(9),
+                PendingRowCount = reader.GetInt32(10), ExcludedRowCount = reader.GetInt32(11),
+                InsertedCount = reader.GetInt32(12), UpdatedCount = reader.GetInt32(13),
+                SkippedCount = reader.GetInt32(14), ConflictCount = reader.GetInt32(15),
+                Result = reader.GetString(16), ErrorSummary = reader.GetString(17),
+                ParserVersion = reader.GetString(18), FormatVersion = reader.GetString(19)
+            });
+        }
+        return logs;
+    }
+
+    public IReadOnlyList<string> GetPreImportBackupPaths() =>
+        Directory.Exists(GetPreImportBackupDirectory())
+            ? Directory.GetFiles(GetPreImportBackupDirectory(), "*.db")
+                .OrderByDescending(Path.GetFileName).ToArray()
+            : Array.Empty<string>();
+
+    public IReadOnlyList<CsvImportChangeEntry> GetCsvImportChanges(string batchId)
+    {
+        if (string.IsNullOrWhiteSpace(batchId)) return Array.Empty<CsvImportChangeEntry>();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+             SELECT Id, BatchId, Source, Broker, Account, Ticker, Action,
+                    BeforeQuantity, AfterQuantity, BeforeExactCostJpy, AfterExactCostJpy,
+                    BeforeReferenceCostJpy, AfterReferenceCostJpy, Reason,
+                    RecordKind, EventDate, SourceRowNumber, BeforeAmountJpy, AfterAmountJpy
+            FROM CsvImportChangeRows WHERE BatchId = $batchId ORDER BY Id;
+            """;
+        command.Parameters.AddWithValue("$batchId", batchId);
+        using var reader = command.ExecuteReader();
+        var rows = new List<CsvImportChangeEntry>();
+        while (reader.Read())
+        {
+            rows.Add(new CsvImportChangeEntry
+            {
+                Id = reader.GetInt64(0), BatchId = reader.GetString(1),
+                Source = reader.GetString(2), Broker = reader.GetString(3),
+                Account = reader.GetString(4), Ticker = reader.GetString(5),
+                Action = reader.GetString(6),
+                BeforeQuantity = reader.IsDBNull(7) ? null : Convert.ToDecimal(reader.GetValue(7), CultureInfo.InvariantCulture),
+                AfterQuantity = reader.IsDBNull(8) ? null : Convert.ToDecimal(reader.GetValue(8), CultureInfo.InvariantCulture),
+                BeforeExactCostJpy = reader.IsDBNull(9) ? null : Convert.ToDecimal(reader.GetValue(9), CultureInfo.InvariantCulture),
+                AfterExactCostJpy = reader.IsDBNull(10) ? null : Convert.ToDecimal(reader.GetValue(10), CultureInfo.InvariantCulture),
+                BeforeReferenceCostJpy = reader.IsDBNull(11) ? null : Convert.ToDecimal(reader.GetValue(11), CultureInfo.InvariantCulture),
+                AfterReferenceCostJpy = reader.IsDBNull(12) ? null : Convert.ToDecimal(reader.GetValue(12), CultureInfo.InvariantCulture),
+                Reason = reader.GetString(13), RecordKind = reader.GetString(14),
+                EventDate = reader.GetString(15), SourceRowNumber = reader.GetInt32(16),
+                BeforeAmountJpy = reader.IsDBNull(17) ? null : Convert.ToDecimal(reader.GetValue(17), CultureInfo.InvariantCulture),
+                AfterAmountJpy = reader.IsDBNull(18) ? null : Convert.ToDecimal(reader.GetValue(18), CultureInfo.InvariantCulture)
+            });
+        }
+        return rows;
+    }
+
+    private string GetPreImportBackupDirectory() => _databasePath + ".pre_import_backups";
+
+    internal void CreatePreImportBackup(SqliteConnection source)
+    {
+        if (!File.Exists(_databasePath))
+            throw new FileNotFoundException("取込前バックアップの元DBがありません。", _databasePath);
+        var directory = GetPreImportBackupDirectory();
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory,
+            $"{DateTime.Now:yyyyMMdd_HHmmss_fffffff}_{Guid.NewGuid():N}.db");
+        try
+        {
+            string schemaId;
+            using (var backup = new SqliteConnection(new SqliteConnectionStringBuilder
+                   { DataSource = path, Pooling = false }.ToString()))
+            {
+                backup.Open();
+                source.BackupDatabase(backup);
+                using var check = backup.CreateCommand();
+                check.CommandText = "PRAGMA quick_check;";
+                if (!string.Equals(check.ExecuteScalar()?.ToString(), "ok", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("取込前バックアップの整合性検査に失敗しました。");
+                schemaId = DatabaseSchemaIdentity.Compute(backup);
+            }
+            using var backupFile = File.OpenRead(path);
+            var sha256 = Convert.ToHexString(SHA256.HashData(backupFile));
+            var metadata = new DatabaseBackupMetadata(DateTime.UtcNow,
+                typeof(InvestmentStoryRepository).Assembly.GetName().Version?.ToString() ?? "不明",
+                "CSV取込前", sha256, schemaId);
+            File.WriteAllText(path + ".json", JsonSerializer.Serialize(metadata));
+        }
+        catch
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".json")) File.Delete(path + ".json");
+            throw;
+        }
+    }
+
+    private sealed record DatabaseBackupMetadata(DateTime CreatedAtUtc, string AppVersion, string Reason,
+        string? Sha256, string? SchemaId);
 
     public void Initialize()
     {
@@ -82,7 +206,10 @@ public sealed class InvestmentStoryRepository
                 mf.AverageCostNav, mf.CurrentNav, mf.AcquisitionAmount, mf.MarketValue, mf.UnrealizedGainLoss,
                 mf.NavDate, mf.NavSource, mf.DistributionMethod, mf.AccountType,
                 mf.TotalPurchaseAmount, mf.TotalSaleAmount, mf.ReinvestedDistributionAmount,
-                s.CanonicalSecurityKey
+                s.CanonicalSecurityKey,
+                p.AcquisitionAmountJpy,
+                p.ReferenceAcquisitionAmountJpy, p.ReferenceAcquisitionForeignAmount, p.ReferenceAcquisitionSource,
+                p.AcquisitionAmountSource, p.AcquisitionAmountConfirmedAt
             FROM Stocks s
             LEFT JOIN Purchases p ON p.Id = (SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1)
             LEFT JOIN StockSplits sp ON sp.Id = (SELECT Id FROM StockSplits WHERE StockId = s.Id ORDER BY SplitDate DESC, Id DESC LIMIT 1)
@@ -128,7 +255,13 @@ public sealed class InvestmentStoryRepository
                     ExchangeRateSource = GetStringOrDefault(reader, 19, "手入力"),
                     ExchangeRateInputType = GetStringOrDefault(reader, 20, "手入力"),
                     Fee = GetDecimalOrZero(reader, 21),
-                    Memo = GetString(reader, 22)
+                    Memo = GetString(reader, 22),
+                    AcquisitionAmountJpy = GetDecimalOrZero(reader, 63),
+                    ReferenceAcquisitionAmountJpy = GetDecimalOrZero(reader, 64),
+                    ReferenceAcquisitionForeignAmount = GetDecimalOrZero(reader, 65),
+                    ReferenceAcquisitionSource = GetString(reader, 66),
+                    AcquisitionAmountSource = GetString(reader, 67),
+                    AcquisitionAmountConfirmedAt = GetDateTimeOrDefault(reader, 68, DateTime.MinValue)
                 },
                 Split = new StockSplit
                 {
@@ -415,7 +548,11 @@ public sealed class InvestmentStoryRepository
                     PaymentDate = CASE WHEN excluded.PaymentDate <> '' THEN excluded.PaymentDate ELSE DividendCalendarEvents.PaymentDate END,
                     AmountPerShare = CASE WHEN excluded.AmountPerShare > 0 THEN excluded.AmountPerShare ELSE DividendCalendarEvents.AmountPerShare END,
                     Currency = CASE WHEN excluded.Currency <> '' THEN excluded.Currency ELSE DividendCalendarEvents.Currency END,
-                    Source = CASE WHEN excluded.Source <> '' THEN excluded.Source ELSE DividendCalendarEvents.Source END,
+                    Source = CASE
+                        WHEN excluded.PaymentDate = '' AND DividendCalendarEvents.PaymentDate <> ''
+                            THEN DividendCalendarEvents.Source
+                        WHEN excluded.Source <> '' THEN excluded.Source
+                        ELSE DividendCalendarEvents.Source END,
                     DataQuality = CASE WHEN excluded.IsConfirmed = 1 THEN excluded.DataQuality ELSE DividendCalendarEvents.DataQuality END,
                     AcquiredAt = CASE WHEN excluded.AcquiredAt <> '' THEN excluded.AcquiredAt ELSE DividendCalendarEvents.AcquiredAt END,
                     IsConfirmed = MAX(DividendCalendarEvents.IsConfirmed, excluded.IsConfirmed);
@@ -623,6 +760,7 @@ public sealed class InvestmentStoryRepository
             ExchangeRateProvider = GetSetting(values, nameof(AppSettings.ExchangeRateProvider), "Yahoo Finance"),
             BrokerDataMode = GetSetting(values, nameof(AppSettings.BrokerDataMode), "手入力"),
             CsvMergePolicy = GetSetting(values, nameof(AppSettings.CsvMergePolicy), "証券会社データを正として上書き"),
+            CsvWatchFolder = GetSetting(values, nameof(AppSettings.CsvWatchFolder), string.Empty),
             AlphaVantageApiKey = GetSetting(values, nameof(AppSettings.AlphaVantageApiKey), string.Empty),
             JQuantsApiKey = GetSetting(values, nameof(AppSettings.JQuantsApiKey), string.Empty),
             ApiTimeoutSeconds = GetIntSetting(values, nameof(AppSettings.ApiTimeoutSeconds), 10),
@@ -631,7 +769,10 @@ public sealed class InvestmentStoryRepository
             EnableApiResponseLog = GetBoolSetting(values, nameof(AppSettings.EnableApiResponseLog), false),
             ThemeMode = GetSetting(values, nameof(AppSettings.ThemeMode), "Light"),
             IsSidebarCollapsed = GetBoolSetting(values, nameof(AppSettings.IsSidebarCollapsed), false),
+            IsPrivacyMode = GetBoolSetting(values, nameof(AppSettings.IsPrivacyMode), false),
+            DisplayDensity = GetSetting(values, nameof(AppSettings.DisplayDensity), "Standard"),
             StockListDisplayMode = GetSetting(values, nameof(AppSettings.StockListDisplayMode), "基本"),
+            StockListFilterJson = GetSetting(values, nameof(AppSettings.StockListFilterJson), string.Empty),
             LastDashboardCompositionMode = GetSetting(values, nameof(AppSettings.LastDashboardCompositionMode), "Country"),
             LastOpenedPage = GetSetting(values, nameof(AppSettings.LastOpenedPage), "Dashboard"),
             MutualFundSimulationScopeKey = GetSetting(values, nameof(AppSettings.MutualFundSimulationScopeKey), MutualFundSimulationScopeKeys.AllAccounts),
@@ -663,6 +804,7 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.ExchangeRateProvider), settings.ExchangeRateProvider);
         UpsertSetting(connection, transaction, nameof(AppSettings.BrokerDataMode), settings.BrokerDataMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.CsvMergePolicy), settings.CsvMergePolicy);
+        UpsertSetting(connection, transaction, nameof(AppSettings.CsvWatchFolder), settings.CsvWatchFolder);
         UpsertSetting(connection, transaction, nameof(AppSettings.AlphaVantageApiKey), settings.AlphaVantageApiKey);
         UpsertSetting(connection, transaction, nameof(AppSettings.JQuantsApiKey), settings.JQuantsApiKey);
         UpsertSetting(connection, transaction, nameof(AppSettings.ApiTimeoutSeconds), settings.ApiTimeoutSeconds.ToString());
@@ -671,7 +813,10 @@ public sealed class InvestmentStoryRepository
         UpsertSetting(connection, transaction, nameof(AppSettings.EnableApiResponseLog), settings.EnableApiResponseLog.ToString());
         UpsertSetting(connection, transaction, nameof(AppSettings.ThemeMode), settings.ThemeMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.IsSidebarCollapsed), settings.IsSidebarCollapsed.ToString());
+        UpsertSetting(connection, transaction, nameof(AppSettings.IsPrivacyMode), settings.IsPrivacyMode.ToString());
+        UpsertSetting(connection, transaction, nameof(AppSettings.DisplayDensity), settings.DisplayDensity);
         UpsertSetting(connection, transaction, nameof(AppSettings.StockListDisplayMode), settings.StockListDisplayMode);
+        UpsertSetting(connection, transaction, nameof(AppSettings.StockListFilterJson), settings.StockListFilterJson);
         UpsertSetting(connection, transaction, nameof(AppSettings.LastDashboardCompositionMode), settings.LastDashboardCompositionMode);
         UpsertSetting(connection, transaction, nameof(AppSettings.LastOpenedPage), settings.LastOpenedPage);
         UpsertSetting(connection, transaction, nameof(AppSettings.MutualFundSimulationScopeKey), settings.MutualFundSimulationScopeKey);
@@ -951,6 +1096,62 @@ public sealed class InvestmentStoryRepository
         return logs;
     }
 
+    public CsvReviewSummary GetCsvReviewSummary()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+              (SELECT COUNT(*) FROM CsvImportReviewRows WHERE Resolution = ''),
+              (SELECT COUNT(*) FROM CsvImportReviewHoldings h
+                 LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'holding:' || h.Id
+                WHERE COALESCE(d.Status,'要確認') <> '確認済み'),
+              (SELECT COUNT(*) FROM CsvImportReviewDividends v
+                 LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'dividend:' || v.Id
+                WHERE COALESCE(d.Status,'要確認') <> '確認済み');
+            """;
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        return new CsvReviewSummary(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+    }
+
+    public IReadOnlyList<CsvReviewRecord> GetCsvReviewRecords(bool includeResolved = false)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT 'trade:' || Id,
+                   CASE WHEN Resolution = '' THEN '取引・未解決' ELSE '取引・解決履歴' END,
+                   TradeDate, Ticker, Broker, Account,
+                   SourceFile, SourceRowNumber, Reason,
+                   CASE WHEN Resolution = '' THEN '未解決' ELSE '解決済み' END,
+                   Resolution
+              FROM CsvImportReviewRows WHERE $all = 1 OR Resolution = ''
+            UNION ALL
+            SELECT 'holding:' || h.Id, '保有・要確認履歴', h.SnapshotDate, h.Ticker, h.Broker, h.Account,
+                   '', 0, h.Reason, COALESCE(d.Status,'要確認'), COALESCE(d.Note,'')
+              FROM CsvImportReviewHoldings h
+              LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'holding:' || h.Id
+             WHERE $all = 1 OR COALESCE(d.Status,'要確認') <> '確認済み'
+            UNION ALL
+            SELECT 'dividend:' || v.Id, '配当・要確認履歴', v.PaymentDate, v.SecurityName, v.Broker, '',
+                   v.Source, 0, v.Reason, COALESCE(d.Status,'要確認'), COALESCE(d.Note,'')
+              FROM CsvImportReviewDividends v
+              LEFT JOIN CsvReviewDispositions d ON d.SourceKey = 'dividend:' || v.Id
+             WHERE $all = 1 OR COALESCE(d.Status,'要確認') <> '確認済み'
+            ORDER BY 3 DESC, 1;
+            """;
+        command.Parameters.AddWithValue("$all", includeResolved ? 1 : 0);
+        using var reader = command.ExecuteReader();
+        var records = new List<CsvReviewRecord>();
+        while (reader.Read())
+            records.Add(new CsvReviewRecord(reader.GetString(0), reader.GetString(1),
+                reader.GetString(2), reader.GetString(3), reader.GetString(4),
+                reader.GetString(5), reader.GetString(6), reader.GetInt32(7),
+                reader.GetString(8), reader.GetString(9), reader.GetString(10)));
+        return records;
+    }
+
     public void SavePortfolioSnapshot(PortfolioSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -1067,7 +1268,17 @@ public sealed class InvestmentStoryRepository
 
         foreach (var (stockId, target) in recordsByPosition)
         {
-            var combined = TradeHistoryService.Merge(GetBrokerTrades(stockId), target.Records,
+            var incomingAccount = AccountTypeNormalizer.Normalize(target.Records[0].Account);
+            var previousTrades = GetBrokerTrades(stockId)
+                .Where(x => incomingAccount == AccountTypes.Unknown ||
+                    AccountTypeNormalizer.Normalize(x.AccountType) == incomingAccount ||
+                    (AccountTypeNormalizer.Normalize(x.AccountType) == AccountTypes.Unknown &&
+                     AccountTypeNormalizer.Normalize(x.CustodyType) == incomingAccount));
+            var reconciliation = TradeHistoryService.Reconcile(previousTrades, target.Records,
+                target.Position.Stock.Ticker);
+            if (reconciliation.NeedsReview.Count > 0)
+                throw new InvalidDataException("同条件の別CSV取引を識別できません。取込プレビューで要確認に分類してください。");
+            var combined = TradeHistoryService.Merge(previousTrades, reconciliation.Accepted,
                 target.Position.Stock.Ticker);
             ledgers.AddRange(ledgerBuilder.BuildLedger(stockId, combined));
         }
@@ -1089,9 +1300,10 @@ public sealed class InvestmentStoryRepository
             delete.CommandText = $"DELETE FROM BrokerTrades WHERE StockId IN ({string.Join(", ", parameterNames)});";
             delete.ExecuteNonQuery();
         }
+        var occurrenceIndex = 0;
         foreach (var trade in ledgers)
         {
-            InsertBrokerTrade(connection, transaction, trade);
+            InsertBrokerTrade(connection, transaction, trade, ++occurrenceIndex);
         }
 
         ownedTransaction?.Commit();
@@ -1106,9 +1318,9 @@ public sealed class InvestmentStoryRepository
         command.CommandText = """
             INSERT OR IGNORE INTO CsvImportReviewRows
                 (Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity,
-                 UnitPrice, Currency, Source, Reason)
+                 UnitPrice, Currency, Source, SourceFile, SourceRowNumber, TradeIdentityKey, Reason)
             VALUES ($broker, $account, $ticker, $tradeDate, $tradeType, $quantity,
-                    $signedQuantity, $unitPrice, $currency, $source, $reason);
+                    $signedQuantity, $unitPrice, $currency, $source, $sourceFile, $sourceRowNumber, $identityKey, $reason);
             """;
         command.Parameters.AddWithValue("$broker", trade.Broker);
         command.Parameters.AddWithValue("$account", trade.Account);
@@ -1120,9 +1332,84 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$unitPrice", trade.UnitPrice);
         command.Parameters.AddWithValue("$currency", trade.Currency);
         command.Parameters.AddWithValue("$source", trade.Source);
+        command.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+        command.Parameters.AddWithValue("$sourceRowNumber", trade.SourceRowNumber);
+        command.Parameters.AddWithValue("$identityKey", BuildTradeDecisionIdentityKey(trade));
         command.Parameters.AddWithValue("$reason", reason);
         command.ExecuteNonQuery();
     }
+
+    public void ResolveCsvImportReviewTrade(BrokerTradeRecord trade, string resolution, string batchId)
+    {
+        ArgumentNullException.ThrowIfNull(trade);
+        if (string.IsNullOrWhiteSpace(trade.SourceFile) || trade.SourceRowNumber <= 0) return;
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using (var decision = (_importConnection ?? ownedConnection!).CreateCommand())
+        {
+            decision.Transaction = _importTransaction;
+            decision.CommandText = """
+                INSERT INTO CsvImportTradeDecisions
+                    (SourceFile, SourceRowNumber, TradeIdentityKey, Resolution, BatchId)
+                VALUES ($sourceFile, $sourceRowNumber, $identityKey, $resolution, $batchId)
+                ON CONFLICT(SourceFile, SourceRowNumber, TradeIdentityKey)
+                DO UPDATE SET Resolution = excluded.Resolution, BatchId = excluded.BatchId,
+                              UpdatedAt = CURRENT_TIMESTAMP;
+                """;
+            decision.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+            decision.Parameters.AddWithValue("$sourceRowNumber", trade.SourceRowNumber);
+            decision.Parameters.AddWithValue("$identityKey", BuildTradeDecisionIdentityKey(trade));
+            decision.Parameters.AddWithValue("$resolution", resolution);
+            decision.Parameters.AddWithValue("$batchId", batchId);
+            decision.ExecuteNonQuery();
+        }
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            UPDATE CsvImportReviewRows
+            SET Resolution = $resolution, ResolvedAt = CURRENT_TIMESTAMP,
+                ResolutionBatchId = $batchId
+            WHERE Broker = $broker AND Account = $account AND Ticker = $ticker
+              AND TradeDate = $tradeDate AND SourceFile = $sourceFile COLLATE NOCASE
+              AND SourceRowNumber = $sourceRowNumber AND TradeIdentityKey = $identityKey;
+            """;
+        command.Parameters.AddWithValue("$resolution", resolution);
+        command.Parameters.AddWithValue("$batchId", batchId);
+        command.Parameters.AddWithValue("$broker", trade.Broker);
+        command.Parameters.AddWithValue("$account", trade.Account);
+        command.Parameters.AddWithValue("$ticker", trade.Ticker);
+        command.Parameters.AddWithValue("$tradeDate", ToDateText(trade.TradeDate));
+        command.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+        command.Parameters.AddWithValue("$sourceRowNumber", trade.SourceRowNumber);
+        command.Parameters.AddWithValue("$identityKey", BuildTradeDecisionIdentityKey(trade));
+        command.ExecuteNonQuery();
+    }
+
+    public string? GetCsvImportReviewTradeResolution(BrokerTradeRecord trade)
+    {
+        ArgumentNullException.ThrowIfNull(trade);
+        if (string.IsNullOrWhiteSpace(trade.SourceFile) || trade.SourceRowNumber <= 0) return null;
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            SELECT Resolution FROM CsvImportTradeDecisions
+            WHERE SourceFile = $sourceFile COLLATE NOCASE AND SourceRowNumber = $sourceRowNumber
+              AND TradeIdentityKey = $identityKey;
+            """;
+        command.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+        command.Parameters.AddWithValue("$sourceRowNumber", trade.SourceRowNumber);
+        command.Parameters.AddWithValue("$identityKey", BuildTradeDecisionIdentityKey(trade));
+        var exact = command.ExecuteScalar() as string;
+        if (exact is not null) return exact;
+        command.CommandText = """
+            SELECT 1 FROM CsvImportTradeDecisions
+            WHERE SourceFile = $sourceFile COLLATE NOCASE AND SourceRowNumber = $sourceRowNumber LIMIT 1;
+            """;
+        return command.ExecuteScalar() is null ? null : "内容変更";
+    }
+
+    private static string BuildTradeDecisionIdentityKey(BrokerTradeRecord trade) =>
+        TradeHistoryService.GetSourceContentKey(trade);
 
     public void SaveCsvImportReviewHolding(BrokerHoldingRecord holding, string reason)
     {
@@ -1158,11 +1445,11 @@ public sealed class InvestmentStoryRepository
                 (FileName, FileSize, FileHash, Broker, CsvType, ImportedAt, RowCount,
                  ParsedRowCount, PendingRowCount, ExcludedRowCount,
                  InsertedCount, UpdatedCount, SkippedCount, ConflictCount, Result, ErrorSummary,
-                 BatchId, ParserVersion)
+                 BatchId, ParserVersion, FormatVersion)
             VALUES ($fileName, $fileSize, $fileHash, $broker, $csvType, CURRENT_TIMESTAMP,
                     $rowCount, $parsedRowCount, $pendingRowCount, $excludedRowCount,
                     $insertedCount, $updatedCount, $skippedCount, $conflictCount,
-                    $result, $errorSummary, $batchId, $parserVersion);
+                    $result, $errorSummary, $batchId, $parserVersion, $formatVersion);
             """;
         command.Parameters.AddWithValue("$fileName", entry.FileName);
         command.Parameters.AddWithValue("$fileSize", entry.FileSize);
@@ -1181,6 +1468,45 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$errorSummary", entry.ErrorSummary);
         command.Parameters.AddWithValue("$batchId", entry.BatchId);
         command.Parameters.AddWithValue("$parserVersion", entry.ParserVersion);
+        command.Parameters.AddWithValue("$formatVersion", entry.FormatVersion);
+        command.ExecuteNonQuery();
+    }
+
+    public void SaveCsvImportChange(CsvImportChangeEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        using var ownedConnection = _importConnection is null ? OpenConnection() : null;
+        using var command = (_importConnection ?? ownedConnection!).CreateCommand();
+        command.Transaction = _importTransaction;
+        command.CommandText = """
+            INSERT INTO CsvImportChangeRows
+              (BatchId, Source, Broker, Account, Ticker, Action,
+               BeforeQuantity, AfterQuantity, BeforeExactCostJpy, AfterExactCostJpy,
+               BeforeReferenceCostJpy, AfterReferenceCostJpy, Reason,
+               RecordKind, EventDate, SourceRowNumber, BeforeAmountJpy, AfterAmountJpy)
+             VALUES ($batchId, $source, $broker, $account, $ticker, $action,
+                    $beforeQuantity, $afterQuantity, $beforeExact, $afterExact,
+                    $beforeReference, $afterReference, $reason,
+                    $recordKind, $eventDate, $sourceRowNumber, $beforeAmountJpy, $afterAmountJpy);
+            """;
+        command.Parameters.AddWithValue("$batchId", entry.BatchId);
+        command.Parameters.AddWithValue("$source", entry.Source);
+        command.Parameters.AddWithValue("$broker", entry.Broker);
+        command.Parameters.AddWithValue("$account", entry.Account);
+        command.Parameters.AddWithValue("$ticker", entry.Ticker);
+        command.Parameters.AddWithValue("$action", entry.Action);
+        command.Parameters.AddWithValue("$beforeQuantity", (object?)entry.BeforeQuantity ?? DBNull.Value);
+        command.Parameters.AddWithValue("$afterQuantity", (object?)entry.AfterQuantity ?? DBNull.Value);
+        command.Parameters.AddWithValue("$beforeExact", (object?)entry.BeforeExactCostJpy ?? DBNull.Value);
+        command.Parameters.AddWithValue("$afterExact", (object?)entry.AfterExactCostJpy ?? DBNull.Value);
+        command.Parameters.AddWithValue("$beforeReference", (object?)entry.BeforeReferenceCostJpy ?? DBNull.Value);
+        command.Parameters.AddWithValue("$afterReference", (object?)entry.AfterReferenceCostJpy ?? DBNull.Value);
+        command.Parameters.AddWithValue("$reason", entry.Reason);
+        command.Parameters.AddWithValue("$recordKind", entry.RecordKind);
+        command.Parameters.AddWithValue("$eventDate", entry.EventDate);
+        command.Parameters.AddWithValue("$sourceRowNumber", entry.SourceRowNumber);
+        command.Parameters.AddWithValue("$beforeAmountJpy", (object?)entry.BeforeAmountJpy ?? DBNull.Value);
+        command.Parameters.AddWithValue("$afterAmountJpy", (object?)entry.AfterAmountJpy ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -1354,7 +1680,7 @@ public sealed class InvestmentStoryRepository
             return;
         }
 
-        InsertBrokerTrade(connection, transaction, trade);
+        InsertBrokerTrade(connection, transaction, trade, 1);
     }
 
     private static bool HasImportedBrokerTrades(
@@ -1431,7 +1757,7 @@ public sealed class InvestmentStoryRepository
             SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
                    Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
                    FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
-                   AfterTradeAverageCost, Source, SourceFile, CreatedAt
+                   AfterTradeAverageCost, Source, SourceFile, CreatedAt, SourceRowNumber
             FROM BrokerTrades
             WHERE StockId = $stockId
             ORDER BY TradeDate DESC, SettlementDate DESC, Id DESC;
@@ -1455,7 +1781,7 @@ public sealed class InvestmentStoryRepository
             SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
                    Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
                    FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
-                   AfterTradeAverageCost, Source, SourceFile, CreatedAt
+                   AfterTradeAverageCost, Source, SourceFile, CreatedAt, SourceRowNumber
             FROM BrokerTrades
             WHERE StockId IN ({string.Join(", ", parameterNames)})
             ORDER BY TradeDate DESC, SettlementDate DESC, Id DESC;
@@ -1471,7 +1797,7 @@ public sealed class InvestmentStoryRepository
             SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
                    Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
                    FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
-                   AfterTradeAverageCost, Source, SourceFile, CreatedAt
+                   AfterTradeAverageCost, Source, SourceFile, CreatedAt, SourceRowNumber
             FROM BrokerTrades
             ORDER BY TradeDate DESC, SettlementDate DESC, Id DESC;
             """;
@@ -1731,6 +2057,27 @@ public sealed class InvestmentStoryRepository
             return Convert.ToInt32(value);
         }
 
+        // Legacy rows may carry a different canonical key while the database's unique
+        // identity (broker/ticker/asset/account/custody/currency) is already occupied.
+        // Reuse that row instead of attempting an insert that must fail.
+        command.Parameters.Clear();
+        command.CommandText = """
+            SELECT Id FROM Stocks
+            WHERE Broker = $broker AND Ticker = $ticker AND AssetType = $assetType
+              AND AccountType = $accountType AND CustodyType = $custodyType
+              AND Currency = $currency
+            ORDER BY Id DESC LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$broker", stock.Broker);
+        command.Parameters.AddWithValue("$ticker", stock.Ticker);
+        command.Parameters.AddWithValue("$assetType", string.IsNullOrWhiteSpace(stock.AssetType) ? AssetTypes.Stock : stock.AssetType);
+        command.Parameters.AddWithValue("$accountType", NormalizeAccountTypeForStock(stock));
+        command.Parameters.AddWithValue("$custodyType", stock.CustodyType);
+        command.Parameters.AddWithValue("$currency", NormalizeCurrency(stock.Currency));
+        value = command.ExecuteScalar();
+        if (value is not null && value != DBNull.Value)
+            return Convert.ToInt32(value);
+
         return AssetTypes.IsMutualFund(stock.AssetType)
             ? FindMutualFundStockIdByComputedCanonicalKey(connection, transaction, stock)
             : 0;
@@ -1901,9 +2248,13 @@ public sealed class InvestmentStoryRepository
         command.CommandText = purchase.Id == 0
             ? """
               INSERT INTO Purchases
-                  (StockId, PurchaseDate, Shares, UnitPrice, ExchangeRate, ExchangeRateAcquiredAt, ExchangeRateSource, ExchangeRateInputType, Fee, Memo)
+                  (StockId, PurchaseDate, Shares, UnitPrice, ExchangeRate, ExchangeRateAcquiredAt, ExchangeRateSource, ExchangeRateInputType, Fee, Memo, AcquisitionAmountJpy,
+                   ReferenceAcquisitionAmountJpy, ReferenceAcquisitionForeignAmount, ReferenceAcquisitionSource,
+                   AcquisitionAmountSource, AcquisitionAmountConfirmedAt)
               VALUES
-                  ($stockId, $purchaseDate, $shares, $unitPrice, $exchangeRate, $exchangeRateAcquiredAt, $exchangeRateSource, $exchangeRateInputType, $fee, $memo);
+                  ($stockId, $purchaseDate, $shares, $unitPrice, $exchangeRate, $exchangeRateAcquiredAt, $exchangeRateSource, $exchangeRateInputType, $fee, $memo, $acquisitionAmountJpy,
+                   $referenceAcquisitionAmountJpy, $referenceAcquisitionForeignAmount, $referenceAcquisitionSource,
+                   $acquisitionAmountSource, $acquisitionAmountConfirmedAt);
               """
             : """
               UPDATE Purchases
@@ -1911,6 +2262,12 @@ public sealed class InvestmentStoryRepository
                   Shares = $shares,
                   UnitPrice = $unitPrice,
                   ExchangeRate = $exchangeRate,
+                  AcquisitionAmountJpy = $acquisitionAmountJpy,
+                  AcquisitionAmountSource = $acquisitionAmountSource,
+                  AcquisitionAmountConfirmedAt = $acquisitionAmountConfirmedAt,
+                  ReferenceAcquisitionAmountJpy = $referenceAcquisitionAmountJpy,
+                  ReferenceAcquisitionForeignAmount = $referenceAcquisitionForeignAmount,
+                  ReferenceAcquisitionSource = $referenceAcquisitionSource,
                   ExchangeRateAcquiredAt = $exchangeRateAcquiredAt,
                   ExchangeRateSource = $exchangeRateSource,
                   ExchangeRateInputType = $exchangeRateInputType,
@@ -1923,6 +2280,13 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$shares", purchase.Shares);
         command.Parameters.AddWithValue("$unitPrice", purchase.UnitPrice);
         command.Parameters.AddWithValue("$exchangeRate", purchase.ExchangeRate);
+        command.Parameters.AddWithValue("$acquisitionAmountJpy", purchase.AcquisitionAmountJpy);
+        command.Parameters.AddWithValue("$acquisitionAmountSource", purchase.AcquisitionAmountSource);
+        command.Parameters.AddWithValue("$acquisitionAmountConfirmedAt", purchase.AcquisitionAmountConfirmedAt == DateTime.MinValue
+            ? string.Empty : ToDateTimeText(purchase.AcquisitionAmountConfirmedAt));
+        command.Parameters.AddWithValue("$referenceAcquisitionAmountJpy", purchase.ReferenceAcquisitionAmountJpy);
+        command.Parameters.AddWithValue("$referenceAcquisitionForeignAmount", purchase.ReferenceAcquisitionForeignAmount);
+        command.Parameters.AddWithValue("$referenceAcquisitionSource", purchase.ReferenceAcquisitionSource);
         command.Parameters.AddWithValue("$exchangeRateAcquiredAt", ToDateTimeText(purchase.ExchangeRateAcquiredAt));
         command.Parameters.AddWithValue("$exchangeRateSource", purchase.ExchangeRateSource);
         command.Parameters.AddWithValue("$exchangeRateInputType", purchase.ExchangeRateInputType);
@@ -2072,7 +2436,7 @@ public sealed class InvestmentStoryRepository
         command.ExecuteNonQuery();
     }
 
-    private static void InsertBrokerTrade(SqliteConnection connection, SqliteTransaction transaction, BrokerTrade trade)
+    private static void InsertBrokerTrade(SqliteConnection connection, SqliteTransaction transaction, BrokerTrade trade, int occurrenceIndex)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -2081,25 +2445,12 @@ public sealed class InvestmentStoryRepository
                 (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
                  Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
                  FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
-                 AfterTradeAverageCost, Source, SourceFile, CreatedAt)
+                 AfterTradeAverageCost, Source, SourceFile, OccurrenceIndex, SourceRowNumber, CreatedAt)
             VALUES
                 ($stockId, $tradeDate, $settlementDate, $broker, $accountType, $custodyType, $tradeType,
                  $quantity, $signedQuantity, $unitPrice, $currency, $exchangeRate, $settlementAmountJpy,
                  $feeJpy, $taxJpy, $realizedGainLoss, $realizedGainLossJpy, $afterTradeQuantity,
-                 $afterTradeAverageCost, $source, $sourceFile, CURRENT_TIMESTAMP)
-            ON CONFLICT(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source)
-            DO UPDATE SET
-                CustodyType = excluded.CustodyType,
-                SignedQuantity = excluded.SignedQuantity,
-                Currency = excluded.Currency,
-                ExchangeRate = excluded.ExchangeRate,
-                FeeJpy = excluded.FeeJpy,
-                TaxJpy = excluded.TaxJpy,
-                RealizedGainLoss = excluded.RealizedGainLoss,
-                RealizedGainLossJpy = excluded.RealizedGainLossJpy,
-                AfterTradeQuantity = excluded.AfterTradeQuantity,
-                AfterTradeAverageCost = excluded.AfterTradeAverageCost,
-                SourceFile = excluded.SourceFile;
+                 $afterTradeAverageCost, $source, $sourceFile, $occurrenceIndex, $sourceRowNumber, CURRENT_TIMESTAMP);
             """;
         command.Parameters.AddWithValue("$stockId", trade.StockId);
         command.Parameters.AddWithValue("$tradeDate", ToDateText(trade.TradeDate));
@@ -2122,6 +2473,8 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$afterTradeAverageCost", trade.AfterTradeAverageCost);
         command.Parameters.AddWithValue("$source", trade.Source);
         command.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+        command.Parameters.AddWithValue("$sourceRowNumber", trade.SourceRowNumber);
+        command.Parameters.AddWithValue("$occurrenceIndex", occurrenceIndex);
         command.ExecuteNonQuery();
     }
 
@@ -2155,7 +2508,8 @@ public sealed class InvestmentStoryRepository
                 AfterTradeAverageCost = GetDecimalOrZero(reader, 19),
                 Source = GetString(reader, 20),
                 SourceFile = GetString(reader, 21),
-                CreatedAt = GetDateTimeOrDefault(reader, 22, DateTime.MinValue)
+                CreatedAt = GetDateTimeOrDefault(reader, 22, DateTime.MinValue),
+                SourceRowNumber = GetInt32OrZero(reader, 23)
             });
         }
 

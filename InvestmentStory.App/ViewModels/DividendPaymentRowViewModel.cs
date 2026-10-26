@@ -21,6 +21,12 @@ public sealed class DividendPaymentRowViewModel
     public DividendPayment Payment { get; }
     public int Id => Payment.Id;
     public string PaymentDate => Payment.PaymentDate.ToString("yyyy/MM/dd");
+    public string ExDividendDate => Payment.ExDividendDate == DateTime.MinValue
+        ? "不明" : Payment.ExDividendDate.ToString("yyyy/MM/dd");
+    public string RecordDate => Payment.RecordDate == DateTime.MinValue
+        ? "不明" : Payment.RecordDate.ToString("yyyy/MM/dd");
+    public string RightsStatus => Payment.RecordDate == DateTime.MinValue &&
+        Payment.ExDividendDate == DateTime.MinValue ? "権利日不明" : "権利日あり";
     public string Ticker => Payment.Ticker;
     public string StockName => Payment.StockName;
     public string Broker => Payment.Broker;
@@ -33,6 +39,7 @@ public sealed class DividendPaymentRowViewModel
         "Confirmed" => "入金予定",
         "PaymentDue" => "予定日経過（CSV未照合）",
         "Replaced" => "置換済み",
+        "Excluded" => "対象外",
         _ => Payment.DividendStatus
     };
     public string DataQuality => Payment.IsNetOnly ? "税引後のみ" : _dataQuality ?? (Payment.DividendStatus switch

@@ -29,14 +29,24 @@ public sealed class CsvImportViewModel : ObservableObject
     private readonly Action<Action>? _runImportAtomically;
     private readonly Func<string>? _getMergePolicy;
     private readonly Action<BrokerTradeRecord, string>? _saveReviewTrade;
+    private readonly Action<BrokerTradeRecord, string, string>? _resolveReviewTrade;
+    private readonly Func<BrokerTradeRecord, string?>? _getTradeResolution;
     private readonly Action<BrokerUnresolvedDividend>? _saveReviewDividend;
     private readonly Action<BrokerHoldingRecord, string>? _saveReviewHolding;
     private readonly Action<CsvImportLogEntry>? _saveImportLog;
+    private readonly Func<IReadOnlyList<CsvImportLogEntry>>? _loadImportLogs;
+    private readonly Action<CsvImportChangeEntry>? _saveImportChange;
+    private readonly Func<string, IReadOnlyList<CsvImportChangeEntry>>? _loadImportChanges;
+    private string? _currentBatchId;
+    private CsvImportLogEntry? _selectedImportHistory;
     private readonly Action? _afterImport;
     private readonly Func<Task>? _afterImportAsync;
     private readonly bool _useAsyncCommands;
     private readonly List<string> _selectedFilePaths = new();
     private readonly Dictionary<string, string> _previewFileHashes = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _selectedHoldingConflictRows = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _selectedTradeChoices = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _selectedManualRows = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CsvKind> _previewKinds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, BrokerStatementImport> _previewStatements = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IReadOnlyList<BrokerDividendRecord>> _previewDividends = new(StringComparer.OrdinalIgnoreCase);
@@ -57,11 +67,13 @@ public sealed class CsvImportViewModel : ObservableObject
     private CancellationTokenSource? _operationCancellation;
     private List<string>? _operationLogs;
     private List<CsvPreviewRowViewModel>? _operationPreviewRows;
+    private List<CsvPreviewAuditRowViewModel>? _operationPreviewAudits;
     private string? _operationMessage;
     private Dispatcher? _uiDispatcher;
     private bool _backgroundOperation;
     private bool _refreshAfterImport;
     private bool _isBusy;
+    private bool _hasPreviewAudits;
     private string _progressText = string.Empty;
     private int _progressValue;
     private int _progressMaximum;
@@ -81,7 +93,12 @@ public sealed class CsvImportViewModel : ObservableObject
         Action<BrokerHoldingRecord, string>? saveReviewHolding = null,
         Action<CsvImportLogEntry>? saveImportLog = null,
         bool useAsyncCommands = false,
-        Func<Task>? afterImportAsync = null)
+        Func<Task>? afterImportAsync = null,
+        Func<IReadOnlyList<CsvImportLogEntry>>? loadImportLogs = null,
+        Action<CsvImportChangeEntry>? saveImportChange = null,
+        Func<string, IReadOnlyList<CsvImportChangeEntry>>? loadImportChanges = null,
+        Action<BrokerTradeRecord, string, string>? resolveReviewTrade = null,
+        Func<BrokerTradeRecord, string?>? getTradeResolution = null)
     {
         _getPositions = getPositions;
         _savePosition = savePosition;
@@ -92,9 +109,14 @@ public sealed class CsvImportViewModel : ObservableObject
         _runImportAtomically = runImportAtomically;
         _getMergePolicy = getMergePolicy;
         _saveReviewTrade = saveReviewTrade;
+        _resolveReviewTrade = resolveReviewTrade;
+        _getTradeResolution = getTradeResolution;
         _saveReviewDividend = saveReviewDividend;
         _saveReviewHolding = saveReviewHolding;
         _saveImportLog = saveImportLog;
+        _loadImportLogs = loadImportLogs;
+        _saveImportChange = saveImportChange;
+        _loadImportChanges = loadImportChanges;
         _afterImport = afterImport;
         _afterImportAsync = afterImportAsync;
         _useAsyncCommands = useAsyncCommands;
@@ -102,14 +124,55 @@ public sealed class CsvImportViewModel : ObservableObject
         PreviewCommand = new RelayCommand(() => StartOperation(Preview, false), () => !IsBusy);
         ImportCommand = new RelayCommand(() => StartOperation(Import, true), () => !IsBusy);
         CancelCommand = new RelayCommand(() => _operationCancellation?.Cancel(), () => IsBusy && !_refreshAfterImport);
+        ReloadImportHistoryCommand = new RelayCommand(LoadImportHistory, () => !IsBusy);
+        LoadImportHistory();
     }
 
     public ICommand BrowseCommand { get; }
     public ICommand PreviewCommand { get; }
     public ICommand ImportCommand { get; }
     public ICommand CancelCommand { get; }
+    public ICommand ReloadImportHistoryCommand { get; }
     public ObservableCollection<CsvPreviewRowViewModel> PreviewRows { get; } = new();
+    public ObservableCollection<CsvPreviewAuditRowViewModel> PreviewAudits { get; } = new();
+    public bool HasPreviewAudits
+    {
+        get => _hasPreviewAudits;
+        private set => SetProperty(ref _hasPreviewAudits, value);
+    }
     public ObservableCollection<string> ImportLogs { get; } = new();
+    public ObservableCollection<CsvImportLogEntry> ImportHistory { get; } = new();
+    public ObservableCollection<CsvImportChangeEntry> ImportChanges { get; } = new();
+    public CsvImportLogEntry? SelectedImportHistory
+    {
+        get => _selectedImportHistory;
+        set
+        {
+            if (!SetProperty(ref _selectedImportHistory, value)) return;
+            ImportChanges.Clear();
+            if (value is null || _loadImportChanges is null) return;
+            try
+            {
+                foreach (var change in _loadImportChanges(value.BatchId)) ImportChanges.Add(change);
+            }
+            catch (Exception ex) { Message = $"変更履歴を読み込めません: {ex.Message}"; }
+        }
+    }
+
+    private void LoadImportHistory()
+    {
+        if (_loadImportLogs is null) return;
+        try
+        {
+            var entries = _loadImportLogs();
+            ImportHistory.Clear();
+            foreach (var entry in entries) ImportHistory.Add(entry);
+        }
+        catch (Exception ex)
+        {
+            Message = $"取込履歴を読み込めません: {ex.Message}";
+        }
+    }
 
     public bool IsBusy
     {
@@ -121,6 +184,7 @@ public sealed class CsvImportViewModel : ObservableObject
             ((RelayCommand)PreviewCommand).RaiseCanExecuteChanged();
             ((RelayCommand)ImportCommand).RaiseCanExecuteChanged();
             ((RelayCommand)CancelCommand).RaiseCanExecuteChanged();
+            ((RelayCommand)ReloadImportHistoryCommand).RaiseCanExecuteChanged();
         }
     }
 
@@ -156,6 +220,7 @@ public sealed class CsvImportViewModel : ObservableObject
             {
                 _selectedFilePaths.Clear();
                 ResetPreviewPlan();
+                ClearPreviewRows();
             }
         }
     }
@@ -176,6 +241,7 @@ public sealed class CsvImportViewModel : ObservableObject
 
     private void StartOperation(Action operation, bool isImport)
     {
+        if (isImport) CaptureHoldingConflictChoices();
         if (!_useAsyncCommands)
         {
             operation();
@@ -192,6 +258,7 @@ public sealed class CsvImportViewModel : ObservableObject
         _operationCancellation = new CancellationTokenSource();
         _operationLogs = new List<string>();
         _operationPreviewRows = new List<CsvPreviewRowViewModel>();
+        _operationPreviewAudits = new List<CsvPreviewAuditRowViewModel>();
         _operationMessage = null;
         _refreshAfterImport = false;
         _backgroundOperation = true;
@@ -199,7 +266,12 @@ public sealed class CsvImportViewModel : ObservableObject
         ProgressMaximum = Math.Max(1, GetTargetFilePaths().Count);
         ProgressText = isImport ? "CSVを取り込んでいます…" : "CSVを解析しています…";
         ImportLogs.Clear();
-        if (!isImport) PreviewRows.Clear();
+        if (!isImport)
+        {
+            PreviewRows.Clear();
+            PreviewAudits.Clear();
+            HasPreviewAudits = false;
+        }
         IsBusy = true;
         var workWatch = Stopwatch.StartNew();
         var refreshTime = TimeSpan.Zero;
@@ -211,12 +283,12 @@ public sealed class CsvImportViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            if (!isImport) ResetPreviewPlan();
+            if (!isImport) { ResetPreviewPlan(); ClearPreviewRows(); }
             _operationMessage = "操作を中止しました。";
         }
         catch (Exception ex)
         {
-            if (!isImport) ResetPreviewPlan();
+            if (!isImport) { ResetPreviewPlan(); ClearPreviewRows(); }
             _operationMessage = $"CSVの処理に失敗しました: {ex.Message}";
         }
         finally
@@ -227,8 +299,11 @@ public sealed class CsvImportViewModel : ObservableObject
             {
                 ResetPreviewPlan();
                 _operationPreviewRows!.Clear();
+                _operationPreviewAudits!.Clear();
             }
             foreach (var row in _operationPreviewRows!) PreviewRows.Add(row);
+            foreach (var audit in _operationPreviewAudits!) PreviewAudits.Add(audit);
+            HasPreviewAudits = PreviewAudits.Count > 0;
             foreach (var log in _operationLogs!) ImportLogs.Add(log);
             if (_operationMessage is not null) Message = _operationMessage;
             if (_refreshAfterImport)
@@ -255,6 +330,7 @@ public sealed class CsvImportViewModel : ObservableObject
             AddImportLog($"計測: {GetTargetFilePaths().Count}ファイル / " +
                 (isImport ? $"入力明細 {_fileImportOutcomes.Values.Sum(x => x.RowCount)}行 / " : string.Empty) +
                 $"CSV処理・DB適用 {workWatch.Elapsed.TotalSeconds:N2}秒 / 画面更新 {refreshTime.TotalSeconds:N2}秒");
+            LoadImportHistory();
             ProgressValue = ProgressMaximum;
             ProgressText = _operationCancellation?.IsCancellationRequested == true && !_refreshAfterImport
                 ? "中止しました" : "処理が完了しました";
@@ -262,9 +338,204 @@ public sealed class CsvImportViewModel : ObservableObject
             _operationCancellation = null;
             _operationLogs = null;
             _operationPreviewRows = null;
+            _operationPreviewAudits = null;
             _uiDispatcher = null;
             IsBusy = false;
         }
+    }
+
+    private void CaptureHoldingConflictChoices()
+    {
+        _selectedManualRows = PreviewRows
+            .Where(row => row.CanChooseManual && row.ManualChoice == "この行を反映")
+            .Select(row => row.ManualCandidateId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _selectedHoldingConflictRows = PreviewRows
+            .Where(row => row.CanChooseConflict && row.ConflictChoice == "この行を採用")
+            .Select(row => row.ConflictCandidateId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _selectedTradeChoices = PreviewRows
+            .Where(row => row.CanChooseTrade && row.TradeChoice != "保留")
+            .ToDictionary(row => row.TradeCandidateId, row => row.TradeChoice,
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSelectableTradeConflict(BrokerTradeRecord trade) =>
+        trade.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(trade.SourceFile) &&
+        !string.IsNullOrWhiteSpace(trade.Ticker) &&
+        (trade.ReviewReason.StartsWith("別CSVに同条件", StringComparison.Ordinal) ||
+         trade.ReviewReason.StartsWith("既存の同条件取引", StringComparison.Ordinal));
+
+    private static string TradeCandidateId(BrokerTradeRecord trade) =>
+        $"{Path.GetFullPath(trade.SourceFile)}|{trade.SourceRowNumber}|" +
+        TradeHistoryService.GetSourceContentKey(trade);
+
+    private static string DividendCandidateId(BrokerDividendRecord dividend) =>
+        $"{Path.GetFullPath(dividend.SourceFile)}|{dividend.SourceRowNumber}|" +
+        $"{dividend.Broker}|{dividend.Account}|{dividend.Ticker}|{dividend.PaymentDate:O}|" +
+        $"{dividend.Quantity:G29}|{dividend.GrossAmount:G29}|{dividend.TaxAmount:G29}|" +
+        $"{dividend.NetAmount:G29}|{dividend.Currency}|{dividend.NetAmountJpy:G29}";
+
+    private static bool HasSourceRow(string sourceFile, int sourceRowNumber) =>
+        !string.IsNullOrWhiteSpace(sourceFile) && sourceRowNumber > 0;
+
+    private bool IsManualSelection => _getMergePolicy?.Invoke() == "すべてプレビューして手動選択";
+
+    private static bool IsSelectableHoldingConflict(BrokerHoldingRecord holding) =>
+        holding.ReviewReason.StartsWith("同一日時の保有残高が食い違います", StringComparison.Ordinal) &&
+        !string.IsNullOrWhiteSpace(holding.SourceFile) && holding.SourceRowNumber > 0 &&
+        !string.IsNullOrWhiteSpace(holding.Ticker);
+
+    private static string HoldingConflictCandidateId(BrokerHoldingRecord holding) =>
+        $"{Path.GetFullPath(holding.SourceFile)}|{holding.SourceRowNumber}|" +
+        $"{PositionIdentityService.BuildKey(holding)}|{holding.SnapshotDate:O}|" +
+        $"{holding.Shares:G29}|{holding.MarketValue:G29}|{holding.AcquisitionAmount:G29}";
+
+    private BrokerStatementImport ApplyHoldingConflictChoices(BrokerStatementImport statement)
+    {
+        if (_selectedHoldingConflictRows.Count == 0) return statement;
+        var selected = statement.UnresolvedHoldings
+            .Where(IsSelectableHoldingConflict)
+            .Where(holding => _selectedHoldingConflictRows.Contains(HoldingConflictCandidateId(holding)))
+            .ToList();
+        if (selected.Count == 0) return statement;
+        var repeated = selected.GroupBy(holding =>
+                $"{PositionIdentityService.BuildKey(holding)}|{holding.SnapshotDate:O}",
+                StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (repeated is not null)
+            throw new InvalidDataException("同じ銘柄・基準日の競合候補を複数選択しています。採用する行を1件にしてください。");
+
+        foreach (var holding in selected)
+            AddImportLog($"競合候補を選択: {holding.Broker} {holding.Ticker} / " +
+                $"{Path.GetFileName(holding.SourceFile)}:{holding.SourceRowNumber} / {holding.Shares:N2}株");
+        var selectedSet = selected.ToHashSet(ReferenceEqualityComparer.Instance);
+        return new BrokerStatementImport
+        {
+            Broker = statement.Broker, Source = statement.Source,
+            CanUpdateHoldings = statement.CanUpdateHoldings,
+            Holdings = statement.Holdings.Concat(selected).ToList(),
+            UnresolvedHoldings = statement.UnresolvedHoldings.Where(x => !selectedSet.Contains(x)).ToList(),
+            CompleteHoldingScopes = statement.CompleteHoldingScopes,
+            Dividends = statement.Dividends, Trades = statement.Trades,
+            UnresolvedDividends = statement.UnresolvedDividends,
+            UnresolvedTrades = statement.UnresolvedTrades,
+            ResolvedDuplicateTrades = statement.ResolvedDuplicateTrades,
+            IgnoredRowCount = statement.IgnoredRowCount,
+            ReviewMessages = statement.ReviewMessages,
+            SourceRowCounts = statement.SourceRowCounts,
+            SourceRowAudits = statement.SourceRowAudits,
+            SourceFormatVersions = statement.SourceFormatVersions
+        };
+    }
+
+    private BrokerStatementImport SelectManualStatementRows(BrokerStatementImport statement)
+    {
+        var holdings = statement.Holdings.Where(holding =>
+            HasSourceRow(holding.SourceFile, holding.SourceRowNumber) &&
+            _selectedManualRows.Contains(HoldingConflictCandidateId(holding))).ToList();
+        var conflicts = statement.UnresolvedHoldings.Where(holding =>
+            IsSelectableHoldingConflict(holding) &&
+            _selectedHoldingConflictRows.Contains(HoldingConflictCandidateId(holding))).ToList();
+        var trades = statement.Trades.Where(trade =>
+            HasSourceRow(trade.SourceFile, trade.SourceRowNumber) &&
+            (_selectedManualRows.Contains(TradeCandidateId(trade)) ||
+             _selectedTradeChoices.TryGetValue(TradeCandidateId(trade), out var choice) && choice != "保留"))
+            .ToList();
+        var dividends = statement.Dividends.Where(dividend =>
+            HasSourceRow(dividend.SourceFile, dividend.SourceRowNumber) &&
+            _selectedManualRows.Contains(DividendCandidateId(dividend))).ToList();
+        return new BrokerStatementImport
+        {
+            Broker = statement.Broker, Source = statement.Source,
+            CanUpdateHoldings = statement.CanUpdateHoldings,
+            Holdings = holdings, UnresolvedHoldings = conflicts,
+            // A partial selection never proves that omitted positions were sold.
+            CompleteHoldingScopes = Array.Empty<CompleteHoldingSnapshotScope>(),
+            Trades = trades, Dividends = dividends,
+            UnresolvedTrades = Array.Empty<BrokerTradeRecord>(),
+            UnresolvedDividends = Array.Empty<BrokerUnresolvedDividend>(),
+            IgnoredRowCount = statement.IgnoredRowCount,
+            ReviewMessages = statement.ReviewMessages,
+            SourceRowCounts = statement.SourceRowCounts,
+            SourceRowAudits = statement.SourceRowAudits,
+            SourceFormatVersions = statement.SourceFormatVersions
+        };
+    }
+
+    private BrokerStatementImport ReconcileStatementTrades(BrokerStatementImport statement)
+    {
+        if (!statement.CanUpdateHoldings || statement.Trades.Count == 0 || _getPositions is null)
+            return statement;
+        var positions = _getPositions()
+            .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType),
+                StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+        var accepted = new List<BrokerTradeRecord>();
+        var pending = new List<BrokerTradeRecord>();
+        var resolvedDuplicates = new List<BrokerTradeRecord>();
+        foreach (var trade in statement.Trades)
+        {
+            trade.ApprovedAsDistinctTrade = false;
+            trade.ApprovedAsExistingTrade = false;
+            if (trade.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(trade.SourceFile) &&
+                _selectedTradeChoices.TryGetValue(TradeCandidateId(trade), out var choice))
+                trade.ApprovedAsDistinctTrade = choice == "別取引として追加";
+        }
+        foreach (var group in statement.Trades.GroupBy(
+                     x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase))
+        {
+            positions.TryGetValue(group.Key, out var position);
+            var prior = position is null || _getBrokerTrades is null
+                ? Array.Empty<BrokerTrade>() : GetAccountTrades(position.Stock.Id, group.First()).ToArray();
+            var result = TradeHistoryService.Reconcile(prior, group,
+                position?.Stock.Ticker ?? group.First().Ticker);
+            foreach (var trade in result.Accepted)
+            {
+                var stored = _getTradeResolution?.Invoke(trade);
+                if (stored == "内容変更" || prior.Length == 0 && stored is
+                    ("既存と同一" or "別取引として追加"))
+                {
+                    trade.ReviewReason = stored == "内容変更"
+                        ? "以前判断した同じCSV行の取引内容が変わりました。再確認してください。"
+                        : "以前の判断に対応する既存取引が見つかりません。再確認してください。";
+                    pending.Add(trade);
+                }
+                else accepted.Add(trade);
+            }
+            foreach (var trade in result.NeedsReview)
+            {
+                var choice = trade.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(trade.SourceFile)
+                    ? _selectedTradeChoices.GetValueOrDefault(TradeCandidateId(trade)) : null;
+                choice ??= _getTradeResolution?.Invoke(trade);
+                if (prior.Length > 0 && choice == "既存と同一" && IsSelectableTradeConflict(trade))
+                {
+                    trade.ApprovedAsExistingTrade = true;
+                    resolvedDuplicates.Add(trade);
+                }
+                else pending.Add(trade);
+            }
+        }
+        foreach (var trade in accepted.Where(x => x.ApprovedAsDistinctTrade))
+            AddImportLog($"別取引として採用: {trade.Broker} {trade.Ticker} / " +
+                $"{Path.GetFileName(trade.SourceFile)}:{trade.SourceRowNumber}");
+        foreach (var trade in resolvedDuplicates)
+            AddImportLog($"既存取引と同一と判断: {trade.Broker} {trade.Ticker} / " +
+                $"{Path.GetFileName(trade.SourceFile)}:{trade.SourceRowNumber}");
+        if (pending.Count == 0 && resolvedDuplicates.Count == 0) return statement;
+        return new BrokerStatementImport
+        {
+            Broker = statement.Broker, Source = statement.Source,
+            CanUpdateHoldings = statement.CanUpdateHoldings,
+            Holdings = statement.Holdings, UnresolvedHoldings = statement.UnresolvedHoldings,
+            CompleteHoldingScopes = statement.CompleteHoldingScopes,
+            Trades = accepted, UnresolvedTrades = statement.UnresolvedTrades.Concat(pending).ToList(),
+            ResolvedDuplicateTrades = statement.ResolvedDuplicateTrades.Concat(resolvedDuplicates).ToList(),
+            Dividends = statement.Dividends, UnresolvedDividends = statement.UnresolvedDividends,
+            IgnoredRowCount = statement.IgnoredRowCount, ReviewMessages = statement.ReviewMessages,
+            SourceRowCounts = statement.SourceRowCounts, SourceRowAudits = statement.SourceRowAudits,
+            SourceFormatVersions = statement.SourceFormatVersions
+        };
     }
 
     private void AddImportLog(string log)
@@ -289,8 +560,27 @@ public sealed class CsvImportViewModel : ObservableObject
 
     private void ClearPreviewRows()
     {
-        if (_backgroundOperation) _operationPreviewRows!.Clear();
-        else PreviewRows.Clear();
+        if (_backgroundOperation)
+        {
+            _operationPreviewRows!.Clear();
+            _operationPreviewAudits!.Clear();
+        }
+        else
+        {
+            PreviewRows.Clear();
+            PreviewAudits.Clear();
+            HasPreviewAudits = false;
+        }
+    }
+
+    private void AddPreviewAudit(CsvPreviewAuditRowViewModel audit)
+    {
+        if (_backgroundOperation) _operationPreviewAudits!.Add(audit);
+        else
+        {
+            PreviewAudits.Add(audit);
+            HasPreviewAudits = true;
+        }
     }
 
     private void CheckCancellation() => _operationCancellation?.Token.ThrowIfCancellationRequested();
@@ -413,9 +703,11 @@ public sealed class CsvImportViewModel : ObservableObject
             ReportProgress(1, Path.GetFileName(filePath));
             Message = "未対応のCSV形式です。内容の確認のみ可能で、DBには反映できません。";
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             ResetPreviewPlan();
+            ClearPreviewRows();
             Message = $"CSVのプレビューに失敗しました: {ex.Message}";
         }
     }
@@ -436,9 +728,11 @@ public sealed class CsvImportViewModel : ObservableObject
             ReportProgress(1, Path.GetFileName(filePath));
             Message = $"{sourceLabel} を読み込みました。配当明細: {records.Count}件。";
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             ResetPreviewPlan();
+            ClearPreviewRows();
             Message = $"{sourceLabel} のプレビューに失敗しました: {ex.Message}";
         }
     }
@@ -458,9 +752,11 @@ public sealed class CsvImportViewModel : ObservableObject
                 ? $"{sourceLabel} を読み込みました。保有: {statement.Holdings.Count}件、配当: {statement.Dividends.Count}件、保有反映対象取引: {statement.Trades.Count}件。取込実行でまとめて反映します。"
                 : $"{sourceLabel} を読み込みました。配当: {statement.Dividends.Count}件、売買/入庫履歴: {statement.Trades.Count}件。現在保有は更新せず、配当だけ登録します。";
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             ResetPreviewPlan();
+            ClearPreviewRows();
             Message = $"{sourceLabel} のプレビューに失敗しました: {ex.Message}";
         }
     }
@@ -556,6 +852,17 @@ public sealed class CsvImportViewModel : ObservableObject
                 ReportProgress(handled.Count, Path.GetFileName(filePath));
             }
 
+            foreach (var (first, second) in FindEquivalentNomuraExports(filePaths))
+            {
+                var reason = $"{Path.GetFileName(first)} と {Path.GetFileName(second)} は取引・配当の内容が同じです。どちらか1件を選び直してください。";
+                AddPreviewRow(new CsvPreviewRowViewModel
+                {
+                    RowNumber = index++, Status = "要確認", After = "一括取込を保留",
+                    Reason = reason, Values = "野村取引履歴CSV / 同内容の別出力"
+                });
+                AddImportLog($"要確認: {reason}");
+            }
+
             var supported = statementCount + dividendOnlyCount;
             Message = $"{filePaths.Count}件のCSVを読み込みました。対応形式: {supported}件、未対応形式: {filePaths.Count - supported}件。詳細はログを確認してください。";
         }
@@ -563,6 +870,7 @@ public sealed class CsvImportViewModel : ObservableObject
         catch (Exception ex)
         {
             ResetPreviewPlan();
+            ClearPreviewRows();
             Message = $"複数CSVのプレビューに失敗しました: {ex.Message}";
         }
     }
@@ -570,49 +878,422 @@ public sealed class CsvImportViewModel : ObservableObject
     private int AddStatementPreviewRows(BrokerStatementImport statement, int startIndex)
     {
         var index = startIndex;
-        foreach (var holding in statement.Holdings.Take(20))
+        foreach (var (file, audit) in statement.SourceRowAudits.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
         {
+            if (!audit.IsBalanced)
+                throw new InvalidDataException($"{Path.GetFileName(file)} の入力行数と分類件数が一致しません。");
+            AddPreviewAudit(new CsvPreviewAuditRowViewModel
+            {
+                FileName = Path.GetFileName(file), InputRows = audit.InputRows,
+                ParsedRows = audit.ParsedRows, PendingRows = audit.PendingRows,
+                ExcludedRows = audit.ExcludedRows
+            });
+        }
+        var manualSelection = IsManualSelection;
+        var mergeDecisions = _getPositions is null || statement.Holdings.Count == 0
+            ? Array.Empty<BrokerMergeDecision>()
+            : _holdingMergeService.MergeHoldings(_getPositions(), statement.Holdings, DateTime.Now,
+                manualSelection ? "証券会社データを正として上書き" : _getMergePolicy?.Invoke(),
+                manualSelection ? Array.Empty<CompleteHoldingSnapshotScope>() : statement.CompleteHoldingScopes).Decisions.ToArray();
+        var decisionsBySource = new Dictionary<BrokerHoldingRecord, BrokerMergeDecision>(ReferenceEqualityComparer.Instance);
+        foreach (var decision in mergeDecisions) decisionsBySource[decision.Source] = decision;
+        foreach (var holding in statement.Holdings)
+        {
+            decisionsBySource.TryGetValue(holding, out var decision);
+            var before = decision?.Existing;
+            var after = decision?.Merged;
+            var unchanged = decision?.Action == BrokerMergeAction.Overwrite &&
+                decision.ChangedFields.Count == 0 && before is not null && after is not null &&
+                after.CurrentHolding.UpdatedAt == before.CurrentHolding.UpdatedAt;
             AddPreviewRow(new CsvPreviewRowViewModel
             {
                 RowNumber = index++,
-                Values = $"保有 / {holding.Ticker} / {holding.Name} / {holding.Shares:N2}株 / 取得 {holding.AverageAcquisitionPrice:N4} {holding.Currency} / 現在 {holding.CurrentPrice:N4} {holding.Currency}"
+                CanChooseManual = manualSelection && HasSourceRow(holding.SourceFile, holding.SourceRowNumber),
+                ManualCandidateId = manualSelection && HasSourceRow(holding.SourceFile, holding.SourceRowNumber)
+                    ? HoldingConflictCandidateId(holding) : string.Empty,
+                Status = manualSelection ? "選択待ち" : decision?.Action switch
+                {
+                    BrokerMergeAction.Create => "新規",
+                    BrokerMergeAction.NeedsReview => "要確認",
+                    BrokerMergeAction.Overwrite when unchanged => "同一",
+                    BrokerMergeAction.Overwrite => "更新",
+                    _ => "取込時判定"
+                },
+                Before = before is null ? "登録なし" : FormatHoldingPreview(before.CurrentHolding.CurrentShares,
+                    before.Purchase.UnitPrice, before.Stock.Currency),
+                After = after is null ? "反映対象外" : FormatHoldingPreview(after.CurrentHolding.CurrentShares,
+                    after.Purchase.UnitPrice, after.Stock.Currency),
+                Reason = decision?.Reason ?? "DB接続なし。取込時に判定します。",
+                Values = $"保有 / {holding.Broker} / {holding.Account} / {holding.Ticker} / {holding.Name} / " +
+                         $"{holding.SnapshotDate:yyyy/MM/dd} / {Path.GetFileName(holding.SourceFile)}:{holding.SourceRowNumber}"
             });
         }
 
-        foreach (var trade in statement.Trades.OrderByDescending(x => x.SettlementDate).Take(10))
+        foreach (var decision in mergeDecisions.Where(x => !statement.Holdings.Contains(x.Source)))
         {
             AddPreviewRow(new CsvPreviewRowViewModel
             {
-                RowNumber = index++,
-                Values = $"取引 / {trade.SettlementDate:yyyy/MM/dd} / {trade.TradeType} / {trade.Ticker} / {trade.Name} / {trade.Quantity:N2}株 / {trade.UnitPrice:N4} {trade.Currency}"
+                RowNumber = index++, Status = "更新",
+                Before = decision.Existing is null ? "登録なし" : FormatHoldingPreview(
+                    decision.Existing.CurrentHolding.CurrentShares, decision.Existing.Purchase.UnitPrice,
+                    decision.Existing.Stock.Currency),
+                After = decision.Merged is null ? "反映対象外" : FormatHoldingPreview(
+                    decision.Merged.CurrentHolding.CurrentShares, decision.Merged.Purchase.UnitPrice,
+                    decision.Merged.Stock.Currency),
+                Values = $"残高照合 / {decision.Source.Broker} / {decision.Source.Ticker} / {decision.Source.SnapshotDate:yyyy/MM/dd}",
+                Reason = decision.Reason
             });
         }
 
-        foreach (var dividend in statement.Dividends.Take(10))
+        foreach (var unresolved in statement.UnresolvedHoldings.Where(x =>
+                     statement.SourceRowAudits.Count == 0 || !string.IsNullOrWhiteSpace(x.ReviewReason)))
+        {
+            var selectable = IsSelectableHoldingConflict(unresolved);
+            AddPreviewRow(new CsvPreviewRowViewModel
+            {
+                RowNumber = index++, Status = "要確認", After = "反映対象外",
+                CanChooseConflict = selectable,
+                ConflictCandidateId = selectable ? HoldingConflictCandidateId(unresolved) : string.Empty,
+                Values = $"保有 / {unresolved.Broker} / {unresolved.Name} / {unresolved.Shares:N2} / " +
+                         $"{Path.GetFileName(unresolved.SourceFile)}:{unresolved.SourceRowNumber}",
+                Reason = string.IsNullOrWhiteSpace(unresolved.ReviewReason)
+                    ? "銘柄を特定できません。" : unresolved.ReviewReason
+            });
+        }
+
+        index = AddTradePreviewRows(statement, index);
+
+        index = AddDividendPreviewRows(statement.Dividends, index);
+
+        foreach (var trade in statement.SourceRowAudits.Count == 0
+                     ? statement.UnresolvedTrades : Array.Empty<BrokerTradeRecord>())
         {
             AddPreviewRow(new CsvPreviewRowViewModel
             {
-                RowNumber = index++,
-                Values = $"配当 / {dividend.PaymentDate:yyyy/MM/dd} / {dividend.Ticker} / {dividend.Name} / {dividend.Currency} / {dividend.NetAmount:N6} / {dividend.NetAmountJpy:N2}円"
+                RowNumber = index++, Status = "要確認", After = "反映保留",
+                Reason = "銘柄コードを確定できません。",
+                Values = $"取引 / {trade.TradeDate:yyyy/MM/dd} / {trade.Broker} / {trade.Account} / " +
+                         $"{trade.Name} / {trade.Quantity:N2}株 / " +
+                         $"{Path.GetFileName(trade.SourceFile)}:{trade.SourceRowNumber}"
             });
         }
+
+        foreach (var dividend in statement.SourceRowAudits.Count == 0
+                     ? statement.UnresolvedDividends : Array.Empty<BrokerUnresolvedDividend>())
+        {
+            AddPreviewRow(new CsvPreviewRowViewModel
+            {
+                RowNumber = index++, Status = "要確認", After = "反映保留",
+                Reason = dividend.Reason,
+                Values = $"配当 / {dividend.PaymentDate:yyyy/MM/dd} / {dividend.Broker} / " +
+                         $"{dividend.Name} / {dividend.Source}"
+            });
+        }
+
+        foreach (var (file, audit) in statement.SourceRowAudits.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (var issue in audit.Issues.OrderBy(x => x.RowNumber))
+        {
+            AddPreviewRow(new CsvPreviewRowViewModel
+            {
+                RowNumber = index++, Status = issue.Category,
+                After = issue.Category == "要確認" ? "反映保留" : "反映なし",
+                Reason = issue.Reason,
+                Values = $"CSV明細 / {Path.GetFileName(file)}:{issue.RowNumber}"
+            });
+        }
+
+        AddImportLog($"保有プレビュー: 新規 {mergeDecisions.Count(x => x.Action == BrokerMergeAction.Create)} / " +
+            $"更新 {mergeDecisions.Count(x => x.Action == BrokerMergeAction.Overwrite && x.ChangedFields.Count > 0)} / " +
+            $"要確認 {mergeDecisions.Count(x => x.Action == BrokerMergeAction.NeedsReview) + statement.UnresolvedHoldings.Count}。" +
+            " 取引・配当も行別に事前照合し、取込時に再判定します。");
 
         return index;
     }
 
+    private static string FormatHoldingPreview(decimal shares, decimal unitCost, string currency) =>
+        $"数量 {shares:N2} / 取得単価 {(unitCost > 0m ? $"{unitCost:N4} {currency}" : "不明")}";
+
+    private int AddTradePreviewRows(BrokerStatementImport statement, int startIndex)
+    {
+        var index = startIndex;
+        var rows = new Dictionary<BrokerTradeRecord, (string Status, string Before, string After, string Reason)>(
+            ReferenceEqualityComparer.Instance);
+        var canMatchExisting = new HashSet<BrokerTradeRecord>(ReferenceEqualityComparer.Instance);
+        if (_getPositions is not null && _getBrokerTrades is not null)
+        {
+            var positions = _getPositions()
+                .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType),
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+            var holdingKeys = statement.Holdings
+                .Select(x => BuildPositionKey(x.Broker, x.Ticker, x.Account))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var mergePolicy = _getMergePolicy?.Invoke();
+            foreach (var group in statement.Trades.GroupBy(
+                         x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase))
+            {
+                CheckCancellation();
+                positions.TryGetValue(group.Key, out var position);
+                var priorTrades = position is null ? Array.Empty<BrokerTrade>() :
+                    GetAccountTrades(position.Stock.Id, group.First()).ToArray();
+                var previous = TradeHistoryService.Merge(priorTrades, Array.Empty<BrokerTradeRecord>(),
+                    position?.Stock.Ticker ?? group.First().Ticker);
+                var previousCounts = previous.GroupBy(TradeHistoryService.GetIdentityKey,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
+                var reconciliation = TradeHistoryService.Reconcile(priorTrades, group,
+                    position?.Stock.Ticker ?? group.First().Ticker);
+                var pending = reconciliation.NeedsReview.ToHashSet(ReferenceEqualityComparer.Instance);
+                var acceptedForPreview = new List<BrokerTradeRecord>();
+                foreach (var trade in reconciliation.Accepted)
+                {
+                    var stored = _getTradeResolution?.Invoke(trade);
+                    if (stored == "内容変更" || priorTrades.Length == 0 && stored is
+                        ("既存と同一" or "別取引として追加"))
+                    {
+                        trade.ReviewReason = stored == "内容変更"
+                            ? "以前判断した同じCSV行の取引内容が変わりました。再確認してください。"
+                            : "以前の判断に対応する既存取引が見つかりません。再確認してください。";
+                        pending.Add(trade);
+                    }
+                    else acceptedForPreview.Add(trade);
+                }
+                var fullHistory = TradeHistoryService.Merge(priorTrades, acceptedForPreview,
+                    position?.Stock.Ticker ?? group.First().Ticker);
+                var incompleteSell = statement.CanUpdateHoldings &&
+                    TradeReconstructionService.Reconstruct(fullHistory).IncompleteSellCount > 0;
+                var protectedByPolicy = position is not null && mergePolicy is
+                    ("新規銘柄だけ追加" or "手入力を保護して不足分だけ補完" or
+                     "現在株数・現在株価だけ証券会社データで更新");
+                var existingFundHolding = IsMutualFundTradeGroup(group) &&
+                    position?.CurrentHolding.CurrentShares > 0m;
+                var snapshotPriority = holdingKeys.Contains(group.Key) ||
+                    position is not null && HasHoldingSnapshotSource(position) || existingFundHolding;
+                var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (var trade in group)
+                {
+                    var key = TradeHistoryService.GetIdentityKey(trade);
+                    var ordinal = seen.TryGetValue(key, out var count) ? count + 1 : 1;
+                    seen[key] = ordinal;
+                    var beforeCount = previousCounts.GetValueOrDefault(key);
+                    var same = trade.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(trade.SourceFile)
+                        ? priorTrades.Any(prior => SameTradeSourceRow(prior, trade))
+                        : ordinal <= beforeCount;
+                    var after = $"数量 {trade.Quantity:N2} / 円決済 {trade.SettlementAmountJpy:N2}円";
+                    rows[trade] = !statement.CanUpdateHoldings
+                        ? ("対象外", "―", "反映なし", "このCSVは取引履歴の更新対象ではありません。")
+                        : pending.Contains(trade)
+                            ? ("要確認", $"同条件の既存取引 {beforeCount}件", "反映保留", trade.ReviewReason)
+                        : incompleteSell
+                            ? ("要確認", "開始残高が不明", "反映保留", "開始残高が不明な売却を含むため、取引グループを保留します。")
+                            : protectedByPolicy
+                                ? ("対象外", "―", "反映なし",
+                                    "現在の取込方針では既存銘柄の取引を反映しません。")
+                                : same
+                                    ? ("同一", $"同じ取引 {beforeCount}件登録済み", after,
+                                        "同一条件の既存取引を再利用します。")
+                                    : ("新規", $"同じ取引 {beforeCount}件登録済み", after,
+                                        snapshotPriority
+                                            ? "取引履歴に追加します。保有数量は残高CSVを優先します。"
+                                            : "取引履歴に追加し、残高との整合を確認します。");
+                    if (pending.Contains(trade) && priorTrades.Length > 0 &&
+                        _getTradeResolution?.Invoke(trade) == "既存と同一")
+                        rows[trade] = ("同一", $"同条件の既存取引 {beforeCount}件",
+                            "台帳への追加なし", "前回、元CSV行を既存取引と同一と確認済みです。");
+                    if (pending.Contains(trade) && priorTrades.Length > 0)
+                        canMatchExisting.Add(trade);
+                }
+            }
+        }
+
+        foreach (var trade in statement.Trades.OrderByDescending(x => x.SettlementDate))
+        {
+            if (!rows.TryGetValue(trade, out var result))
+                result = ("取込時判定", string.Empty, string.Empty,
+                    "DB接続がないため、取引の照合は取込時に判定します。");
+            var resolvedSame = result.Status == "同一" &&
+                result.Reason.StartsWith("前回、元CSV行", StringComparison.Ordinal) &&
+                _getTradeResolution?.Invoke(trade) == "既存と同一";
+            AddPreviewRow(new CsvPreviewRowViewModel
+            {
+                RowNumber = index++, Status = IsManualSelection && result.Status is not ("要確認" or "対象外")
+                    ? "選択待ち" : result.Status, Before = result.Before,
+                After = result.After, Reason = result.Reason,
+                CanChooseManual = IsManualSelection && result.Status is not ("要確認" or "対象外") &&
+                    HasSourceRow(trade.SourceFile, trade.SourceRowNumber) && !resolvedSame,
+                ManualCandidateId = IsManualSelection && HasSourceRow(trade.SourceFile, trade.SourceRowNumber)
+                    ? TradeCandidateId(trade) : string.Empty,
+                CanChooseTrade = (resolvedSame || result.Status == "要確認" &&
+                    result.Reason == trade.ReviewReason && IsSelectableTradeConflict(trade)),
+                CanMatchExistingTrade = canMatchExisting.Contains(trade),
+                TradeCandidateId = IsSelectableTradeConflict(trade)
+                    ? TradeCandidateId(trade) : string.Empty,
+                TradeChoice = resolvedSame && !IsManualSelection ? "既存と同一" : "保留",
+                Values = $"取引 / {trade.SettlementDate:yyyy/MM/dd} / {trade.Broker} / {trade.Account} / " +
+                         $"{trade.TradeType} / {trade.Ticker} / {trade.Name} / {trade.Quantity:N2}株 / " +
+                         $"{trade.UnitPrice:N4} {trade.Currency} / " +
+                         $"{Path.GetFileName(trade.SourceFile)}:{trade.SourceRowNumber}"
+            });
+        }
+        return index;
+    }
+
+    private static bool SameTradeSourceRow(BrokerTrade prior, BrokerTradeRecord incoming) =>
+        prior.SourceRowNumber > 0 && incoming.SourceRowNumber > 0 &&
+        string.Equals(prior.SourceFile, incoming.SourceFile, StringComparison.OrdinalIgnoreCase) &&
+        prior.SourceRowNumber == incoming.SourceRowNumber;
+
     private int AddDividendPreviewRows(IReadOnlyList<BrokerDividendRecord> records, int startIndex)
     {
         var index = startIndex;
-        foreach (var record in records.Take(20))
+        if (_getPositions is null || _getDividendPayments is null)
         {
-            AddPreviewRow(new CsvPreviewRowViewModel
+            foreach (var record in records)
             {
-                RowNumber = index++,
-                Values = $"{record.PaymentDate:yyyy/MM/dd} / {record.Ticker} / {record.Name} / {record.Currency} / {record.NetAmount:N6} / {record.NetAmountJpy:N2}円"
-            });
+                AddPreviewRow(new CsvPreviewRowViewModel
+                {
+                    RowNumber = index++,
+                    CanChooseManual = IsManualSelection && HasSourceRow(record.SourceFile, record.SourceRowNumber),
+                    ManualCandidateId = IsManualSelection && HasSourceRow(record.SourceFile, record.SourceRowNumber)
+                        ? DividendCandidateId(record) : string.Empty,
+                    Status = IsManualSelection ? "選択待ち" : "取込時判定",
+                    Reason = "DB接続がないため、既存配当との照合は取込時に判定します。",
+                    Values = FormatDividendPreviewValues(record)
+                });
+            }
+            return index;
         }
 
+        var positions = _getPositions();
+        var positionByKey = positions
+            .GroupBy(x => BuildPositionKey(x.Stock.Broker, x.Stock.Ticker, x.Stock.AccountType),
+                StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+        var existing = new DividendPaymentIndex(_getDividendPayments());
+        var reconciliation = new DividendReconciliationService();
+        var temporaryStockIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var nextTemporaryPaymentId = int.MaxValue;
+
+        foreach (var record in records)
+        {
+            CheckCancellation();
+            var key = BuildPositionKey(record.Broker, record.Ticker, record.Account);
+            positionByKey.TryGetValue(key, out var position);
+            if (position is null)
+            {
+                var candidates = FindDividendPositionCandidates(positionByKey.Values, record);
+                if (string.IsNullOrWhiteSpace(record.Account) && candidates.Count > 1)
+                {
+                    AddPreviewRow(new CsvPreviewRowViewModel
+                    {
+                        RowNumber = index++, Status = "要確認", Before = "口座を特定できません",
+                        After = "反映保留", Reason = "同じ銘柄が複数の口座にあります。対象口座を確認してください。",
+                        Values = FormatDividendPreviewValues(record)
+                    });
+                    continue;
+                }
+                if (candidates.Count == 1) position = candidates[0];
+            }
+
+            if (position is null && !temporaryStockIds.TryGetValue(key, out _))
+                temporaryStockIds[key] = -temporaryStockIds.Count - 1;
+            var payment = CreateDividendPayment(position?.Stock.Id ?? temporaryStockIds[key], record);
+            if (position is not null && string.IsNullOrWhiteSpace(record.Account))
+            {
+                payment.AccountType = position.Stock.AccountType;
+                payment.TaxAccountType = position.Stock.AccountType;
+            }
+
+            var preview = ClassifyDividendPreview(existing, reconciliation, payment, position is null);
+            AddPreviewRow(new CsvPreviewRowViewModel
+            {
+                RowNumber = index++, Status = IsManualSelection && preview.Status != "要確認"
+                    ? "選択待ち" : preview.Status, Before = preview.Before,
+                After = preview.After, Reason = preview.Reason,
+                CanChooseManual = IsManualSelection && preview.Status != "要確認" &&
+                    HasSourceRow(record.SourceFile, record.SourceRowNumber),
+                ManualCandidateId = IsManualSelection && HasSourceRow(record.SourceFile, record.SourceRowNumber)
+                    ? DividendCandidateId(record) : string.Empty,
+                Values = FormatDividendPreviewValues(record)
+            });
+            if (preview.AddToPreviewIndex)
+            {
+                // Only the in-memory preview is updated, so later CSV rows can be compared
+                // against earlier rows without changing any persisted payment.
+                payment.Id = nextTemporaryPaymentId--;
+                existing.Add(payment);
+            }
+        }
         return index;
+    }
+
+    private static string FormatDividendPreviewValues(BrokerDividendRecord record) =>
+        $"配当 / {record.PaymentDate:yyyy/MM/dd} / {record.Broker} / {record.Account} / {record.Ticker} / " +
+        $"{record.Currency} {record.NetAmount:N6} / 入金 {record.NetAmountJpy:N2}円 / " +
+        $"{Path.GetFileName(record.SourceFile)}:{record.SourceRowNumber}";
+
+    private static (string Status, string Before, string After, string Reason, bool AddToPreviewIndex)
+        ClassifyDividendPreview(DividendPaymentIndex existing, DividendReconciliationService reconciliation,
+            DividendPayment payment, bool createsReferenceStock)
+    {
+        var after = $"税引後入金 {payment.NetAmountJpy:N2}円";
+        var referenceNote = createsReferenceStock ? " 配当参照用の銘柄も新規登録します。" : string.Empty;
+        if (payment.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(payment.SourceFile))
+        {
+            var sourceRow = existing.FindSourceRow(payment);
+            if (sourceRow is not null && !SameImportedDividendValues(sourceRow, payment))
+                return ("要確認", $"税引後入金 {sourceRow.NetAmountJpy:N2}円", "反映保留",
+                    "同じCSV明細行の既存値と異なります。元データを確認してください。", false);
+        }
+
+        if (IsNomuraTransactionStatement(payment.SourceFile))
+        {
+            var exports = existing.Candidates(payment)
+                .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus) &&
+                            x.PaymentDate.Date == payment.PaymentDate.Date && x.Quantity == payment.Quantity &&
+                            x.StockId == payment.StockId &&
+                            SecuritySymbolNormalizer.NormalizeBroker(x.Broker) ==
+                                SecuritySymbolNormalizer.NormalizeBroker(payment.Broker) &&
+                            DividendConstants.NormalizeAccountType(x.AccountType) ==
+                                DividendConstants.NormalizeAccountType(payment.AccountType) &&
+                            IsNomuraDividendExport(x.SourceFile))
+                .DistinctBy(x => x.Id).ToArray();
+            if (exports.Length == 1)
+            {
+                var prior = exports[0];
+                return prior.NetAmountJpy == payment.NetAmountJpy
+                    ? ("同一", $"税引後入金 {prior.NetAmountJpy:N2}円", after,
+                        "取引履歴の入金額は既存の配当履歴と一致します。", false)
+                    : ("更新", $"税引後入金 {prior.NetAmountJpy:N2}円", after,
+                        "取引履歴の入金額を採用し、既存の税額内訳は保持します。", false);
+            }
+        }
+
+        var decision = reconciliation.ReconcileActual(existing.Candidates(payment), payment);
+        if (decision.DuplicateActual is { } duplicate)
+        {
+            var before = $"税引後入金 {duplicate.NetAmountJpy:N2}円";
+            if (payment.SourceRowNumber > 0 && duplicate.SourceRowNumber > 0 &&
+                !string.Equals(payment.SourceFile, duplicate.SourceFile, StringComparison.OrdinalIgnoreCase))
+                return ("要確認", before, "反映保留",
+                    "別のCSVに同じ入金候補があります。二重計上を避けるため確認が必要です。", false);
+            if (SameImportedDividendValues(duplicate, payment) &&
+                duplicate.StockId == payment.StockId &&
+                duplicate.SourceRowNumber == payment.SourceRowNumber &&
+                string.Equals(duplicate.SourceFile, payment.SourceFile, StringComparison.OrdinalIgnoreCase))
+                return ("同一", before, after, "同じCSV明細は既に取込済みです。", false);
+            if (duplicate.SourceRowNumber > 0 && payment.SourceRowNumber == 0)
+                return ("同一", before, after, "行番号付きの既存明細を保持します。", false);
+            return ("更新", before, after, "同一の入金実績と照合しました。", false);
+        }
+
+        if (decision.ReviewCandidates.Count > 0)
+            return ("要確認", "近似する予定あり", after,
+                "配当実績を追加し、近似する予定との対応を確認待ちにします。" + referenceNote, true);
+        if (decision.ReplaceTargets.Count > 0)
+            return ("更新", $"予定 {decision.ReplaceTargets[0].NetAmountJpy:N2}円", after,
+                "予定を実績に置き換えます。" + referenceNote, true);
+        return ("新規", "未登録", after, "配当実績を追加します。" + referenceNote, true);
     }
 
     private void Import()
@@ -697,6 +1378,15 @@ public sealed class CsvImportViewModel : ObservableObject
 
     private void ImportMultipleFiles(IReadOnlyList<string> filePaths)
     {
+        var equivalentExports = FindEquivalentNomuraExports(filePaths);
+        if (equivalentExports.Count > 0)
+        {
+            var (first, second) = equivalentExports[0];
+            Message = $"{Path.GetFileName(first)} と {Path.GetFileName(second)} は同内容の野村取引履歴です。二重取込を避けるため一括取込を保留しました。どちらか1件を選び直してください。DBは変更していません。";
+            AddImportLog($"要確認: {Message}");
+            return;
+        }
+
         if (_runImportAtomically is not null && !_atomicImportInProgress)
         {
             _fileImportOutcomes.Clear();
@@ -779,6 +1469,26 @@ public sealed class CsvImportViewModel : ObservableObject
         Message = $"{filePaths.Count}件のCSVを処理しました。適用対象: {processed}件、未対応ファイル: {skipped}件、要確認ログ: {reviewRows}行。詳細はログを確認してください。";
     }
 
+    private IReadOnlyList<(string First, string Second)> FindEquivalentNomuraExports(
+        IReadOnlyList<string> filePaths)
+    {
+        var nomuraFiles = filePaths.Where(path => GetCsvKind(path) == CsvKind.NomuraTransaction).ToList();
+        var duplicates = new List<(string First, string Second)>();
+        for (var i = 0; i < nomuraFiles.Count; i++)
+        {
+            var first = nomuraFiles[i];
+            var firstStatement = GetPreviewStatement(first, () => _nomuraTransactionParser.Parse(first));
+            for (var j = i + 1; j < nomuraFiles.Count; j++)
+            {
+                var second = nomuraFiles[j];
+                var secondStatement = GetPreviewStatement(second, () => _nomuraTransactionParser.Parse(second));
+                if (CsvEquivalentExportDetector.AreEquivalentTransactions(firstStatement, secondStatement))
+                    duplicates.Add((first, second));
+            }
+        }
+        return duplicates;
+    }
+
     private void ImportDividendRecords(Func<IReadOnlyList<BrokerDividendRecord>> parseRecords, string sourceLabel)
     {
         if (_runImportAtomically is not null && !_atomicImportInProgress)
@@ -798,11 +1508,17 @@ public sealed class CsvImportViewModel : ObservableObject
 
         try
         {
-            var records = parseRecords();
-            _lastImportRowCount = records.Count;
+            var parsedRecords = parseRecords();
+            _lastImportRowCount = parsedRecords.Count;
+            var records = IsManualSelection
+                ? parsedRecords.Where(record => HasSourceRow(record.SourceFile, record.SourceRowNumber) &&
+                    _selectedManualRows.Contains(DividendCandidateId(record))).ToList()
+                : parsedRecords.ToList();
             if (records.Count == 0)
             {
-                Message = $"{sourceLabel} に取込可能な配当明細がありません。";
+                Message = IsManualSelection
+                    ? "反映する配当行が選択されていません。DBには反映していません。"
+                    : $"{sourceLabel} に取込可能な配当明細がありません。";
                 return;
             }
 
@@ -854,7 +1570,10 @@ public sealed class CsvImportViewModel : ObservableObject
                     payment.AccountType = position.Stock.AccountType;
                     payment.TaxAccountType = position.Stock.AccountType;
                 }
-                switch (SaveBrokerDividend(existingDividends, payment, reconciliationService))
+                var beforeAmount = FindDividendBeforeAmount(existingDividends, payment, reconciliationService);
+                var dividendAction = SaveBrokerDividend(existingDividends, payment, reconciliationService);
+                SaveDividendChange(record, payment, dividendAction, beforeAmount);
+                switch (dividendAction)
                 {
                     case DividendImportAction.Created:
                         imported++;
@@ -865,6 +1584,10 @@ public sealed class CsvImportViewModel : ObservableObject
                     case DividendImportAction.ReplacedSchedule:
                         imported++;
                         replaced++;
+                        break;
+                    case DividendImportAction.CreatedNeedsReview:
+                        imported++;
+                        reviewCount++;
                         break;
                     case DividendImportAction.NeedsReview:
                         skipped++;
@@ -916,34 +1639,42 @@ public sealed class CsvImportViewModel : ObservableObject
 
         try
         {
-            var statement = parseStatement();
-            _lastImportedStatement = statement;
-            _lastImportRowCount = statement.SourceRowAudits.Count > 0
-                ? statement.SourceRowAudits.Values.Sum(x => x.InputRows)
-                : statement.Holdings.Count + statement.UnresolvedHoldings.Count +
-                  statement.Trades.Count + statement.Dividends.Count + statement.IgnoredRowCount;
-            foreach (var review in statement.ReviewMessages) AddImportLog($"要確認: {review}");
             var mergePolicy = _getMergePolicy?.Invoke();
-            if (mergePolicy == "すべてプレビューして手動選択")
-            {
-                Message = "手動選択方針のため、プレビューのみ行いDBへ反映していません。";
-                AddImportLog($"{sourceLabel}: 手動選択が必要です。");
-                return;
-            }
+            var manualSelection = mergePolicy == "すべてプレビューして手動選択";
+            var parsedStatement = parseStatement();
+            var selectedStatement = manualSelection
+                ? SelectManualStatementRows(parsedStatement) : parsedStatement;
+            var statement = ReconcileStatementTrades(ApplyHoldingConflictChoices(selectedStatement));
+            _lastImportedStatement = statement;
+            _lastImportRowCount = parsedStatement.SourceRowAudits.Count > 0
+                ? parsedStatement.SourceRowAudits.Values.Sum(x => x.InputRows)
+                : parsedStatement.Holdings.Count + parsedStatement.UnresolvedHoldings.Count +
+                  parsedStatement.Trades.Count + parsedStatement.UnresolvedTrades.Count +
+                  parsedStatement.ResolvedDuplicateTrades.Count + parsedStatement.Dividends.Count + parsedStatement.IgnoredRowCount;
+            if (manualSelection)
+                AddImportLog($"手動選択: 保有 {statement.Holdings.Count}件、取引 {statement.Trades.Count}件、" +
+                    $"配当 {statement.Dividends.Count}件。選択しなかった行と残高補完は反映しません。");
+            else
+                foreach (var review in statement.ReviewMessages) AddImportLog($"要確認: {review}");
+            if (manualSelection) mergePolicy = "証券会社データを正として上書き";
             if (statement.Holdings.Count == 0 && statement.CompleteHoldingScopes.Count == 0 &&
                 statement.Trades.Count == 0 &&
                 statement.Dividends.Count == 0 && statement.UnresolvedHoldings.Count == 0 &&
                 statement.UnresolvedDividends.Count == 0 &&
-                statement.UnresolvedTrades.Count == 0)
+                statement.UnresolvedTrades.Count == 0 && statement.ResolvedDuplicateTrades.Count == 0)
             {
-                Message = $"{sourceLabel} に取込可能な保有・配当データがありません。";
+                Message = manualSelection
+                    ? "反映する行が選択されていません。DBには反映していません。"
+                    : $"{sourceLabel} に取込可能な保有・配当データがありません。";
                 return;
             }
 
             foreach (var unresolved in statement.UnresolvedHoldings)
             {
-                const string reason = "外国株式のティッカーを確定できません。";
+                var reason = string.IsNullOrWhiteSpace(unresolved.ReviewReason)
+                    ? "外国株式のティッカーを確定できません。" : unresolved.ReviewReason;
                 _saveReviewHolding?.Invoke(unresolved, reason);
+                SaveHoldingChange(unresolved, null, null, "要確認", reason);
                 AddImportLog($"要確認: {unresolved.Name} / {reason}");
             }
             foreach (var unresolved in statement.UnresolvedDividends)
@@ -953,7 +1684,9 @@ public sealed class CsvImportViewModel : ObservableObject
             }
             foreach (var unresolved in statement.UnresolvedTrades)
             {
-                const string reason = "銘柄コードがなく、名称からティッカーを確定できません。";
+                var reason = string.IsNullOrWhiteSpace(unresolved.ReviewReason)
+                    ? "銘柄コードがなく、名称からティッカーを確定できません。"
+                    : unresolved.ReviewReason;
                 _saveReviewTrade?.Invoke(unresolved, reason);
                 AddImportLog($"要確認: {unresolved.TradeDate:yyyy/MM/dd} {unresolved.Name} / {reason}");
             }
@@ -986,6 +1719,22 @@ public sealed class CsvImportViewModel : ObservableObject
                     mergePolicy, statement.CompleteHoldingScopes);
                 foreach (var decision in mergeResult.Decisions)
                 {
+                    var explicitlySelected = IsSelectableHoldingConflict(decision.Source) &&
+                        _selectedHoldingConflictRows.Contains(HoldingConflictCandidateId(decision.Source));
+                    var decisionReason = explicitlySelected
+                        ? $"プレビューでCSV行を採用。{decision.Reason}"
+                        : decision.Reason;
+                    var unchangedDecision = decision.Action == BrokerMergeAction.Overwrite &&
+                        decision.ChangedFields.Count == 0 && decision.Existing is not null &&
+                        decision.Merged?.CurrentHolding.UpdatedAt == decision.Existing.CurrentHolding.UpdatedAt;
+                    SaveHoldingChange(decision.Source, decision.Existing, decision.Merged,
+                        decision.Action switch
+                        {
+                            BrokerMergeAction.Create => "新規",
+                            BrokerMergeAction.NeedsReview => "要確認",
+                            BrokerMergeAction.Overwrite when unchangedDecision => "同一",
+                            _ => "更新"
+                        }, decisionReason);
                     var positionKey = BuildPositionKey(decision.Source.Broker, decision.Source.Ticker, decision.Source.Account);
                     if (decision.Merged?.CurrentHolding.CurrentShares == 0m &&
                         decision.Source.Shares == 0m && decision.Existing is not null)
@@ -993,8 +1742,8 @@ public sealed class CsvImportViewModel : ObservableObject
                     if (decision.Merged is null)
                     {
                         reviewHoldings++;
-                        _saveReviewHolding?.Invoke(decision.Source, decision.Reason);
-                        AddImportLog($"要確認: {decision.Source.Broker} {decision.Source.Ticker} {decision.Source.Name} / {decision.Reason}");
+                        _saveReviewHolding?.Invoke(decision.Source, decisionReason);
+                        AddImportLog($"要確認: {decision.Source.Broker} {decision.Source.Ticker} {decision.Source.Name} / {decisionReason}");
                         continue;
                     }
 
@@ -1034,7 +1783,7 @@ public sealed class CsvImportViewModel : ObservableObject
                     positionByKey.TryGetValue(tradeGroup.Key, out var positionForHistory);
                     var fullHistory = positionForHistory is null || _getBrokerTrades is null
                         ? tradeGroup.ToList()
-                        : TradeHistoryService.Merge(_getBrokerTrades(positionForHistory.Stock.Id), tradeGroup,
+                        : TradeHistoryService.Merge(GetAccountTrades(positionForHistory.Stock.Id, tradeGroup.First()), tradeGroup,
                             positionForHistory.Stock.Ticker);
                     if (TradeReconstructionService.Reconstruct(fullHistory).IncompleteSellCount > 0)
                     {
@@ -1114,7 +1863,7 @@ public sealed class CsvImportViewModel : ObservableObject
                     {
                         var completeHistory = _getBrokerTrades is null
                             ? tradeGroup.ToList()
-                            : TradeHistoryService.Merge(_getBrokerTrades(position.Stock.Id), tradeGroup, position.Stock.Ticker);
+                            : TradeHistoryService.Merge(GetAccountTrades(position.Stock.Id, tradeGroup.First()), tradeGroup, position.Stock.Ticker);
                         ApplyTradeSummary(position, completeHistory, relatedDividends);
                         position.Stock.Id = _savePosition(position);
                         updatedStocks++;
@@ -1164,7 +1913,10 @@ public sealed class CsvImportViewModel : ObservableObject
                     payment.AccountType = position.Stock.AccountType;
                     payment.TaxAccountType = position.Stock.AccountType;
                 }
-                switch (SaveBrokerDividend(existingDividends, payment, reconciliationService))
+                var beforeAmount = FindDividendBeforeAmount(existingDividends, payment, reconciliationService);
+                var dividendAction = SaveBrokerDividend(existingDividends, payment, reconciliationService);
+                SaveDividendChange(record, payment, dividendAction, beforeAmount);
+                switch (dividendAction)
                 {
                     case DividendImportAction.Created:
                         importedDividends++;
@@ -1176,6 +1928,10 @@ public sealed class CsvImportViewModel : ObservableObject
                         importedDividends++;
                         replacedDividends++;
                         break;
+                    case DividendImportAction.CreatedNeedsReview:
+                        importedDividends++;
+                        reviewDividends++;
+                        break;
                     case DividendImportAction.NeedsReview:
                         skippedDividends++;
                         reviewDividends++;
@@ -1186,7 +1942,15 @@ public sealed class CsvImportViewModel : ObservableObject
                 }
             }
 
+            SaveTradeChanges(statement.Trades.Concat(statement.UnresolvedTrades)
+                    .Concat(statement.ResolvedDuplicateTrades).ToList(),
+                tradesToPersist, positionByKey);
             _saveBrokerTrades?.Invoke(tradesToPersist);
+            foreach (var trade in tradesToPersist.Where(x => x.ApprovedAsDistinctTrade &&
+                         positionByKey.ContainsKey(BuildPositionKey(x.Broker, x.Ticker, x.Account))))
+                _resolveReviewTrade?.Invoke(trade, "別取引として追加", _currentBatchId ?? string.Empty);
+            foreach (var trade in statement.ResolvedDuplicateTrades)
+                _resolveReviewTrade?.Invoke(trade, "既存と同一", _currentBatchId ?? string.Empty);
             if (!_atomicImportInProgress) _afterImport?.Invoke();
             AddStatementSummaryLogs(statement);
             AddImportLog($"保有反映: 新規 {createdStocks}件 / 更新 {updatedStocks}件 / 変更なし {unchangedStocks}件 / 要確認 {reviewHoldings}件 / 取引復元見送り {skippedTradeGroups}件");
@@ -1198,7 +1962,8 @@ public sealed class CsvImportViewModel : ObservableObject
                 : $"{sourceLabel} を取り込みました。現在保有は更新せず、配当登録: {importedDividends}件、既存実績更新: {updatedDividends}件、予定置換: {replacedDividends}件。";
             _lastImportInsertedCount = createdStocks + createdReferenceStocks + importedDividends;
             _lastImportUpdatedCount = updatedStocks + updatedDividends;
-            _lastImportSkippedCount = unchangedStocks + skippedDividends + skippedTradeGroups;
+            _lastImportSkippedCount = unchangedStocks + skippedDividends + skippedTradeGroups +
+                                      statement.ResolvedDuplicateTrades.Count;
             _lastImportConflictCount = reviewHoldings + reviewDividends + statement.UnresolvedHoldings.Count +
                                        statement.UnresolvedDividends.Count + statement.UnresolvedTrades.Count;
             _lastImportApplied = true;
@@ -1218,6 +1983,7 @@ public sealed class CsvImportViewModel : ObservableObject
             _runImportAtomically!(() =>
             {
                 _atomicImportInProgress = true;
+                _currentBatchId = batchId;
                 try
                 {
                     apply();
@@ -1225,7 +1991,7 @@ public sealed class CsvImportViewModel : ObservableObject
                     WriteSuccessLogs(batchId, sourceLabel);
                     CheckCancellation();
                 }
-                finally { _atomicImportInProgress = false; }
+                finally { _currentBatchId = null; _atomicImportInProgress = false; }
             });
         }
         catch (Exception ex)
@@ -1253,6 +2019,137 @@ public sealed class CsvImportViewModel : ObservableObject
         {
             AddImportLog($"{sourceLabel}: DB保存済み。画面更新に失敗しました: {ex.Message}");
             Message = $"{sourceLabel} のDB保存は完了しました。画面更新に失敗しました: {ex.Message}";
+        }
+        LoadImportHistory();
+    }
+
+    private void SaveHoldingChange(BrokerHoldingRecord source, StockPosition? before,
+        StockPosition? after, string action, string reason)
+    {
+        if (_currentBatchId is null || _saveImportChange is null) return;
+        _saveImportChange(new CsvImportChangeEntry
+        {
+            BatchId = _currentBatchId,
+            Source = string.IsNullOrWhiteSpace(source.SourceFile) ? source.Source : source.SourceFile,
+            SourceRowNumber = source.SourceRowNumber,
+            EventDate = source.SnapshotDate == DateTime.MinValue ? string.Empty : source.SnapshotDate.ToString("yyyy/MM/dd"),
+            Broker = source.Broker, Account = source.Account, Ticker = source.Ticker,
+            Action = action,
+            BeforeQuantity = before?.CurrentHolding.CurrentShares,
+            AfterQuantity = after?.CurrentHolding.CurrentShares,
+            BeforeExactCostJpy = before?.Purchase.AcquisitionAmountJpy,
+            AfterExactCostJpy = after?.Purchase.AcquisitionAmountJpy,
+            BeforeReferenceCostJpy = before?.Purchase.ReferenceAcquisitionAmountJpy,
+            AfterReferenceCostJpy = after?.Purchase.ReferenceAcquisitionAmountJpy,
+            Reason = reason
+        });
+    }
+
+    private static decimal? FindDividendBeforeAmount(DividendPaymentIndex existing,
+        DividendPayment payment, DividendReconciliationService reconciliation)
+    {
+        if (payment.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(payment.SourceFile) &&
+            existing.FindSourceRow(payment) is { } sourceRow)
+            return sourceRow.NetAmountJpy;
+        if (IsNomuraTransactionStatement(payment.SourceFile))
+        {
+            var export = existing.Candidates(payment)
+                .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus) &&
+                            x.PaymentDate.Date == payment.PaymentDate.Date && x.Quantity == payment.Quantity &&
+                            x.StockId == payment.StockId &&
+                            SecuritySymbolNormalizer.NormalizeBroker(x.Broker) ==
+                                SecuritySymbolNormalizer.NormalizeBroker(payment.Broker) &&
+                            DividendConstants.NormalizeAccountType(x.AccountType) ==
+                                DividendConstants.NormalizeAccountType(payment.AccountType) &&
+                            IsNomuraDividendExport(x.SourceFile))
+                .DistinctBy(x => x.Id).ToArray();
+            if (export.Length == 1) return export[0].NetAmountJpy;
+        }
+        var decision = reconciliation.ReconcileActual(existing.Candidates(payment), payment);
+        return decision.DuplicateActual?.NetAmountJpy ?? decision.ReplaceTargets.FirstOrDefault()?.NetAmountJpy;
+    }
+
+    private void SaveDividendChange(BrokerDividendRecord source, DividendPayment payment,
+        DividendImportAction action, decimal? beforeAmount)
+    {
+        if (_currentBatchId is null || _saveImportChange is null) return;
+        var held = action == DividendImportAction.NeedsReview;
+        _saveImportChange(new CsvImportChangeEntry
+        {
+            BatchId = _currentBatchId, RecordKind = "配当", Source = source.SourceFile,
+            SourceRowNumber = source.SourceRowNumber, EventDate = source.PaymentDate.ToString("yyyy/MM/dd"),
+            Broker = source.Broker, Account = source.Account, Ticker = source.Ticker,
+            Action = action switch
+            {
+                DividendImportAction.Created => "新規",
+                DividendImportAction.UpdatedExistingActual or DividendImportAction.ReplacedSchedule => "更新",
+                DividendImportAction.NeedsReview or DividendImportAction.CreatedNeedsReview => "要確認",
+                _ => "同一"
+            },
+            BeforeAmountJpy = beforeAmount,
+            AfterAmountJpy = held ? null : payment.NetAmountJpy,
+            Reason = action switch
+            {
+                DividendImportAction.NeedsReview => "CSV行または既存実績との競合。DB反映を保留しました。",
+                DividendImportAction.CreatedNeedsReview => "実績を追加し、近似する予定との照合を確認待ちにしました。",
+                DividendImportAction.ReplacedSchedule => "既存の予定を実績に置き換えました。",
+                DividendImportAction.UpdatedExistingActual => "既存の配当実績を更新しました。",
+                DividendImportAction.Created => "配当実績を追加しました。",
+                _ => "既存の配当実績を保持しました。"
+            }
+        });
+    }
+
+    private void SaveTradeChanges(IReadOnlyList<BrokerTradeRecord> sourceRows,
+        IReadOnlyList<BrokerTradeRecord> toPersist,
+        IReadOnlyDictionary<string, StockPosition> positionByKey)
+    {
+        if (_currentBatchId is null || _saveImportChange is null) return;
+        var persisted = toPersist.ToHashSet(ReferenceEqualityComparer.Instance);
+        foreach (var group in sourceRows.GroupBy(
+                     x => BuildPositionKey(x.Broker, x.Ticker, x.Account), StringComparer.OrdinalIgnoreCase))
+        {
+            positionByKey.TryGetValue(group.Key, out var position);
+            var priorTrades = position is null || _getBrokerTrades is null
+                ? Array.Empty<BrokerTrade>() : GetAccountTrades(position.Stock.Id, group.First()).ToArray();
+            var previous = TradeHistoryService.Merge(priorTrades, Array.Empty<BrokerTradeRecord>(),
+                position?.Stock.Ticker ?? group.First().Ticker);
+            var previousCounts = previous.GroupBy(TradeHistoryService.GetIdentityKey,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
+            var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var trade in group)
+            {
+                var key = TradeHistoryService.GetIdentityKey(trade);
+                var ordinal = seen.TryGetValue(key, out var count) ? count + 1 : 1;
+                seen[key] = ordinal;
+                var same = trade.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(trade.SourceFile)
+                    ? priorTrades.Any(prior => SameTradeSourceRow(prior, trade))
+                    : ordinal <= previousCounts.GetValueOrDefault(key);
+                var eligible = persisted.Contains(trade) && _saveBrokerTrades is not null;
+                _saveImportChange(new CsvImportChangeEntry
+                {
+                    BatchId = _currentBatchId, RecordKind = "取引", Source = trade.SourceFile,
+                    SourceRowNumber = trade.SourceRowNumber,
+                    EventDate = trade.SettlementDate.ToString("yyyy/MM/dd"),
+                    Broker = trade.Broker, Account = trade.Account, Ticker = trade.Ticker,
+                    Action = trade.ApprovedAsExistingTrade ? "同一" :
+                        !eligible ? "対象外" : same ? "同一" : "新規",
+                    BeforeAmountJpy = same || trade.ApprovedAsExistingTrade
+                        ? trade.SettlementAmountJpy : null,
+                    AfterAmountJpy = eligible || trade.ApprovedAsExistingTrade
+                        ? trade.SettlementAmountJpy : null,
+                    Reason = trade.ApprovedAsExistingTrade
+                        ? "プレビューで既存取引と同一と判断し、台帳に追加しませんでした。" :
+                        !eligible ? (string.IsNullOrWhiteSpace(trade.ReviewReason)
+                        ? "取引グループは今回の反映対象外です。取込ログ・確認待ちを参照してください。"
+                        : trade.ReviewReason) :
+                        same ? "同じ取引条件の既存明細を保持しました。" :
+                        trade.ApprovedAsDistinctTrade
+                            ? "プレビューで別取引として採用しました。数量・原価は保有残高との整合を別途判定します。"
+                            : "取引履歴へ追加しました。数量・原価は保有残高との整合を別途判定します。"
+                });
+            }
         }
     }
 
@@ -1326,6 +2223,12 @@ public sealed class CsvImportViewModel : ObservableObject
             : "追加・更新件数は保有と配当を対象とし、再構築した取引台帳の行数は含みません。";
         if (outcome.Audit is { } audit)
             note += $" 入力明細 {audit.InputRows}行 = 解析 {audit.ParsedRows}行 + 要確認 {audit.PendingRows}行 + 対象外 {audit.ExcludedRows}行。";
+        var formatVersion = _previewStatements.TryGetValue(filePath, out var previewStatement) &&
+            previewStatement.SourceFormatVersions.TryGetValue(filePath, out var singleVersion)
+                ? singleVersion
+                : _previewSbiBatch is not null &&
+                    _previewSbiBatch.SourceFormatVersions.TryGetValue(filePath, out var batchVersion)
+                    ? batchVersion : string.Empty;
         return new CsvImportLogEntry
         {
             BatchId = batchId,
@@ -1336,6 +2239,7 @@ public sealed class CsvImportViewModel : ObservableObject
             Broker = csvType.StartsWith("野村", StringComparison.Ordinal) ? "野村証券" :
                 csvType.StartsWith("SBI", StringComparison.Ordinal) ? "SBI証券" : string.Empty,
             CsvType = csvType,
+            FormatVersion = formatVersion,
             RowCount = outcome.RowCount,
             ParsedRowCount = outcome.Audit?.ParsedRows ?? 0,
             PendingRowCount = outcome.Audit?.PendingRows ?? 0,
@@ -1862,9 +2766,50 @@ public sealed class CsvImportViewModel : ObservableObject
             }
         }
 
+        // The Nomura transaction statement is the evidence for cash received. An older
+        // dividend export can still supply its tax breakdown, so update only the net cash.
+        if (IsNomuraTransactionStatement(payment.SourceFile))
+        {
+            var priorExports = existingDividends.Candidates(payment)
+                .Where(x => DividendConstants.IsVisibleActual(x.DividendStatus) &&
+                            x.PaymentDate.Date == payment.PaymentDate.Date &&
+                            x.Quantity == payment.Quantity &&
+                            x.StockId == payment.StockId &&
+                            SecuritySymbolNormalizer.NormalizeBroker(x.Broker) ==
+                                SecuritySymbolNormalizer.NormalizeBroker(payment.Broker) &&
+                            DividendConstants.NormalizeAccountType(x.AccountType) ==
+                                DividendConstants.NormalizeAccountType(payment.AccountType) &&
+                            IsNomuraDividendExport(x.SourceFile))
+                .DistinctBy(x => x.Id).ToArray();
+            if (priorExports.Length == 1)
+            {
+                var prior = priorExports[0];
+                if (prior.NetAmountJpy == payment.NetAmountJpy)
+                    return DividendImportAction.Skipped;
+                var oldNet = prior.NetAmountJpy;
+                prior.NetAmountJpy = payment.NetAmountJpy;
+                prior.JpyAmount = payment.NetAmountJpy;
+                prior.NetAmount = prior.Currency == "JPY" ? payment.NetAmountJpy :
+                    prior.ExchangeRate > 0m ? payment.NetAmountJpy / prior.ExchangeRate : prior.NetAmount;
+                prior.UpdatedAt = DateTime.Now;
+                var provenance = $"入金額: {Path.GetFileName(payment.SourceFile)}:{payment.SourceRowNumber}";
+                if (!prior.Memo.Contains(provenance, StringComparison.Ordinal))
+                    prior.Memo = string.IsNullOrWhiteSpace(prior.Memo) ? provenance : $"{prior.Memo} / {provenance}";
+                _saveDividend(prior);
+                existingDividends.Replace(prior);
+                AddImportLog($"入金額を取引明細で修正: {payment.PaymentDate:yyyy/MM/dd} {payment.Ticker} " +
+                    $"{oldNet:N2}円 → {payment.NetAmountJpy:N2}円。税額は従来の配当明細を保持。");
+                return DividendImportAction.UpdatedExistingActual;
+            }
+        }
+
         var decision = reconciliationService.ReconcileActual(existingDividends.Candidates(payment), payment);
         if (decision.DuplicateActual is not null)
         {
+            // Keep the CSV row with traceable provenance when an older import is replayed.
+            if (decision.DuplicateActual.SourceRowNumber > 0 && payment.SourceRowNumber == 0)
+                return DividendImportAction.Skipped;
+
             if (payment.SourceRowNumber > 0 && decision.DuplicateActual.SourceRowNumber > 0 &&
                 !string.Equals(payment.SourceFile, decision.DuplicateActual.SourceFile,
                     StringComparison.OrdinalIgnoreCase))
@@ -1883,7 +2828,20 @@ public sealed class CsvImportViewModel : ObservableObject
                 AddImportLog($"要確認: {payment.PaymentDate:yyyy/MM/dd} {payment.Ticker} / {reason}");
                 return DividendImportAction.NeedsReview;
             }
-            if (SameImportedDividendValues(decision.DuplicateActual, payment))
+            foreach (var target in decision.ReplaceTargets)
+            {
+                target.DividendStatus = DividendConstants.Replaced;
+                target.ReplacedByDividendId = decision.DuplicateActual.Id;
+                target.MatchedActualDividendId = decision.DuplicateActual.Id;
+                target.UpdatedAt = DateTime.Now;
+                _saveDividend(target);
+                existingDividends.Replace(target);
+            }
+            if (SameImportedDividendValues(decision.DuplicateActual, payment) &&
+                decision.DuplicateActual.StockId == payment.StockId &&
+                decision.DuplicateActual.SourceRowNumber == payment.SourceRowNumber &&
+                string.Equals(decision.DuplicateActual.SourceFile, payment.SourceFile,
+                    StringComparison.OrdinalIgnoreCase))
                 return DividendImportAction.Skipped;
             payment.Id = decision.DuplicateActual.Id;
             payment.CreatedAt = decision.DuplicateActual.CreatedAt;
@@ -1897,6 +2855,26 @@ public sealed class CsvImportViewModel : ObservableObject
         var newId = _saveDividend(payment);
         payment.Id = newId;
         existingDividends.Add(payment);
+
+        if (decision.ReviewCandidates.Count > 0)
+        {
+            var candidateIds = string.Join(", ", decision.ReviewCandidates.Select(x => x.Id));
+            var reason = $"予定・手入力の配当候補ID {candidateIds} と近似一致します。CSV実績ID {newId} は登録済みです。候補の置換は明細を確認して判断してください。";
+            _saveReviewDividend?.Invoke(new BrokerUnresolvedDividend
+            {
+                PaymentDate = payment.PaymentDate,
+                Broker = payment.Broker,
+                Name = string.IsNullOrWhiteSpace(payment.StockName) ? payment.Ticker : payment.StockName,
+                Product = payment.Source,
+                Quantity = payment.Quantity,
+                GrossAmount = payment.GrossAmount,
+                TaxAmount = payment.TaxAmount,
+                Source = $"{payment.SourceFile}:{payment.SourceRowNumber}",
+                Reason = reason
+            });
+            AddImportLog($"要確認: {payment.PaymentDate:yyyy/MM/dd} {payment.Ticker} / {reason}");
+            return DividendImportAction.CreatedNeedsReview;
+        }
 
         foreach (var target in decision.ReplaceTargets)
         {
@@ -1925,11 +2903,26 @@ public sealed class CsvImportViewModel : ObservableObject
         left.NetAmountJpy == right.NetAmountJpy &&
         left.GrossAmountJpy == right.GrossAmountJpy;
 
+    private static bool IsNomuraTransactionStatement(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.StartsWith("Nomura_取引履歴_受け渡し", StringComparison.Ordinal) ||
+               name.StartsWith("_Nomuta_取引履歴_約定", StringComparison.Ordinal);
+    }
+
+    private static bool IsNomuraDividendExport(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.StartsWith("Nomura_配当履歴", StringComparison.Ordinal) ||
+               name.StartsWith("Nomura_New_file", StringComparison.Ordinal);
+    }
+
     private sealed class DividendPaymentIndex
     {
         private readonly List<DividendPayment> _payments;
         private readonly Dictionary<(int StockId, int Day), List<DividendPayment>> _byDate = new();
-        private readonly Dictionary<(int StockId, string Broker, string File, int Row), DividendPayment> _bySourceRow = new();
+        private readonly Dictionary<(string Ticker, int Day), List<DividendPayment>> _byTickerDate = new();
+        private readonly Dictionary<(string Ticker, string Broker, string File, int Row), DividendPayment> _bySourceRow = new();
         private readonly Dictionary<int, int> _positionById = new();
 
         public DividendPaymentIndex(IReadOnlyList<DividendPayment> payments)
@@ -1946,8 +2939,11 @@ public sealed class CsvImportViewModel : ObservableObject
             {
                 if (_byDate.TryGetValue((payment.StockId, day + offset), out var bucket))
                     candidates.AddRange(bucket);
+                if (_byTickerDate.TryGetValue((TickerKey(payment), day + offset), out var tickerBucket))
+                    candidates.AddRange(tickerBucket);
             }
 
+            candidates = candidates.DistinctBy(x => x.Id).ToList();
             candidates.Sort((left, right) => _positionById[left.Id].CompareTo(_positionById[right.Id]));
             return candidates;
         }
@@ -1982,6 +2978,10 @@ public sealed class CsvImportViewModel : ObservableObject
             if (!_byDate.TryGetValue(key, out var bucket))
                 _byDate[key] = bucket = new List<DividendPayment>();
             bucket.Add(payment);
+            var tickerKey = (TickerKey(payment), key.Item2);
+            if (!_byTickerDate.TryGetValue(tickerKey, out var tickerBucket))
+                _byTickerDate[tickerKey] = tickerBucket = new List<DividendPayment>();
+            tickerBucket.Add(payment);
             if (payment.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(payment.SourceFile))
                 _bySourceRow.TryAdd(SourceKey(payment), payment);
         }
@@ -1994,12 +2994,24 @@ public sealed class CsvImportViewModel : ObservableObject
                 bucket.Remove(payment);
                 if (bucket.Count == 0) _byDate.Remove(key);
             }
+            var tickerKey = (TickerKey(payment), key.Item2);
+            if (_byTickerDate.TryGetValue(tickerKey, out var tickerBucket))
+            {
+                tickerBucket.Remove(payment);
+                if (tickerBucket.Count == 0) _byTickerDate.Remove(tickerKey);
+            }
             if (payment.SourceRowNumber > 0 && !string.IsNullOrWhiteSpace(payment.SourceFile))
                 _bySourceRow.Remove(SourceKey(payment));
         }
 
-        private static (int, string, string, int) SourceKey(DividendPayment payment) =>
-            (payment.StockId, payment.Broker.ToUpperInvariant(), payment.SourceFile.ToUpperInvariant(),
+        private static string TickerKey(DividendPayment payment) =>
+            string.IsNullOrWhiteSpace(payment.Ticker)
+                ? $"STOCK:{payment.StockId}"
+                : SecuritySymbolNormalizer.NormalizeTicker(payment.Ticker);
+
+        private static (string, string, string, int) SourceKey(DividendPayment payment) =>
+            (TickerKey(payment), SecuritySymbolNormalizer.NormalizeBroker(payment.Broker).ToUpperInvariant(),
+                payment.SourceFile.ToUpperInvariant(),
                 payment.SourceRowNumber);
     }
 
@@ -2096,6 +3108,7 @@ public sealed class CsvImportViewModel : ObservableObject
         Skipped,
         NeedsReview,
         Created,
+        CreatedNeedsReview,
         UpdatedExistingActual,
         ReplacedSchedule
     }
@@ -2108,6 +3121,19 @@ public sealed class CsvImportViewModel : ObservableObject
             normalizedTicker = normalizedTicker[5..];
         var normalizedAccount = AccountTypeNormalizer.Normalize(account);
         return $"{normalizedBroker}|{normalizedTicker}|{normalizedAccount}";
+    }
+
+    private IReadOnlyList<BrokerTrade> GetAccountTrades(int stockId, BrokerTradeRecord incoming)
+    {
+        if (_getBrokerTrades is null) return Array.Empty<BrokerTrade>();
+        var broker = SecuritySymbolNormalizer.NormalizeBroker(incoming.Broker);
+        var account = AccountTypeNormalizer.Normalize(incoming.Account);
+        return _getBrokerTrades(stockId)
+            .Where(x => string.Equals(SecuritySymbolNormalizer.NormalizeBroker(x.Broker), broker,
+                StringComparison.OrdinalIgnoreCase))
+            .Where(x => AccountTypeNormalizer.Normalize(string.IsNullOrWhiteSpace(x.CustodyType)
+                ? x.AccountType : x.CustodyType) == account)
+            .ToList();
     }
 
     private static IReadOnlyList<StockPosition> FindDividendPositionCandidates(

@@ -9,6 +9,7 @@ public static class DividendConstants
     public const string Confirmed = "Confirmed";
     public const string Actual = "Actual";
     public const string Replaced = "Replaced";
+    public const string Excluded = "Excluded";
     public const string PaymentDue = "PaymentDue";
 
     public const string SourceManual = "Manual";

@@ -1,11 +1,205 @@
 using InvestmentStory.Core.Models;
 using InvestmentStory.Data;
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace InvestmentStory.Tests;
 
 public sealed class DatabaseInitializerTests
 {
+    [Fact]
+    public void Initialize_AddsTradeSourceRowsToExistingDatabaseAfterBackup()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_trade_rows_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, "ALTER TABLE BrokerTrades DROP COLUMN SourceRowNumber;");
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info(BrokerTrades);";
+                using var reader = command.ExecuteReader();
+                var found = false;
+                while (reader.Read())
+                    found |= reader.GetString(1) == "SourceRowNumber";
+                Assert.True(found);
+            }
+            var backupPath = Assert.Single(Directory.GetFiles(directory, "*_before_trade_source_rows.db"));
+            using (var backup = Open(backupPath))
+            using (var check = backup.CreateCommand())
+            {
+                check.CommandText = "PRAGMA integrity_check;";
+                Assert.Equal("ok", check.ExecuteScalar()?.ToString());
+            }
+            using var metadata = JsonDocument.Parse(File.ReadAllText(backupPath + ".json"));
+            Assert.StartsWith("schema-", metadata.RootElement.GetProperty("SchemaId").GetString());
+            using var backupFile = File.OpenRead(backupPath);
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(backupFile)),
+                metadata.RootElement.GetProperty("Sha256").GetString());
+            var restoreService = new DatabaseRestoreService(path);
+            var migration = Assert.Single(restoreService.GetBackups());
+            Assert.Equal("移行前", migration.SourceKind);
+            Assert.StartsWith("migration:", migration.BackupKey);
+            Assert.Equal(Path.GetFileName(backupPath), migration.FileName);
+
+            new InvestmentStoryRepository(path).RunImportAtomically(() => { });
+            var listed = restoreService.GetBackups();
+            Assert.Equal(2, listed.Count);
+            Assert.Contains(listed, item => item.SourceKind == "取込前" &&
+                item.BackupKey == item.FileName);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void Initialize_MigratesLegacyTradeReviewRowsWithoutLosingDecisions()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_review_rows_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, "DROP TABLE CsvImportReviewRows;");
+                Execute(connection, """
+                    CREATE TABLE CsvImportReviewRows (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Broker TEXT NOT NULL, Account TEXT NOT NULL, Ticker TEXT NOT NULL,
+                        TradeDate TEXT NOT NULL, TradeType TEXT NOT NULL,
+                        Quantity REAL NOT NULL, SignedQuantity REAL NOT NULL,
+                        UnitPrice REAL NOT NULL, Currency TEXT NOT NULL,
+                        Source TEXT NOT NULL, Reason TEXT NOT NULL,
+                        CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(Broker, Account, Ticker, TradeDate, TradeType, Quantity,
+                               SignedQuantity, UnitPrice, Currency, Source, Reason)
+                    );
+                    INSERT INTO CsvImportReviewRows
+                        (Broker, Account, Ticker, TradeDate, TradeType, Quantity,
+                         SignedQuantity, UnitPrice, Currency, Source, Reason)
+                    VALUES ('SBI証券', 'Specific', 'KO', '2026-01-01', '現物買付',
+                            10, 10, 50, 'USD', 'CSV', '要確認');
+                    """);
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT COUNT(*), MIN(SourceFile), MIN(SourceRowNumber) FROM CsvImportReviewRows;";
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal(1L, reader.GetInt64(0));
+                Assert.Equal(string.Empty, reader.GetString(1));
+                Assert.Equal(0, reader.GetInt32(2));
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_trade_review_source_rows.db"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void Initialize_AddsTradeReviewResolutionAfterBackup()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_review_resolution_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, "ALTER TABLE CsvImportReviewRows DROP COLUMN ResolutionBatchId;");
+                Execute(connection, "ALTER TABLE CsvImportReviewRows DROP COLUMN ResolvedAt;");
+                Execute(connection, "ALTER TABLE CsvImportReviewRows DROP COLUMN Resolution;");
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info(CsvImportReviewRows);";
+                using var reader = command.ExecuteReader();
+                var columns = new HashSet<string>();
+                while (reader.Read()) columns.Add(reader.GetString(1));
+                Assert.Contains("Resolution", columns);
+                Assert.Contains("ResolvedAt", columns);
+                Assert.Contains("ResolutionBatchId", columns);
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_trade_review_resolution.db"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void Initialize_BackfillsKnownSectorsOnceAndPreservesManualClassification()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"investment_story_sectors_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "portfolio.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            {
+                Execute(connection, """
+                    INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, Sector)
+                    VALUES ('Toyo', '8151', '日本', 'JPY', 'Test', '国内株式'),
+                           ('Nvidia', 'NVDA', '米国', 'USD', 'Test', '外株'),
+                           ('Custom', 'NVDA', '米国', 'USD', 'Other', '独自分類');
+                    """);
+            }
+
+            new DatabaseInitializer().Initialize(path);
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Sector, Industry FROM Stocks WHERE Ticker = '8151';";
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal("卸売・商社", reader.GetString(0));
+                Assert.Equal("計測機器・技術商社", reader.GetString(1));
+            }
+            using (var connection = Open(path))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Sector FROM Stocks WHERE Ticker = 'NVDA' ORDER BY Id;";
+                using var reader = command.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal("情報技術", reader.GetString(0));
+                Assert.True(reader.Read());
+                Assert.Equal("独自分類", reader.GetString(0));
+            }
+            Assert.Single(Directory.GetFiles(directory, "*_before_sector_classification.db"));
+
+            new DatabaseInitializer().Initialize(path);
+            Assert.Single(Directory.GetFiles(directory, "*_before_sector_classification.db"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     [Fact]
     public void Initialize_MigratesTickerUniqueConstraintAndLegacyEurnAlias()
     {
@@ -51,6 +245,52 @@ public sealed class DatabaseInitializerTests
             {
                 File.Delete(path);
             }
+        }
+    }
+
+    [Fact]
+    public void Initialize_DoesNotMergeCmbtPositionsAcrossAccounts()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"investment_story_cmbt_accounts_{Guid.NewGuid():N}.db");
+        try
+        {
+            new DatabaseInitializer().Initialize(path);
+            long nisaId;
+            long specificId;
+            using (var connection = Open(path))
+            {
+                Execute(connection, """
+                    INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, AccountType, CustodyType)
+                    VALUES ('CMB テック', 'CMBT', '米国', 'USD', 'SBI証券', 'NisaGrowth', 'NISA');
+                    """);
+                nisaId = LastInsertId(connection);
+                Execute(connection, """
+                    INSERT INTO Stocks (Name, Ticker, Country, Currency, Broker, AccountType, CustodyType)
+                    VALUES ('CMB テック', 'CMBT', '米国', 'USD', 'SBI証券', 'Specific', '特定');
+                    """);
+                specificId = LastInsertId(connection);
+                foreach (var id in new[] { nisaId, specificId })
+                    Execute(connection, """
+                        INSERT INTO DividendPayments
+                            (StockId, PaymentDate, Broker, GrossAmount, TaxAmount, NetAmount,
+                             Currency, JpyAmount, NetAmountJpy, SourceFile, SourceRowNumber)
+                        VALUES ($stockId, '2026-06-12', 'SBI証券', 100, 0, 100,
+                                'JPY', 100, 100, 'source.csv', 13);
+                        """, ("$stockId", id));
+            }
+
+            new DatabaseInitializer().Initialize(path);
+
+            using var verified = Open(path);
+            using var command = verified.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM Stocks WHERE Ticker = 'CMBT';";
+            Assert.Equal(2L, (long)command.ExecuteScalar()!);
+            command.CommandText = "SELECT COUNT(DISTINCT StockId) FROM DividendPayments WHERE SourceFile = 'source.csv';";
+            Assert.Equal(2L, (long)command.ExecuteScalar()!);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
         }
     }
 

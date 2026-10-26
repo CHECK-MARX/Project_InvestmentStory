@@ -3872,7 +3872,7 @@ public sealed class DividendPlanStockMonthlyRowViewModel
     {
         if (status is null) return "予定なし";
         var details = events.Select(FormatEventDetails);
-        return $"{dateType} / 代表状態 {DividendScheduleDisplay.Status(status.Value)}\n{string.Join("\n\n", details)}";
+        return $"{dateType} / {events.Count}件（口座別、地図上は月に1記号） / 代表状態 {DividendScheduleDisplay.Status(status.Value)}\n{string.Join("\n\n", details)}";
     }
 
     private static DividendScheduleStatus? ResolveStatus(IReadOnlyList<DividendPurchasePlanEvent> events)
@@ -3890,7 +3890,7 @@ public sealed class DividendPlanStockMonthlyRowViewModel
         $"権利付き最終日 {DividendScheduleDisplay.Date(item.LastRightsDate)}\n" +
         $"権利落ち日 {DividendScheduleDisplay.Date(item.ExDividendDate)} / " +
         $"基準日 {DividendScheduleDisplay.Date(item.RecordDate)} / " +
-        $"支払日 {DividendScheduleDisplay.Date(item.PaymentDate)}\n" +
+        $"{(item.IsPaid ? "証券会社入金実績日" : item.DataQuality == DividendPlanDataQuality.Acquired ? "公表支払日" : "推定支払日")} {DividendScheduleDisplay.Date(item.PaymentDate)}\n" +
         $"取得元 {item.Source} / 品質 {item.DataQuality}";
 }
 

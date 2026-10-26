@@ -1,3 +1,5 @@
+using InvestmentStory.Core.Models;
+using InvestmentStory.Core.Services;
 using Microsoft.Data.Sqlite;
 
 namespace InvestmentStory.Data;
@@ -23,6 +25,16 @@ public sealed class DatabaseAuditService
         var securityKeyExpression = ColumnExists(connection, "Stocks", "CanonicalSecurityKey")
             ? "COALESCE(NULLIF(CanonicalSecurityKey, ''), Ticker)"
             : "Ticker";
+        var repository = new InvestmentStoryRepository(path);
+        var positions = repository.GetPositions();
+        var allSnapshots = positions.Select(new InvestmentCalculator().CreateSnapshot).ToList();
+        var snapshots = allSnapshots.Where(x => PositionEvidenceService.IsActiveHolding(x.Position)).ToList();
+        var tradesByStockId = repository.GetAllBrokerTrades()
+            .GroupBy(x => x.StockId)
+            .ToDictionary(x => x.Key, x => (IReadOnlyList<BrokerTrade>)x.ToList());
+        var unknownCostCount = snapshots.Count(x => !x.HasKnownPurchaseCostJpy);
+        var unknownMarketValueCount = snapshots.Count(x => !x.HasKnownCurrentMarketValueJpy);
+        var gainEligible = snapshots.Where(x => x.HasKnownPurchaseCostJpy && x.HasKnownCurrentMarketValueJpy).ToList();
         return new DatabaseAuditResult
         {
             Database = path,
@@ -106,14 +118,19 @@ public sealed class DatabaseAuditService
                 WHERE IFNULL(ch.CurrentShares, 0) > 0
                   AND bt.Id IS NULL;
                 """),
-            UnknownCostPositions = Scalar(connection, """
-                SELECT COUNT(*)
-                FROM Stocks s
-                LEFT JOIN Purchases p ON p.StockId = s.Id
-                LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id
-                WHERE (s.AssetType <> 'MutualFund' AND IFNULL(p.UnitPrice, 0) = 0)
-                   OR (s.AssetType = 'MutualFund' AND IFNULL(mf.AcquisitionAmount, 0) = 0 AND IFNULL(mf.AverageCostNav, 0) = 0);
-                """),
+            UnknownCostPositions = unknownCostCount,
+            HistoricalUnknownCostPositions = allSnapshots.Count(x =>
+                !PositionEvidenceService.IsActiveHolding(x.Position) && !x.HasKnownPurchaseCostJpy),
+            UnknownMarketValuePositions = unknownMarketValueCount,
+            UnknownGainPositions = snapshots.Count - gainEligible.Count,
+            KnownGainPositions = gainEligible.Count,
+            KnownMarketValueExcludedFromGain = snapshots
+                .Where(x => !x.HasKnownPurchaseCostJpy && x.HasKnownCurrentMarketValueJpy)
+                .Sum(x => x.CurrentMarketValueJpy),
+            ReferenceCostPositions = snapshots.Count(x => x.IsReferencePurchaseCostJpy),
+            ReferenceCostSubtotal = snapshots.Where(x => x.IsReferencePurchaseCostJpy).Sum(x => x.PurchaseTotalJpy),
+            AcquisitionDateReviewPositions = positions.Count(x => PositionEvidenceService.AcquisitionDateNeedsReview(
+                x, tradesByStockId.GetValueOrDefault(x.Stock.Id) ?? Array.Empty<BrokerTrade>())),
             OrphanHoldings = Scalar(connection, """
                 SELECT COUNT(*)
                 FROM CurrentHoldings ch
@@ -142,42 +159,13 @@ public sealed class DatabaseAuditService
                       OR Name LIKE '%Ｓ＆Ｐ５００%'
                   );
                 """),
-            TotalMarketValue = DecimalScalar(connection, """
-                SELECT COALESCE(SUM(
-                    CASE
-                        WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.MarketValue, 0)
-                        ELSE IFNULL(ch.CurrentShares, 0) * IFNULL(ch.CurrentPrice, 0) * IFNULL(ch.CurrentExchangeRate, 1)
-                    END), 0)
-                FROM Stocks s
-                LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
-                LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id;
-                """),
-            TotalCostBasis = DecimalScalar(connection, """
-                SELECT COALESCE(SUM(
-                    CASE
-                        WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.AcquisitionAmount, 0)
-                        ELSE IFNULL(p.Shares, 0) * IFNULL(p.UnitPrice, 0) * IFNULL(p.ExchangeRate, 1)
-                    END), 0)
-                FROM Stocks s
-                LEFT JOIN Purchases p ON p.Id = (
-                    SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1
-                )
-                LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id;
-                """),
-            UnrealizedProfitLoss = DecimalScalar(connection, """
-                SELECT COALESCE(SUM(
-                    CASE
-                        WHEN s.AssetType = 'MutualFund' THEN IFNULL(mf.MarketValue, 0) - IFNULL(mf.AcquisitionAmount, 0)
-                        ELSE IFNULL(ch.CurrentShares, 0) * IFNULL(ch.CurrentPrice, 0) * IFNULL(ch.CurrentExchangeRate, 1)
-                           - IFNULL(p.Shares, 0) * IFNULL(p.UnitPrice, 0) * IFNULL(p.ExchangeRate, 1)
-                    END), 0)
-                FROM Stocks s
-                LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
-                LEFT JOIN Purchases p ON p.Id = (
-                    SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1
-                )
-                LEFT JOIN MutualFundHoldings mf ON mf.StockId = s.Id;
-                """),
+            KnownMarketValueSubtotal = snapshots.Where(x => x.HasKnownCurrentMarketValueJpy).Sum(x => x.CurrentMarketValueJpy),
+            KnownCostBasisSubtotal = snapshots.Where(x => x.HasKnownPurchaseCostJpy).Sum(x => x.PurchaseTotalJpy),
+            KnownGainSubtotal = gainEligible.Sum(x => x.UnrealizedGainJpy),
+            TotalMarketValue = unknownMarketValueCount == 0 ? snapshots.Sum(x => x.CurrentMarketValueJpy) : null,
+            TotalCostBasis = unknownCostCount == 0 ? snapshots.Sum(x => x.PurchaseTotalJpy) : null,
+            UnrealizedProfitLoss = gainEligible.Count == snapshots.Count
+                ? gainEligible.Sum(x => x.UnrealizedGainJpy) : null,
             DividendCount = Scalar(connection, "SELECT COUNT(*) FROM DividendPayments;")
         };
     }
@@ -205,12 +193,6 @@ public sealed class DatabaseAuditService
         return Convert.ToInt64(command.ExecuteScalar());
     }
 
-    private static decimal DecimalScalar(SqliteConnection connection, string sql)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return Convert.ToDecimal(command.ExecuteScalar());
-    }
 }
 
 public sealed class DatabaseAuditResult
@@ -231,12 +213,23 @@ public sealed class DatabaseAuditResult
     public long StockSplitCandidates { get; init; }
     public long MissingTransactionHistoryPositions { get; init; }
     public long UnknownCostPositions { get; init; }
+    public long HistoricalUnknownCostPositions { get; init; }
+    public long UnknownMarketValuePositions { get; init; }
+    public long UnknownGainPositions { get; init; }
+    public long KnownGainPositions { get; init; }
+    public decimal KnownMarketValueExcludedFromGain { get; init; }
+    public long ReferenceCostPositions { get; init; }
+    public decimal ReferenceCostSubtotal { get; init; }
+    public long AcquisitionDateReviewPositions { get; init; }
     public long OrphanHoldings { get; init; }
     public long OrphanDividends { get; init; }
     public long OrphanTrades { get; init; }
     public long SbiVSp500Rows { get; init; }
-    public decimal TotalMarketValue { get; init; }
-    public decimal TotalCostBasis { get; init; }
-    public decimal UnrealizedProfitLoss { get; init; }
+    public decimal KnownMarketValueSubtotal { get; init; }
+    public decimal KnownCostBasisSubtotal { get; init; }
+    public decimal KnownGainSubtotal { get; init; }
+    public decimal? TotalMarketValue { get; init; }
+    public decimal? TotalCostBasis { get; init; }
+    public decimal? UnrealizedProfitLoss { get; init; }
     public long DividendCount { get; init; }
 }

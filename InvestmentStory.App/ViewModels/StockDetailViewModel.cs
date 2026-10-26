@@ -49,51 +49,80 @@ public sealed class StockDetailViewModel : ObservableObject
     public string CurrentPriceLabel => IsMutualFund ? "基準価額" : "現在株価";
     public string CurrentPrice => _snapshot is null
         ? "-"
-        : IsMutualFund ? FundCurrentNav : Formatters.Money(_snapshot.Position.CurrentHolding.CurrentPrice, _snapshot.Position.Stock.Currency);
+        : IsMutualFund ? FundCurrentNav : _snapshot.Position.CurrentHolding.CurrentPrice <= 0m
+            ? "未取得" : Formatters.Money(_snapshot.Position.CurrentHolding.CurrentPrice, _snapshot.Position.Stock.Currency);
     public string HeaderIncomeLabel => IsMutualFund ? "分配金受取" : "年間配当";
     public string HeaderIncomeValue => IsMutualFund ? FundDistributionMethod : AnnualDividendJpy;
     public string HeaderIncomeSubValue => IsMutualFund
         ? (FundDistributionMethod.Contains("再投資", StringComparison.Ordinal) ? "現金配当対象外" : "分配金設定")
         : YieldOnCost;
 
-    public string PurchaseExchangeRate => _snapshot is null ? "-" : $"{_snapshot.Position.Purchase.ExchangeRate:N2} JPY/USD";
-    public string CurrentExchangeRate => _snapshot is null ? "-" : $"{_snapshot.Position.CurrentHolding.CurrentExchangeRate:N2} JPY/USD";
+    public string PurchaseExchangeRate => _snapshot is null ? "-" :
+        _snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "対象外" :
+        PositionEvidenceService.HasUsableForeignExchangeRate(_snapshot.Position.Purchase.ExchangeRate)
+            ? $"{(_snapshot.HasKnownPurchaseCostJpy ? "" : "未採用 ")}{_snapshot.Position.Purchase.ExchangeRate:N2} JPY/{_snapshot.Position.Stock.Currency}" :
+        _snapshot.IsReferencePurchaseCostJpy && _snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount > 0m
+            ? $"概算 {_snapshot.Position.Purchase.ReferenceAcquisitionAmountJpy / _snapshot.Position.Purchase.ReferenceAcquisitionForeignAmount:N2} JPY/{_snapshot.Position.Stock.Currency}"
+            : "未確認";
+    public string CurrentExchangeRate => _snapshot is null ? "-" :
+        _snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase) ? "対象外" :
+        PositionEvidenceService.HasUsableForeignExchangeRate(_snapshot.Position.CurrentHolding.CurrentExchangeRate)
+            ? $"{_snapshot.Position.CurrentHolding.CurrentExchangeRate:N2} JPY/{_snapshot.Position.Stock.Currency}" : "未確認";
     public string PurchaseExchangeInfo => _snapshot is null
         ? "-"
+        : _snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+            ? "円建て換算不要"
+        : _snapshot.IsReferencePurchaseCostJpy
+            ? $"{_snapshot.Position.Purchase.ReferenceAcquisitionSource} / 参考換算"
+        : !_snapshot.HasKnownPurchaseCostJpy && PositionEvidenceService.HasUsableForeignExchangeRate(_snapshot.Position.Purchase.ExchangeRate)
+            ? $"未採用の為替候補 / {_snapshot.Position.Purchase.ExchangeRateSource} / 記録日 {_snapshot.Position.Purchase.ExchangeRateAcquiredAt:yyyy/MM/dd}。円建て取得額の根拠には使いません。"
+        : _snapshot.Position.Purchase.ExchangeRate <= 0m || _snapshot.Position.Purchase.ExchangeRate == 1m
+            ? "取得時為替未確認"
         : $"{_snapshot.Position.Purchase.ExchangeRateAcquiredAt:yyyy/MM/dd HH:mm} / {_snapshot.Position.Purchase.ExchangeRateSource} / {_snapshot.Position.Purchase.ExchangeRateInputType}";
     public string CurrentExchangeInfo => _snapshot is null
         ? "-"
+        : _snapshot.Position.Stock.Currency.Equals("JPY", StringComparison.OrdinalIgnoreCase)
+            ? "円建て換算不要"
+        : !PositionEvidenceService.HasUsableForeignExchangeRate(_snapshot.Position.CurrentHolding.CurrentExchangeRate)
+            ? "現在為替未確認"
         : $"{_snapshot.Position.CurrentHolding.ExchangeRateAcquiredAt:yyyy/MM/dd HH:mm} / {_snapshot.Position.CurrentHolding.ExchangeRateSource} / {_snapshot.Position.CurrentHolding.ExchangeRateInputType}";
 
     public string PurchaseTotal => PurchaseTotalUsd;
     public string PurchaseTotalUsd => Money(x => x.PurchaseTotalUsd);
-    public string PurchaseTotalJpy => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
+    public string PurchaseTotalJpy => _snapshot is null ? "-" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
     public string EffectiveAcquisitionPrice => _snapshot is null
         ? "-"
         : Formatters.Money(DivideOrZero(Sum(x => x.PurchaseTotal), Sum(x => x.Position.CurrentHolding.CurrentShares)), _snapshot.Position.Stock.Currency);
     public string CurrentMarketValue => CurrentMarketValueUsd;
-    public string CurrentMarketValueUsd => Money(x => x.CurrentMarketValueUsd);
-    public string CurrentMarketValueJpy => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.CurrentMarketValueJpy));
+    public string CurrentMarketValueUsd => _snapshot is null ? "-" :
+        _snapshots.Any(x => !x.Position.IsMutualFund && x.Position.CurrentHolding.CurrentShares > 0m && x.Position.CurrentHolding.CurrentPrice <= 0m)
+            ? "未取得" : Money(x => x.CurrentMarketValueUsd);
+    public string CurrentMarketValueJpy => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : Formatters.Jpy(Sum(x => x.CurrentMarketValueJpy));
     public string UnrealizedGain => UnrealizedGainUsd;
-    public string UnrealizedGainUsd => _snapshot is null ? "-" : Formatters.SignedMoney(Sum(x => x.UnrealizedGainUsd), _snapshot.Position.Stock.Currency);
-    public string UnrealizedGainRate => _snapshot is null ? "-" : Formatters.SignedPercent(CalculateRate(Sum(x => x.CurrentMarketValue) - Sum(x => x.PurchaseTotal), Sum(x => x.PurchaseTotal)));
-    public string UnrealizedGainRateJpy => _snapshot is null ? "-" : Formatters.SignedPercent(CalculateRate(Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy), Sum(x => x.PurchaseTotalJpy)));
-    public string UnrealizedGainJpy => _snapshot is null ? "-" : Formatters.SignedJpy(Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy));
-    public string CurrencyImpactJpy => _snapshot is null ? "-" : Formatters.SignedJpy(Sum(x => x.CurrencyImpactJpy));
+    public string UnrealizedGainUsd => _snapshot is null ? "-" :
+        _snapshots.Any(x => x.PurchaseTotal <= 0m) ? "未確認" :
+        _snapshots.Any(x => !x.Position.IsMutualFund && x.Position.CurrentHolding.CurrentShares > 0m && x.Position.CurrentHolding.CurrentPrice <= 0m)
+            ? "算出不可" : Formatters.SignedMoney(Sum(x => x.UnrealizedGainUsd), _snapshot.Position.Stock.Currency);
+    public string UnrealizedGainRate => _snapshot is null ? "-" :
+        _snapshots.Any(x => x.PurchaseTotal <= 0m) ? "未確認" :
+        HasUnknownMarketValue ? "算出不可" : Formatters.SignedPercent(CalculateRate(Sum(x => x.CurrentMarketValue) - Sum(x => x.PurchaseTotal), Sum(x => x.PurchaseTotal)));
+    public string UnrealizedGainRateJpy => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.SignedPercent(CalculateRate(Sum(x => x.UnrealizedGainJpy), Sum(x => x.PurchaseTotalJpy)));
+    public string UnrealizedGainJpy => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.SignedJpy(Sum(x => x.UnrealizedGainJpy));
+    public string CurrencyImpactJpy => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.SignedJpy(Sum(x => x.CurrencyImpactJpy));
     public string Multiple => _snapshot is null ? "-" : $"{DivideOrZero(Sum(x => x.CurrentMarketValue), Sum(x => x.PurchaseTotal)):N2}倍";
     public string AnnualDividend => Money(x => x.AnnualDividendForecast);
     public string AnnualDividendJpy => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.AnnualDividendForecastJpy));
     public string MonthlyDividend => Money(x => x.MonthlyPassiveIncomeForecast);
     public string MonthlyDividendJpy => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.MonthlyPassiveIncomeForecastJpy));
-    public string CurrentDividendYield => _snapshot is null ? "-" : Formatters.Percent(CalculateRate(Sum(x => x.AnnualDividendForecastJpy), Sum(x => x.CurrentMarketValueJpy)));
-    public string YieldOnCost => _snapshot is null ? "-" : Formatters.Percent(CalculateRate(Sum(x => x.AnnualDividendForecastJpy), Sum(x => x.PurchaseTotalJpy)));
+    public string CurrentDividendYield => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : Formatters.Percent(CalculateRate(Sum(x => x.AnnualDividendForecastJpy), Sum(x => x.CurrentMarketValueJpy)));
+    public string YieldOnCost => _snapshot is null ? "-" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.Percent(CalculateRate(Sum(x => x.AnnualDividendForecastJpy), Sum(x => x.PurchaseTotalJpy)));
     public string ShareChangeRatio => _snapshot is null ? "-" : $"{_snapshot.ShareChangeRatio:N2}倍";
 
     public string CurrentPriceSource => _snapshot is null || string.IsNullOrWhiteSpace(_snapshot.Position.CurrentHolding.CurrentPriceSource)
         ? "未取得"
         : _snapshot.Position.CurrentHolding.CurrentPriceSource;
     public string CurrentPriceAcquiredAt => _snapshot is null || _snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt == DateTime.MinValue
-        ? "未取得"
+        ? _snapshot?.Position.CurrentHolding.CurrentPrice > 0m ? "時刻不明" : "未取得"
         : _snapshot.Position.CurrentHolding.CurrentPriceAcquiredAt.ToString("yyyy/MM/dd HH:mm");
     public string DividendInfoSource => _snapshot is null || string.IsNullOrWhiteSpace(_snapshot.Position.CurrentHolding.DividendInfoSource)
         ? "未取得"
@@ -103,8 +132,19 @@ public sealed class StockDetailViewModel : ObservableObject
         : _snapshot.Position.CurrentHolding.DividendInfoAcquiredAt.ToString("yyyy/MM/dd HH:mm");
 
     public string Story => _story;
-    public bool HasPositiveGain => _snapshot is not null && Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy) > 0m;
-    public bool HasNegativeGain => _snapshot is not null && Sum(x => x.CurrentMarketValueJpy) - Sum(x => x.PurchaseTotalJpy) < 0m;
+    public bool HasPositiveGain => _snapshot is not null && !HasUnknownPurchaseCost && !HasUnknownMarketValue && Sum(x => x.UnrealizedGainJpy) > 0m;
+    public bool HasNegativeGain => _snapshot is not null && !HasUnknownPurchaseCost && !HasUnknownMarketValue && Sum(x => x.UnrealizedGainJpy) < 0m;
+    private bool HasUnknownPurchaseCost => _snapshots.Any(x => !x.HasKnownPurchaseCostJpy);
+    private bool HasUnknownMarketValue => _snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy);
+    private string ReferencePrefix => _snapshots.Any(x => x.IsReferencePurchaseCostJpy) ? "概算 " : string.Empty;
+    public string ReferenceCostNote => _snapshots.Any(x => x.IsReferencePurchaseCostJpy)
+        ? "取得額は参考為替による換算値です。実際の円決済額・税務上の取得価額とは異なる場合があります。"
+        : string.Empty;
+    public string ReferenceCostSource => string.Join(" / ", _snapshots
+        .Where(x => x.IsReferencePurchaseCostJpy)
+        .Select(x => x.Position.Purchase.ReferenceAcquisitionSource)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct());
 
     public string FundName => _snapshot is null
         ? "-"
@@ -113,14 +153,16 @@ public sealed class StockDetailViewModel : ObservableObject
             : _snapshot.Position.MutualFund.FundName;
     public string FundAccountType => EmptyToDash(_snapshot?.Position.MutualFund.AccountType);
     public string FundUnitsHeld => _snapshot is null ? "-" : $"{Formatters.Number(Sum(x => x.Position.MutualFund.UnitsHeld))}口";
-    public string FundAverageCostNav => _snapshot is null ? "-" : FormatFundNav(WeightedFundNav(x => x.PurchaseTotalJpy), FundUnitBase);
+    public string FundAverageCostNav => _snapshot is null ? "-" : HasUnknownPurchaseCost ? "未確認" :
+        _snapshots.Any(x => x.Position.MutualFund.AverageCostNav <= 0m) ? "未確認" :
+        FormatFundNav(WeightedFundNav(x => x.PurchaseTotalJpy), FundUnitBase);
     public string FundCurrentNav => _snapshot is null || Sum(x => x.CurrentMarketValueJpy) <= 0m
         ? "基準価額未更新"
         : FormatFundNav(WeightedFundNav(x => x.CurrentMarketValueJpy), FundUnitBase);
-    public string FundAcquisitionAmount => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
-    public string FundMarketValue => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.CurrentMarketValueJpy));
-    public string FundUnrealizedGainLoss => _snapshot is null ? "-" : Formatters.SignedJpy(Sum(x => x.UnrealizedGainJpy));
-    public string FundUnrealizedGainLossRate => _snapshot is null ? "-" : Formatters.SignedPercent(CalculateRate(Sum(x => x.UnrealizedGainJpy), Sum(x => x.PurchaseTotalJpy)));
+    public string FundAcquisitionAmount => _snapshot is null ? "-" : HasUnknownPurchaseCost ? "未確認" : Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
+    public string FundMarketValue => CurrentMarketValueJpy;
+    public string FundUnrealizedGainLoss => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : Formatters.SignedJpy(Sum(x => x.UnrealizedGainJpy));
+    public string FundUnrealizedGainLossRate => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : Formatters.SignedPercent(CalculateRate(Sum(x => x.UnrealizedGainJpy), Sum(x => x.PurchaseTotalJpy)));
     public string FundNavDate => _snapshot is null
         ? "-"
         : _snapshots
@@ -128,22 +170,28 @@ public sealed class StockDetailViewModel : ObservableObject
             .Where(x => x != DateTime.MinValue)
             .DefaultIfEmpty(DateTime.MinValue)
             .Max() == DateTime.MinValue
-                ? "基準価額未更新"
+                ? _snapshots.Any(x => x.Position.MutualFund.CurrentNav > 0m) ? "時刻不明" : "基準価額未更新"
                 : _snapshots
                     .Select(x => x.Position.MutualFund.NavDate)
                     .Where(x => x != DateTime.MinValue)
                     .Max()
                     .ToString("yyyy/MM/dd");
-    public string FundNavSource => DistinctJoined(_snapshots.Select(x => x.Position.MutualFund.NavSource), "基準価額未更新");
+    public string FundNavSource => DistinctJoined(_snapshots.Select(x => x.Position.MutualFund.NavSource),
+        _snapshots.Any(x => x.Position.MutualFund.CurrentNav > 0m) ? "取得元不明" : "基準価額未更新");
     public string FundDistributionMethod => DistinctJoined(_snapshots.Select(x => x.Position.MutualFund.DistributionMethod), "-");
     public string FundTotalPurchaseAmount => _snapshot is null
         ? "-"
+        : _snapshots.Any(x => x.Position.MutualFund.TotalPurchaseAmount <= 0m && !x.HasKnownPurchaseCostJpy)
+            ? "未確認"
         : Formatters.Jpy(Sum(x => x.Position.MutualFund.TotalPurchaseAmount > 0m
             ? x.Position.MutualFund.TotalPurchaseAmount
             : x.PurchaseTotalJpy));
     public string FundTotalSaleAmount => _snapshot is null ? "-" : Formatters.Jpy(Sum(x => x.Position.MutualFund.TotalSaleAmount));
     public string FundTotalReturn => _snapshot is null
         ? "-"
+        : HasUnknownMarketValue ? "算出不可"
+        : _snapshots.Any(x => x.Position.MutualFund.TotalPurchaseAmount <= 0m && !x.HasKnownPurchaseCostJpy)
+            ? "未確認"
         : Formatters.SignedJpy(Sum(x => x.CurrentMarketValueJpy + x.Position.MutualFund.TotalSaleAmount -
             (x.Position.MutualFund.TotalPurchaseAmount > 0m ? x.Position.MutualFund.TotalPurchaseAmount : x.PurchaseTotalJpy)));
 
@@ -321,7 +369,9 @@ public sealed class StockDetailViewModel : ObservableObject
         _snapshots = snapshots;
         _snapshot = snapshots.FirstOrDefault();
         (_trades, _hasSyntheticInitialPositionTrades) = BuildDisplayTrades(snapshots, trades ?? Array.Empty<BrokerTrade>());
-        _story = story ?? "銘柄一覧から銘柄を選択してください。";
+        _story = (_snapshots.Any(x => x.IsReferencePurchaseCostJpy)
+            ? "以下の円建て取得額・損益は公表為替に基づく概算で、実際の円決済額や税務上の取得価額ではありません。 "
+            : string.Empty) + (story ?? "銘柄一覧から銘柄を選択してください。");
         UpdateChartReferenceValues();
         SetPriceChartMessage(_snapshot is null
             ? "銘柄を選択するとチャートを取得します。"

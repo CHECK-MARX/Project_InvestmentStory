@@ -1,5 +1,8 @@
+using InvestmentStory.Core.Models;
 using InvestmentStory.Core.Services;
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace InvestmentStory.Data;
 
@@ -16,17 +19,77 @@ public sealed class DatabaseInitializer
         using var connection = new SqliteConnection(CreateConnectionString(databasePath));
         connection.Open();
         Execute(connection, "PRAGMA foreign_keys = ON;");
+        CashLedgerRepository.EnsureSchema(connection, databasePath);
+        CashLedgerRepository.EnsurePerformanceSchema(connection, databasePath);
+        AllocationTargetRepository.EnsureSchema(connection, databasePath);
+        ReminderRepository.EnsureSchema(connection, databasePath);
+        CsvReviewDispositionRepository.EnsureSchema(connection, databasePath);
+        DividendReviewRepository.EnsureSchema(connection, databasePath);
+        NisaHistoryRepository.EnsureSchema(connection, databasePath);
         BackupBeforeDividendPurchasePlanMigrationIfNeeded(connection, databasePath);
         BackupBeforeDividendCalendarMigrationIfNeeded(connection, databasePath);
         BackupBeforeNetOnlyDividendMigrationIfNeeded(connection, databasePath);
+        BackupBeforeCsvChangeMigrationIfNeeded(connection, databasePath);
         CreateTables(connection);
         BackupBeforeSecurityMigrationIfNeeded(connection, databasePath);
+        BackupBeforeCostEvidenceMigrationIfNeeded(connection, databasePath);
         DropCsvIdempotencyIndexesBeforeMigration(connection);
         MigrateTables(connection);
+        MigrateBrokerTradeOccurrencesIfNeeded(connection, databasePath);
+        if (!ColumnExists(connection, "BrokerTrades", "SourceRowNumber"))
+        {
+            BackupDatabase(connection, databasePath, "before_trade_source_rows");
+            AddColumnIfMissing(connection, "BrokerTrades", "SourceRowNumber", "INTEGER NOT NULL DEFAULT 0");
+        }
         RepairCsvReimportDuplicates(connection, databasePath);
         BackfillInitialPositionTrades(connection, databasePath);
         CreateCsvIdempotencyIndexes(connection);
+        MigrateReviewTradeSourceRowsIfNeeded(connection, databasePath);
+        MigrateReviewTradeResolutionIfNeeded(connection, databasePath);
         BackfillCanonicalSecurityKeys(connection);
+        BackfillStockSectors(connection, databasePath);
+    }
+
+    private static void BackfillStockSectors(SqliteConnection connection, string databasePath)
+    {
+        var updates = new List<(int Id, string Sector, string Industry)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT Id, Ticker, AssetType, Sector, Industry FROM Stocks;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var stock = new Stock
+                {
+                    Id = reader.GetInt32(0),
+                    Ticker = reader.GetString(1),
+                    AssetType = reader.GetString(2),
+                    Sector = reader.GetString(3),
+                    Industry = reader.GetString(4)
+                };
+                var oldSector = stock.Sector;
+                var oldIndustry = stock.Industry;
+                StockSectorClassifier.FillMissingClassification(stock);
+                if (stock.Sector != oldSector || stock.Industry != oldIndustry)
+                    updates.Add((stock.Id, stock.Sector, stock.Industry));
+            }
+        }
+
+        if (updates.Count == 0) return;
+        BackupDatabase(connection, databasePath, "before_sector_classification");
+
+        using var transaction = connection.BeginTransaction();
+        foreach (var update in updates)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE Stocks SET Sector = $sector, Industry = $industry WHERE Id = $id;";
+            command.Parameters.AddWithValue("$sector", update.Sector);
+            command.Parameters.AddWithValue("$industry", update.Industry);
+            command.Parameters.AddWithValue("$id", update.Id);
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
     }
 
     internal static string CreateConnectionString(string databasePath)
@@ -98,6 +161,12 @@ public sealed class DatabaseInitializer
                 Shares REAL NOT NULL,
                 UnitPrice REAL NOT NULL,
                 ExchangeRate REAL NOT NULL,
+                AcquisitionAmountJpy REAL NOT NULL DEFAULT 0,
+                AcquisitionAmountSource TEXT NOT NULL DEFAULT '',
+                AcquisitionAmountConfirmedAt TEXT NOT NULL DEFAULT '',
+                ReferenceAcquisitionAmountJpy REAL NOT NULL DEFAULT 0,
+                ReferenceAcquisitionForeignAmount REAL NOT NULL DEFAULT 0,
+                ReferenceAcquisitionSource TEXT NOT NULL DEFAULT '',
                 ExchangeRateAcquiredAt TEXT NOT NULL DEFAULT '',
                 ExchangeRateSource TEXT NOT NULL DEFAULT '手入力',
                 ExchangeRateInputType TEXT NOT NULL DEFAULT '手入力',
@@ -373,8 +442,10 @@ public sealed class DatabaseInitializer
                 AfterTradeAverageCost REAL NOT NULL DEFAULT 0,
                 Source TEXT NOT NULL DEFAULT '',
                 SourceFile TEXT NOT NULL DEFAULT '',
+                OccurrenceIndex INTEGER NOT NULL DEFAULT 1,
+                SourceRowNumber INTEGER NOT NULL DEFAULT 0,
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source),
+                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source, OccurrenceIndex),
                 FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
             );
             """);
@@ -406,8 +477,15 @@ public sealed class DatabaseInitializer
     {
         if (!ColumnExists(connection, "Stocks", "CanonicalSecurityKey"))
         {
-            BackupDatabase(databasePath, "before_security_fix");
+            BackupDatabase(connection, databasePath, "before_security_fix");
         }
+    }
+
+    private static void BackupBeforeCostEvidenceMigrationIfNeeded(SqliteConnection connection, string databasePath)
+    {
+        if (!TableExists(connection, "Purchases") ||
+            ColumnExists(connection, "Purchases", "AcquisitionAmountSource")) return;
+        BackupDatabase(connection, databasePath, "before_cost_evidence");
     }
 
     private static void BackupBeforeDividendPurchasePlanMigrationIfNeeded(
@@ -418,7 +496,7 @@ public sealed class DatabaseInitializer
             (!TableExists(connection, "DividendPurchasePlans") ||
              !TableExists(connection, "DividendPurchasePlanItems")))
         {
-            BackupDatabase(databasePath, "before_dividend_purchase_plan");
+            BackupDatabase(connection, databasePath, "before_dividend_purchase_plan");
         }
     }
 
@@ -428,7 +506,7 @@ public sealed class DatabaseInitializer
     {
         if (TableExists(connection, "Stocks") && !TableExists(connection, "DividendCalendarEvents"))
         {
-            BackupDatabase(databasePath, "before_dividend_calendar");
+            BackupDatabase(connection, databasePath, "before_dividend_calendar");
         }
     }
 
@@ -442,16 +520,134 @@ public sealed class DatabaseInitializer
         count.CommandText = "SELECT COUNT(*) FROM DividendPayments WHERE SourceFile LIKE 'SBI配当CSV%';";
         if (Convert.ToInt32(count.ExecuteScalar()) == 0) return;
 
-        var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
-        var backupPath = Path.Combine(directory,
-            $"{Path.GetFileNameWithoutExtension(databasePath)}_{DateTime.Now:yyyyMMdd_HHmmss}_before_netonly{Path.GetExtension(databasePath)}");
-        using var destination = new SqliteConnection(CreateConnectionString(backupPath));
-        destination.Open();
-        connection.BackupDatabase(destination);
+        BackupDatabase(connection, databasePath, "before_netonly");
+    }
+
+    private static void BackupBeforeCsvChangeMigrationIfNeeded(SqliteConnection connection, string databasePath)
+    {
+        if (TableExists(connection, "CsvImportChangeRows") &&
+            !ColumnExists(connection, "CsvImportChangeRows", "RecordKind"))
+            BackupDatabase(connection, databasePath, "before_csv_change_details");
+    }
+
+    private static void MigrateBrokerTradeOccurrencesIfNeeded(SqliteConnection connection, string databasePath)
+    {
+        if (!TableExists(connection, "BrokerTrades") || ColumnExists(connection, "BrokerTrades", "OccurrenceIndex"))
+            return;
+
+        BackupDatabase(connection, databasePath, "before_trade_occurrences");
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TABLE BrokerTradesWithOccurrences (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                TradeDate TEXT NOT NULL,
+                SettlementDate TEXT NOT NULL,
+                Broker TEXT NOT NULL DEFAULT '',
+                AccountType TEXT NOT NULL DEFAULT 'Unknown',
+                CustodyType TEXT NOT NULL DEFAULT '',
+                TradeType TEXT NOT NULL DEFAULT '',
+                Quantity REAL NOT NULL DEFAULT 0,
+                SignedQuantity REAL NOT NULL DEFAULT 0,
+                UnitPrice REAL NOT NULL DEFAULT 0,
+                Currency TEXT NOT NULL DEFAULT 'JPY',
+                ExchangeRate REAL NOT NULL DEFAULT 1,
+                SettlementAmountJpy REAL NOT NULL DEFAULT 0,
+                FeeJpy REAL NOT NULL DEFAULT 0,
+                TaxJpy REAL NOT NULL DEFAULT 0,
+                RealizedGainLoss REAL NOT NULL DEFAULT 0,
+                RealizedGainLossJpy REAL NOT NULL DEFAULT 0,
+                AfterTradeQuantity REAL NOT NULL DEFAULT 0,
+                AfterTradeAverageCost REAL NOT NULL DEFAULT 0,
+                Source TEXT NOT NULL DEFAULT '',
+                SourceFile TEXT NOT NULL DEFAULT '',
+                OccurrenceIndex INTEGER NOT NULL DEFAULT 1,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source, OccurrenceIndex),
+                FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
+            );
+            INSERT INTO BrokerTradesWithOccurrences
+                (Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                 Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                 FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                 AfterTradeAverageCost, Source, SourceFile, OccurrenceIndex, CreatedAt)
+            SELECT Id, StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
+                   Quantity, SignedQuantity, UnitPrice, Currency, ExchangeRate, SettlementAmountJpy,
+                   FeeJpy, TaxJpy, RealizedGainLoss, RealizedGainLossJpy, AfterTradeQuantity,
+                   AfterTradeAverageCost, Source, SourceFile, 1, CreatedAt
+            FROM BrokerTrades;
+            DROP TABLE BrokerTrades;
+            ALTER TABLE BrokerTradesWithOccurrences RENAME TO BrokerTrades;
+            """;
+        command.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    private static void MigrateReviewTradeSourceRowsIfNeeded(SqliteConnection connection, string databasePath)
+    {
+        if (ColumnExists(connection, "CsvImportReviewRows", "SourceRowNumber")) return;
+        BackupDatabase(connection, databasePath, "before_trade_review_source_rows");
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TABLE CsvImportReviewRowsWithSources (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Broker TEXT NOT NULL,
+                Account TEXT NOT NULL,
+                Ticker TEXT NOT NULL,
+                TradeDate TEXT NOT NULL,
+                TradeType TEXT NOT NULL,
+                Quantity REAL NOT NULL,
+                SignedQuantity REAL NOT NULL,
+                UnitPrice REAL NOT NULL,
+                Currency TEXT NOT NULL,
+                Source TEXT NOT NULL,
+                SourceFile TEXT NOT NULL DEFAULT '',
+                SourceRowNumber INTEGER NOT NULL DEFAULT 0,
+                TradeIdentityKey TEXT NOT NULL DEFAULT '',
+                Reason TEXT NOT NULL,
+                Resolution TEXT NOT NULL DEFAULT '',
+                ResolvedAt TEXT NOT NULL DEFAULT '',
+                ResolutionBatchId TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity,
+                       UnitPrice, Currency, Source, SourceFile, SourceRowNumber, Reason)
+            );
+            INSERT INTO CsvImportReviewRowsWithSources
+                (Id, Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity,
+                 UnitPrice, Currency, Source, Reason, CreatedAt)
+            SELECT Id, Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity,
+                   UnitPrice, Currency, Source, Reason, CreatedAt
+            FROM CsvImportReviewRows;
+            DROP TABLE CsvImportReviewRows;
+            ALTER TABLE CsvImportReviewRowsWithSources RENAME TO CsvImportReviewRows;
+            """;
+        command.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    private static void MigrateReviewTradeResolutionIfNeeded(SqliteConnection connection, string databasePath)
+    {
+        if (ColumnExists(connection, "CsvImportReviewRows", "Resolution") &&
+            ColumnExists(connection, "CsvImportReviewRows", "TradeIdentityKey")) return;
+        BackupDatabase(connection, databasePath, "before_trade_review_resolution");
+        AddColumnIfMissing(connection, "CsvImportReviewRows", "Resolution", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportReviewRows", "ResolvedAt", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportReviewRows", "ResolutionBatchId", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportReviewRows", "TradeIdentityKey", "TEXT NOT NULL DEFAULT ''");
     }
 
     private static void MigrateTables(SqliteConnection connection)
     {
+        AddColumnIfMissing(connection, "Purchases", "AcquisitionAmountJpy", "REAL NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "Purchases", "AcquisitionAmountSource", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "Purchases", "AcquisitionAmountConfirmedAt", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "Purchases", "ReferenceAcquisitionAmountJpy", "REAL NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "Purchases", "ReferenceAcquisitionForeignAmount", "REAL NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "Purchases", "ReferenceAcquisitionSource", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Stocks", "AssetType", "TEXT NOT NULL DEFAULT 'Stock'");
         AddColumnIfMissing(connection, "Stocks", "CanonicalSecurityKey", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "Stocks", "AccountType", "TEXT NOT NULL DEFAULT 'Unknown'");
@@ -586,8 +782,9 @@ public sealed class DatabaseInitializer
                 AfterTradeAverageCost REAL NOT NULL DEFAULT 0,
                 Source TEXT NOT NULL DEFAULT '',
                 SourceFile TEXT NOT NULL DEFAULT '',
+                OccurrenceIndex INTEGER NOT NULL DEFAULT 1,
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source),
+                UNIQUE(StockId, TradeDate, SettlementDate, Broker, AccountType, TradeType, Quantity, UnitPrice, SettlementAmountJpy, Source, OccurrenceIndex),
                 FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
             );
             """);
@@ -701,7 +898,7 @@ public sealed class DatabaseInitializer
         var zeroPriceInboundCount = CountZeroPriceInboundEvents(connection);
         if (duplicatePositionGroups.Count > 0 || zeroPriceInboundCount > 0)
         {
-            BackupDatabase(databasePath);
+            BackupDatabase(connection, databasePath);
         }
 
         NormalizeZeroPriceInboundEvents(connection);
@@ -836,14 +1033,46 @@ public sealed class DatabaseInitializer
                 Result TEXT NOT NULL DEFAULT '',
                 ErrorSummary TEXT NOT NULL DEFAULT '',
                 BatchId TEXT NOT NULL DEFAULT '',
-                ParserVersion TEXT NOT NULL DEFAULT ''
+                ParserVersion TEXT NOT NULL DEFAULT '',
+                FormatVersion TEXT NOT NULL DEFAULT ''
             );
             """);
         AddColumnIfMissing(connection, "CsvImportLogs", "BatchId", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CsvImportLogs", "ParserVersion", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportLogs", "FormatVersion", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CsvImportLogs", "ParsedRowCount", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "CsvImportLogs", "PendingRowCount", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "CsvImportLogs", "ExcludedRowCount", "INTEGER NOT NULL DEFAULT 0");
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS CsvImportChangeRows (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                BatchId TEXT NOT NULL,
+                Source TEXT NOT NULL DEFAULT '',
+                Broker TEXT NOT NULL DEFAULT '',
+                Account TEXT NOT NULL DEFAULT '',
+                Ticker TEXT NOT NULL DEFAULT '',
+                RecordKind TEXT NOT NULL DEFAULT '保有',
+                EventDate TEXT NOT NULL DEFAULT '',
+                SourceRowNumber INTEGER NOT NULL DEFAULT 0,
+                Action TEXT NOT NULL DEFAULT '',
+                BeforeQuantity REAL NULL,
+                AfterQuantity REAL NULL,
+                BeforeExactCostJpy REAL NULL,
+                AfterExactCostJpy REAL NULL,
+                BeforeReferenceCostJpy REAL NULL,
+                AfterReferenceCostJpy REAL NULL,
+                BeforeAmountJpy REAL NULL,
+                AfterAmountJpy REAL NULL,
+                Reason TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS IX_CsvImportChangeRows_BatchId ON CsvImportChangeRows(BatchId);
+            """);
+        AddColumnIfMissing(connection, "CsvImportChangeRows", "RecordKind", "TEXT NOT NULL DEFAULT '保有'");
+        AddColumnIfMissing(connection, "CsvImportChangeRows", "EventDate", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CsvImportChangeRows", "SourceRowNumber", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "CsvImportChangeRows", "BeforeAmountJpy", "REAL NULL");
+        AddColumnIfMissing(connection, "CsvImportChangeRows", "AfterAmountJpy", "REAL NULL");
 
         Execute(connection, """
             CREATE TABLE IF NOT EXISTS CsvImportReviewRows (
@@ -858,9 +1087,28 @@ public sealed class DatabaseInitializer
                 UnitPrice REAL NOT NULL,
                 Currency TEXT NOT NULL,
                 Source TEXT NOT NULL,
+                SourceFile TEXT NOT NULL DEFAULT '',
+                SourceRowNumber INTEGER NOT NULL DEFAULT 0,
+                TradeIdentityKey TEXT NOT NULL DEFAULT '',
                 Reason TEXT NOT NULL,
+                Resolution TEXT NOT NULL DEFAULT '',
+                ResolvedAt TEXT NOT NULL DEFAULT '',
+                ResolutionBatchId TEXT NOT NULL DEFAULT '',
                 CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity, UnitPrice, Currency, Source, Reason)
+                UNIQUE(Broker, Account, Ticker, TradeDate, TradeType, Quantity, SignedQuantity,
+                       UnitPrice, Currency, Source, SourceFile, SourceRowNumber, Reason)
+            );
+            """);
+
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS CsvImportTradeDecisions (
+                SourceFile TEXT NOT NULL COLLATE NOCASE,
+                SourceRowNumber INTEGER NOT NULL,
+                TradeIdentityKey TEXT NOT NULL,
+                Resolution TEXT NOT NULL,
+                BatchId TEXT NOT NULL DEFAULT '',
+                UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (SourceFile, SourceRowNumber, TradeIdentityKey)
             );
             """);
 
@@ -999,7 +1247,7 @@ public sealed class DatabaseInitializer
             return;
         }
 
-        BackupDatabase(databasePath, "before_initial_position_backfill");
+        BackupDatabase(connection, databasePath, "before_initial_position_backfill");
         Execute(connection, """
             INSERT OR IGNORE INTO BrokerTrades
                 (StockId, TradeDate, SettlementDate, Broker, AccountType, CustodyType, TradeType,
@@ -1264,21 +1512,47 @@ public sealed class DatabaseInitializer
             ("$duplicateId", duplicateId));
     }
 
-    private static void BackupDatabase(string databasePath, string reason = "backup")
+    internal static void BackupDatabase(SqliteConnection source, string databasePath, string reason = "backup")
     {
         if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath))
-        {
-            return;
-        }
+            throw new FileNotFoundException("移行前バックアップの元DBがありません。", databasePath);
 
         var directory = Path.GetDirectoryName(databasePath) ?? string.Empty;
         var name = Path.GetFileNameWithoutExtension(databasePath);
         var extension = Path.GetExtension(databasePath);
         var suffix = string.IsNullOrWhiteSpace(reason) ? "backup" : reason;
-        var backupPath = Path.Combine(directory, $"{name}_{DateTime.Now:yyyyMMdd_HHmmss}_{suffix}{extension}");
-        if (!File.Exists(backupPath))
+        var backupPath = Path.Combine(directory,
+            $"{name}_{DateTime.Now:yyyyMMdd_HHmmss_fffffff}_{Guid.NewGuid():N}_{suffix}{extension}");
+        try
         {
-            File.Copy(databasePath, backupPath);
+            string schemaId;
+            using (var destination = new SqliteConnection(CreateConnectionString(backupPath)))
+            {
+                destination.Open();
+                source.BackupDatabase(destination);
+                using var check = destination.CreateCommand();
+                check.CommandText = "PRAGMA integrity_check;";
+                if (!string.Equals(check.ExecuteScalar()?.ToString(), "ok", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("移行前バックアップの整合性検査に失敗しました。");
+                schemaId = DatabaseSchemaIdentity.Compute(destination);
+            }
+            using var stream = File.OpenRead(backupPath);
+            var hash = Convert.ToHexString(SHA256.HashData(stream));
+            var metadata = new
+            {
+                CreatedAtUtc = DateTime.UtcNow,
+                AppVersion = typeof(DatabaseInitializer).Assembly.GetName().Version?.ToString() ?? "不明",
+                Reason = suffix,
+                Sha256 = hash,
+                SchemaId = schemaId
+            };
+            File.WriteAllText(backupPath + ".json", JsonSerializer.Serialize(metadata));
+        }
+        catch
+        {
+            if (File.Exists(backupPath)) File.Delete(backupPath);
+            if (File.Exists(backupPath + ".json")) File.Delete(backupPath + ".json");
+            throw;
         }
     }
 
@@ -1512,7 +1786,9 @@ public sealed class DatabaseInitializer
     private static void MergeDuplicateStocksByBrokerAndTicker(SqliteConnection connection, string ticker)
     {
         var rows = ReadStockMergeRows(connection, ticker);
-        foreach (var group in rows.GroupBy(x => SecuritySymbolNormalizer.NormalizeBroker(x.Broker)))
+        foreach (var group in rows.GroupBy(x => PositionIdentityService.BuildKey(
+                     x.Broker, ticker, x.AssetType, x.AccountType, x.CustodyType, x.Currency),
+                     StringComparer.OrdinalIgnoreCase))
         {
             var stocks = group.ToList();
             if (stocks.Count <= 1)
@@ -1543,7 +1819,8 @@ public sealed class DatabaseInitializer
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT s.Id, s.Broker, IFNULL(ch.CurrentShares, 0), IFNULL(ch.CurrentPrice, 0)
+            SELECT s.Id, s.Broker, s.AssetType, s.AccountType, s.CustodyType, s.Currency,
+                   IFNULL(ch.CurrentShares, 0), IFNULL(ch.CurrentPrice, 0)
             FROM Stocks s
             LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
             WHERE UPPER(s.Ticker) = UPPER($ticker);
@@ -1557,14 +1834,20 @@ public sealed class DatabaseInitializer
             rows.Add(new StockMergeRow(
                 reader.GetInt32(0),
                 reader.GetString(1),
-                Convert.ToDecimal(reader.GetDouble(2)),
-                Convert.ToDecimal(reader.GetDouble(3))));
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                Convert.ToDecimal(reader.GetDouble(6)),
+                Convert.ToDecimal(reader.GetDouble(7))));
         }
 
         return rows;
     }
 
-    private sealed record StockMergeRow(int Id, string Broker, decimal CurrentShares, decimal CurrentPrice);
+    private sealed record StockMergeRow(
+        int Id, string Broker, string AssetType, string AccountType, string CustodyType,
+        string Currency, decimal CurrentShares, decimal CurrentPrice);
 
     private static void AddColumnIfMissing(
         SqliteConnection connection,

@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows.Input;
+using System.Windows;
 using InvestmentStory.App.Infrastructure;
+using InvestmentStory.App.Services;
 using InvestmentStory.Core.Models;
 
 namespace InvestmentStory.App.ViewModels;
@@ -10,6 +13,10 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
     private readonly Func<AppSettings> _getSettings;
     private readonly Action<AppSettings> _saveSettings;
     private readonly Action _openCsvImport;
+    private readonly Action<string>? _openInboxCsv;
+    private CsvFolderMonitor? _folderMonitor;
+    private string _csvWatchFolder = string.Empty;
+    private CsvInboxFile? _selectedInboxFile;
     private string _currentMode = "CSV取込";
     private string _selectedMode = "CSV取込";
     private string _selectedMergePolicy = "証券会社データを正として上書き";
@@ -19,17 +26,30 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
     public BrokerIntegrationViewModel(
         Func<AppSettings> getSettings,
         Action<AppSettings> saveSettings,
-        Action openCsvImport)
+        Action openCsvImport,
+        Action<string>? openInboxCsv = null)
     {
         _getSettings = getSettings;
         _saveSettings = saveSettings;
         _openCsvImport = openCsvImport;
+        _openInboxCsv = openInboxCsv;
         SaveModeCommand = new RelayCommand(SaveMode);
         OpenCsvImportCommand = new RelayCommand(_openCsvImport);
+        SaveWatchFolderCommand = new RelayCommand(SaveWatchFolder);
+        OpenInboxCsvCommand = new RelayCommand(OpenInboxCsv, () => SelectedInboxFile is not null);
     }
 
     public ICommand SaveModeCommand { get; }
     public ICommand OpenCsvImportCommand { get; }
+    public ICommand SaveWatchFolderCommand { get; }
+    public RelayCommand OpenInboxCsvCommand { get; }
+    public ObservableCollection<CsvInboxFile> PendingCsvFiles { get; } = new();
+    public string CsvWatchFolder { get => _csvWatchFolder; set => SetProperty(ref _csvWatchFolder, value); }
+    public CsvInboxFile? SelectedInboxFile
+    {
+        get => _selectedInboxFile;
+        set { if (SetProperty(ref _selectedInboxFile, value)) OpenInboxCsvCommand.RaiseCanExecuteChanged(); }
+    }
 
     public string[] BrokerDataModes { get; } =
     {
@@ -110,6 +130,9 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
         SelectedMode = mode;
         SelectedMergePolicy = MergePolicies.Contains(settings.CsvMergePolicy)
             ? settings.CsvMergePolicy : MergePolicies[0];
+        if (!string.Equals(_folderMonitor?.Folder, settings.CsvWatchFolder, StringComparison.OrdinalIgnoreCase))
+            StartWatch(settings.CsvWatchFolder);
+        CsvWatchFolder = settings.CsvWatchFolder;
 
         ExistingRows.Clear();
         foreach (var position in positions.OrderBy(x => NormalizeTicker(x.Stock.Ticker)).ThenBy(x => x.Stock.Broker))
@@ -147,6 +170,66 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
         Message = $"連携方式を保存しました。既存手入力データの扱い: {SelectedMergePolicy}";
     }
 
+    private void SaveWatchFolder()
+    {
+        var folder = CsvWatchFolder.Trim();
+        if (folder.Length != 0 && !Directory.Exists(folder))
+        {
+            Message = "指定フォルダーが見つかりません。存在するフォルダーを選択してください。";
+            return;
+        }
+        try
+        {
+            var settings = _getSettings();
+            settings.CsvWatchFolder = folder.Length == 0 ? string.Empty : Path.GetFullPath(folder);
+            _saveSettings(settings);
+            StartWatch(settings.CsvWatchFolder);
+            CsvWatchFolder = settings.CsvWatchFolder;
+            Message = folder.Length == 0 ? "CSVフォルダー監視を停止しました。" :
+                "新しいCSVを検知したら候補に表示します。取込はプレビュー後に手動で確定してください。";
+        }
+        catch (Exception ex) { Message = $"フォルダー設定に失敗しました: {ex.Message}"; }
+    }
+
+    private void StartWatch(string folder)
+    {
+        _folderMonitor?.Dispose();
+        _folderMonitor = null;
+        PendingCsvFiles.Clear();
+        SelectedInboxFile = null;
+        if (string.IsNullOrWhiteSpace(folder)) return;
+        if (!Directory.Exists(folder)) { Message = "監視フォルダーが見つかりません。設定を確認してください。"; return; }
+        try
+        {
+            _folderMonitor = new CsvFolderMonitor(folder);
+            _folderMonitor.NewCsvDetected += path =>
+            {
+                void Add()
+                {
+                    if (PendingCsvFiles.Any(x => x.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase))) return;
+                    PendingCsvFiles.Insert(0, new CsvInboxFile(path, Path.GetFileName(path), DateTime.Now));
+                    Message = $"新しいCSVを検知しました: {Path.GetFileName(path)}。内容を確認してください。";
+                }
+                var dispatcher = Application.Current?.Dispatcher;
+                if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished ||
+                    dispatcher.CheckAccess()) Add();
+                else dispatcher.BeginInvoke((Action)Add);
+            };
+        }
+        catch (Exception ex) { Message = $"CSV監視を開始できません: {ex.Message}"; }
+    }
+
+    private void OpenInboxCsv()
+    {
+        if (SelectedInboxFile is null) return;
+        if (!File.Exists(SelectedInboxFile.FullPath))
+        {
+            Message = "選択したCSVが見つかりません。";
+            return;
+        }
+        (_openInboxCsv ?? (_ => _openCsvImport()))(SelectedInboxFile.FullPath);
+    }
+
     private static string BuildPlannedAction(StockPosition position)
     {
         var hasBroker = !string.IsNullOrWhiteSpace(position.Stock.Broker);
@@ -167,6 +250,11 @@ public sealed class BrokerIntegrationViewModel : ObservableObject
     {
         return ticker.Trim().ToUpperInvariant().Replace(".T", string.Empty, StringComparison.OrdinalIgnoreCase);
     }
+}
+
+public sealed record CsvInboxFile(string FullPath, string FileName, DateTime DetectedAt)
+{
+    public string DetectedAtDisplay => DetectedAt.ToString("yyyy/MM/dd HH:mm:ss");
 }
 
 public sealed class BrokerIntegrationExistingRowViewModel

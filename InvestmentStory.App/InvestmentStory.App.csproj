@@ -3,14 +3,17 @@
   <ItemGroup>
     <ProjectReference Include="..\InvestmentStory.Core\InvestmentStory.Core.csproj" />
     <ProjectReference Include="..\InvestmentStory.Data\InvestmentStory.Data.csproj" />
+    <PackageReference Include="PDFsharp-WPF" Version="6.2.4" />
+    <EmbeddedResource Include="Assets\Fonts\NotoSansJP-Regular.ttf" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
+    <ImplicitUsings>disable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
 </Project>

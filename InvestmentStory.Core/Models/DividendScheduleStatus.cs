@@ -7,7 +7,8 @@ public enum DividendScheduleStatus
     Estimated,
     MissedEligibility,
     NotAvailable,
-    OverdueUnmatched
+    OverdueUnmatched,
+    NeedsReview
 }
 
 public static class DividendScheduleStatusResolver

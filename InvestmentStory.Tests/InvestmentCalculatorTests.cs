@@ -8,6 +8,48 @@ public sealed class InvestmentCalculatorTests
     private readonly InvestmentCalculator _calculator = new();
 
     [Fact]
+    public void ClosedStockDoesNotContributeHistoricalCostOrLossToCurrentDashboard()
+    {
+        var active = _calculator.CreateSnapshot(CreateNvdaPosition());
+        var closedPosition = CreateNvdaPosition();
+        closedPosition.Stock.Id = 2;
+        closedPosition.Purchase.ExchangeRate = 0m;
+        closedPosition.Purchase.AcquisitionAmountJpy = 0m;
+        closedPosition.CurrentHolding.CurrentShares = 0m;
+        closedPosition.CurrentHolding.CurrentPrice = 0m;
+        var closed = _calculator.CreateSnapshot(closedPosition);
+
+        Assert.False(closed.HasKnownPurchaseCostJpy);
+        Assert.Equal(0m, closed.UnrealizedGainJpy);
+        Assert.Equal(0m, closed.UnrealizedGain);
+        var summary = _calculator.CreateDashboardSummary(
+            new[] { active, closed }, Array.Empty<DividendPayment>(), null, DateTime.Today);
+        Assert.Equal(0, summary.UnknownPurchaseCostPositionCount);
+        Assert.Equal(active.PurchaseTotalJpy, summary.TotalPurchaseAmountJpy);
+        Assert.Equal(active.UnrealizedGainJpy, summary.TotalUnrealizedGainJpy);
+        var history = new PortfolioAnalyticsService().CreatePortfolioSnapshot(
+            new[] { active, closed }, Array.Empty<DividendPayment>(), 0m, 160m, DateTime.Today);
+        Assert.Equal(active.PurchaseTotalJpy, history.TotalCostBasisJpy);
+        Assert.Equal(active.UnrealizedGainJpy, history.UnrealizedGainLossJpy);
+    }
+
+    [Fact]
+    public void ClosedFundDoesNotKeepAStaleMarketValueOrUnrealizedLoss()
+    {
+        var snapshot = _calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock { AssetType = AssetTypes.MutualFund, Currency = "JPY" },
+            MutualFund = new MutualFundHolding
+            {
+                UnitsHeld = 0m, AcquisitionAmount = 1000m, MarketValue = 2000m
+            }
+        });
+
+        Assert.Equal(0m, snapshot.CurrentMarketValueJpy);
+        Assert.Equal(0m, snapshot.UnrealizedGainJpy);
+    }
+
+    [Fact]
     public void CreateSnapshot_CalculatesSplitAdjustedMetrics()
     {
         var snapshot = _calculator.CreateSnapshot(CreateNvdaPosition());
@@ -37,6 +79,7 @@ public sealed class InvestmentCalculatorTests
         position.Purchase.Shares = 10m;
         position.Purchase.UnitPrice = 100m;
         position.Purchase.ExchangeRate = 100m;
+        position.Purchase.AcquisitionAmountJpy = 100_000m;
         position.CurrentHolding.CurrentShares = 10m;
         position.CurrentHolding.CurrentPrice = 150m;
         position.CurrentHolding.CurrentExchangeRate = 160m;
@@ -119,6 +162,31 @@ public sealed class InvestmentCalculatorTests
         Assert.Equal(1_669_087.3122m, snapshot.CurrentMarketValue);
         Assert.InRange(snapshot.UnrealizedGainJpy, 455_740m, 455_742m);
         Assert.Equal(37.56m, snapshot.UnrealizedGainRateJpy, precision: 2);
+    }
+
+    [Fact]
+    public void CreateSnapshot_DoesNotTreatUnknownFundCostAsZeroCostGain()
+    {
+        var snapshot = _calculator.CreateSnapshot(new StockPosition
+        {
+            Stock = new Stock { AssetType = AssetTypes.MutualFund, Currency = "JPY", Name = "投資信託" },
+            MutualFund = new MutualFundHolding
+            {
+                UnitsHeld = 10_000m, UnitBase = 10_000m, CurrentNav = 20_000m
+            }
+        });
+
+        Assert.Equal(20_000m, snapshot.CurrentMarketValueJpy);
+        Assert.False(snapshot.HasKnownPurchaseCostJpy);
+        Assert.Equal(0m, snapshot.UnrealizedGainJpy);
+        Assert.Equal(AcquisitionCostQuality.Unconfirmed, PositionEvidenceService.CostQuality(snapshot));
+        var row = new InvestmentStory.App.ViewModels.StockRowViewModel(snapshot);
+        Assert.Equal("未確認", row.FundAcquisitionAmount);
+        Assert.Equal("未確認", row.FundUnrealizedGainLoss);
+        var summary = _calculator.CreateDashboardSummary(new[] { snapshot }, Array.Empty<DividendPayment>(), null,
+            new DateTime(2026, 10, 18));
+        Assert.Equal(1, summary.UnknownPurchaseCostPositionCount);
+        Assert.Equal(0m, summary.TotalUnrealizedGainJpy);
     }
 
     [Fact]
@@ -298,7 +366,9 @@ public sealed class InvestmentCalculatorTests
                 PurchaseDate = new DateTime(2021, 1, 15),
                 Shares = 5m,
                 UnitPrice = 290m,
-                ExchangeRate = 160m
+                ExchangeRate = 160m,
+                AcquisitionAmountJpy = 232_000m,
+                AcquisitionAmountSource = "取引報告書"
             },
             Split = new StockSplit
             {

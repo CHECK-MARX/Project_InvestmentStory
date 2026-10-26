@@ -99,6 +99,7 @@ if (shouldRefreshDividendSchedules)
 }
 
 var result = new DatabaseAuditService().Audit(databasePath);
+static string FormatCompleteTotal(decimal? value) => value.HasValue ? value.Value.ToString("0.##") : "算出不可";
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.WriteLine($"Migration={(shouldMigrate ? "Executed" : "NotExecuted")}");
@@ -117,13 +118,24 @@ Console.WriteLine($"ZeroPriceInboundEvents={result.ZeroPriceInboundEvents}");
 Console.WriteLine($"StockSplitCandidates={result.StockSplitCandidates}");
 Console.WriteLine($"MissingTransactionHistoryPositions={result.MissingTransactionHistoryPositions}");
 Console.WriteLine($"UnknownCostPositions={result.UnknownCostPositions}");
+Console.WriteLine($"HistoricalUnknownCostPositions={result.HistoricalUnknownCostPositions}");
+Console.WriteLine($"UnknownMarketValuePositions={result.UnknownMarketValuePositions}");
+Console.WriteLine($"UnknownGainPositions={result.UnknownGainPositions}");
+Console.WriteLine($"KnownGainPositions={result.KnownGainPositions}");
+Console.WriteLine($"KnownMarketValueExcludedFromGain={result.KnownMarketValueExcludedFromGain:0.##}");
+Console.WriteLine($"ReferenceCostPositions={result.ReferenceCostPositions}");
+Console.WriteLine($"ReferenceCostSubtotal={result.ReferenceCostSubtotal:0.##}");
+Console.WriteLine($"AcquisitionDateReviewPositions={result.AcquisitionDateReviewPositions}");
 Console.WriteLine($"OrphanHoldings={result.OrphanHoldings}");
 Console.WriteLine($"OrphanDividends={result.OrphanDividends}");
 Console.WriteLine($"OrphanTrades={result.OrphanTrades}");
 Console.WriteLine($"SbiVSp500Rows={result.SbiVSp500Rows}");
-Console.WriteLine($"TotalAssetValue={result.TotalMarketValue:0.##}");
-Console.WriteLine($"TotalAcquisitionAmount={result.TotalCostBasis:0.##}");
-Console.WriteLine($"UnrealizedProfitLoss={result.UnrealizedProfitLoss:0.##}");
+Console.WriteLine($"TotalAssetValue={FormatCompleteTotal(result.TotalMarketValue)}");
+Console.WriteLine($"TotalAcquisitionAmount={FormatCompleteTotal(result.TotalCostBasis)}");
+Console.WriteLine($"UnrealizedProfitLoss={FormatCompleteTotal(result.UnrealizedProfitLoss)}");
+Console.WriteLine($"KnownMarketValueSubtotal={result.KnownMarketValueSubtotal:0.##}");
+Console.WriteLine($"KnownCostBasisSubtotal={result.KnownCostBasisSubtotal:0.##}");
+Console.WriteLine($"KnownGainSubtotal={result.KnownGainSubtotal:0.##}");
 Console.WriteLine($"DividendCount={result.DividendCount}");
 
 if (shouldPrintTradeSummary)

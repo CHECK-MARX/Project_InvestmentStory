@@ -23,7 +23,7 @@ public static class ThemeManager
 
         var replacement = new ResourceDictionary
         {
-            Source = new Uri(themePath, UriKind.Relative)
+            Source = new Uri($"pack://application:,,,/InvestmentStory.App;component/{themePath}", UriKind.Absolute)
         };
 
         if (existing is null)

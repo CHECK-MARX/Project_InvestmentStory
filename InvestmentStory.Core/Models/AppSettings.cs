@@ -9,6 +9,7 @@ public sealed class AppSettings
     public string ExchangeRateProvider { get; set; } = "Yahoo Finance";
     public string BrokerDataMode { get; set; } = "手入力";
     public string CsvMergePolicy { get; set; } = "証券会社データを正として上書き";
+    public string CsvWatchFolder { get; set; } = string.Empty;
     public string AlphaVantageApiKey { get; set; } = string.Empty;
     public string JQuantsApiKey { get; set; } = string.Empty;
     public int ApiTimeoutSeconds { get; set; } = 10;
@@ -17,7 +18,10 @@ public sealed class AppSettings
     public bool EnableApiResponseLog { get; set; }
     public string ThemeMode { get; set; } = "Light";
     public bool IsSidebarCollapsed { get; set; }
+    public bool IsPrivacyMode { get; set; }
+    public string DisplayDensity { get; set; } = "Standard";
     public string StockListDisplayMode { get; set; } = "基本";
+    public string StockListFilterJson { get; set; } = string.Empty;
     public string LastDashboardCompositionMode { get; set; } = "Country";
     public string LastOpenedPage { get; set; } = "Dashboard";
     public string MutualFundSimulationScopeKey { get; set; } = MutualFundSimulationScopeKeys.AllAccounts;

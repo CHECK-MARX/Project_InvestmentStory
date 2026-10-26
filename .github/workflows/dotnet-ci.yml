@@ -27,3 +27,91 @@ jobs:
 
       - name: Test
         run: dotnet test InvestmentStory.sln --configuration Release --no-build --verbosity normal
+
+  package-windows:
+    name: Windows ZIP and Installer
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/INBEST'
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    env:
+      PACKAGE_VERSION: 0.1.${{ github.run_number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish Windows application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish InvestmentStory.App/InvestmentStory.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=false "-p:Version=$env:PACKAGE_VERSION" --output artifacts/publish
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
+          if (-not (Test-Path 'artifacts/publish/InvestmentStory.App.exe')) { throw 'InvestmentStory.App.exe not found' }
+
+      - name: Block private files from distribution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $blocked = @(Get-ChildItem 'artifacts/publish' -Recurse -File | Where-Object {
+            $_.Extension -in @('.db', '.sqlite', '.sqlite3', '.csv', '.pfx', '.p12', '.pem', '.key') -or
+            $_.Name -match '(?i)\.db-(shm|wal|journal)$|\.db\.backup|\.sqlite\.backup|^\.env($|\.)|^appsettings\.local\.json$'
+          })
+          if ($blocked.Count -gt 0) {
+            $blocked | ForEach-Object { Write-Host "Blocked: $($_.FullName)" }
+            throw 'Publish folder contains sensitive or user-data files. Check packaging settings.'
+          }
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'artifacts/release' -Force | Out-Null
+          $zip = "artifacts/release/InvestmentStory-Windows-x64-$env:PACKAGE_VERSION.zip"
+          Compress-Archive -Path 'artifacts/publish/*' -DestinationPath $zip -CompressionLevel Optimal
+          if (-not (Test-Path $zip)) { throw 'ZIP was not created' }
+
+      - name: Create Inno Setup installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'ISCC.exe not found' }
+          & $iscc "/DMyAppVersion=$env:PACKAGE_VERSION" 'installer/InvestmentStory.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compiler failed' }
+          $setup = "artifacts/release/InvestmentStory-Setup-x64-$env:PACKAGE_VERSION.exe"
+          if (-not (Test-Path $setup)) { throw 'Installer was not created' }
+
+      - name: Generate SHA256 hashes
+        shell: pwsh
+        run: |
+          $checksums = @(Get-ChildItem 'artifacts/release' -File | Sort-Object Name | ForEach-Object {
+            '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          })
+          $checksums | Set-Content -Path 'artifacts/release/SHA256SUMS.txt' -Encoding ascii
+
+      - name: Upload distribution files
+        uses: actions/upload-artifact@v4
+        with:
+          name: InvestmentStory-Windows-${{ github.run_number }}
+          path: artifacts/release/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
