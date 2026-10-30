@@ -120,8 +120,9 @@
                                 Width="38"
                                 Padding="0"
                                 ToolTip="サイドバーを折りたたむ" />
-                        <TextBlock Text="Investment Story"
-                                   FontSize="22"
+                        <TextBlock Text="Investment&#10;Story"
+                                   FontSize="20"
+                                   LineHeight="22"
                                    FontWeight="Bold"
                                    Foreground="{DynamicResource PrimaryTextBrush}"
                                    VerticalAlignment="Center"
