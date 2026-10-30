@@ -169,10 +169,10 @@ public sealed class DashboardViewModel : ObservableObject
         {
             var coverage = PositionEvidenceCoverage.Build(_snapshots, DateTime.Today);
             return $"取得額: 確定 {coverage.ConfirmedCostCount} 件 / " +
-                   $"概算 {coverage.EstimatedCostCount} 件（評価額 {CoverageAmount(coverage.EstimatedCostMarketValueJpy)}） / " +
-                   $"未確認 {coverage.UnconfirmedCostCount} 件（損益集計対象外の評価額 {CoverageAmount(coverage.ExcludedMarketValueJpy)}） / " +
-                   $"評価額未取得 {coverage.UnknownMarketValueCount} 件 / " +
-                   $"株価・基準価額: 未取得 {coverage.MissingPriceCount} 件 / 更新遅れ {coverage.DelayedPriceCount} 件 / 時刻不明 {coverage.UnknownPriceTimeCount} 件 / " +
+                   $"概算 {coverage.EstimatedCostCount} 件（評価額 {CoverageAmount(coverage.EstimatedCostMarketValueJpy)}）{Environment.NewLine}" +
+                   $"取得額未確認 {coverage.UnconfirmedCostCount} 件（損益集計対象外の評価額 {CoverageAmount(coverage.ExcludedMarketValueJpy)}） / " +
+                   $"評価額未取得 {coverage.UnknownMarketValueCount} 件{Environment.NewLine}" +
+                   $"株価・基準価額: 未取得 {coverage.MissingPriceCount} 件 / 更新遅れ {coverage.DelayedPriceCount} 件 / 時刻不明 {coverage.UnknownPriceTimeCount} 件{Environment.NewLine}" +
                    $"為替: 未取得 {coverage.MissingFxCount} 件 / 更新遅れ {coverage.DelayedFxCount} 件 / 時刻不明 {coverage.UnknownFxTimeCount} 件";
         }
     }
