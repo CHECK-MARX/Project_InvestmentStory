@@ -70,10 +70,10 @@ public sealed class MonthlyDividendLineChartControl : FrameworkElement
             DrawText(dc, FormatAxis(value), 10, 2, y - 7, secondary);
         }
 
-        DrawSeries(dc, x => x.PreviousYearActualJpy, previous, 1.8, null);
-        DrawSeries(dc, x => x.MonthlyGoalJpy, goal, 1.8, DashStyles.Dash);
-        DrawSeries(dc, x => x.ForecastJpy, forecast, 2.2, DashStyles.Dash);
-        DrawSeries(dc, x => x.ActualJpy, actual, 2.6, null, IsActualPeriod);
+        DrawSeries(dc, x => x.HasPreviousYearRecord ? x.PreviousYearActualJpy : null, previous, 1.8, DashStyles.DashDot);
+        DrawSeries(dc, x => x.HasMonthlyGoal ? x.MonthlyGoalJpy : null, goal, 1.8, DashStyles.Dot);
+        DrawSeries(dc, x => x.HasForecastRecord ? x.ForecastJpy : null, forecast, 2.2, DashStyles.Dash);
+        DrawSeries(dc, x => IsActualPeriod(x) && x.HasActualRecord ? x.ActualJpy : null, actual, 2.6, null);
 
         for (var i = 0; i < _rows.Count; i++)
         {
@@ -88,33 +88,42 @@ public sealed class MonthlyDividendLineChartControl : FrameworkElement
         var hoverX = X(_hoverIndex);
         dc.DrawLine(new Pen(secondary, 1) { DashStyle = DashStyles.Dot },
             new Point(hoverX, _plot.Top), new Point(hoverX, _plot.Bottom));
-        DrawHoverPoint(dc, hoverX, row.ForecastJpy, forecast);
-        DrawHoverPoint(dc, hoverX, row.PreviousYearActualJpy, previous);
-        DrawHoverPoint(dc, hoverX, row.MonthlyGoalJpy, goal);
-        if (IsActualPeriod(row)) DrawHoverPoint(dc, hoverX, row.ActualJpy, actual);
+        if (row.HasForecastRecord) DrawHoverPoint(dc, hoverX, row.ForecastJpy, forecast);
+        if (row.HasPreviousYearRecord) DrawHoverPoint(dc, hoverX, row.PreviousYearActualJpy, previous);
+        if (row.HasMonthlyGoal) DrawHoverPoint(dc, hoverX, row.MonthlyGoalJpy, goal);
+        if (IsActualPeriod(row) && row.HasActualRecord) DrawHoverPoint(dc, hoverX, row.ActualJpy, actual);
         DrawHoverCard(dc, row, hoverX, actual, forecast, previous, goal);
     }
 
-    private void DrawSeries(DrawingContext dc, Func<MonthlyDividendBreakdownRowViewModel, decimal> getValue,
-        Brush brush, double thickness, DashStyle? dash, Func<MonthlyDividendBreakdownRowViewModel, bool>? include = null)
+    private void DrawSeries(DrawingContext dc, Func<MonthlyDividendBreakdownRowViewModel, decimal?> getValue,
+        Brush brush, double thickness, DashStyle? dash)
     {
-        var points = _rows.Select((row, index) => (row, index))
-            .Where(x => include?.Invoke(x.row) ?? true)
-            .Select(x => new Point(X(x.index), Y(getValue(x.row))))
-            .ToArray();
-        if (points.Length > 1)
+        var segment = new List<Point>();
+        void DrawSegment()
         {
-            var geometry = new StreamGeometry();
-            using (var context = geometry.Open())
+            if (segment.Count > 1)
             {
-                context.BeginFigure(points[0], false, false);
-                context.PolyLineTo(points.Skip(1).ToArray(), true, false);
+                var geometry = new StreamGeometry();
+                using (var context = geometry.Open())
+                {
+                    context.BeginFigure(segment[0], false, false);
+                    context.PolyLineTo(segment.Skip(1).ToArray(), true, false);
+                }
+                geometry.Freeze();
+                dc.DrawGeometry(null, new Pen(brush, thickness) { DashStyle = dash ?? DashStyles.Solid }, geometry);
             }
-            geometry.Freeze();
-            dc.DrawGeometry(null, new Pen(brush, thickness) { DashStyle = dash ?? DashStyles.Solid }, geometry);
+            foreach (var point in segment)
+                dc.DrawEllipse(brush, null, point, 3, 3);
+            segment.Clear();
         }
-        foreach (var point in points.Where(x => x.Y < _plot.Bottom - .5))
-            dc.DrawEllipse(brush, null, point, 3, 3);
+        for (var index = 0; index < _rows.Count; index++)
+        {
+            if (getValue(_rows[index]) is decimal value)
+                segment.Add(new Point(X(index), Y(value)));
+            else
+                DrawSegment();
+        }
+        DrawSegment();
     }
 
     private void DrawHoverPoint(DrawingContext dc, double x, decimal value, Brush brush) =>

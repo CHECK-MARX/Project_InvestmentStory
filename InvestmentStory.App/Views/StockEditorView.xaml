@@ -14,6 +14,11 @@
 
             <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource WarningBrush}" Margin="0,0,0,12" />
 
+            <TextBlock Text="手動修正の理由（既存銘柄の保存時に必須）" Style="{StaticResource LabelTextStyle}" />
+            <TextBox Text="{Binding ChangeReason, UpdateSourceTrigger=PropertyChanged}"
+                     Style="{StaticResource InputTextBoxStyle}" MaxLength="300"
+                     ToolTip="例: 証券会社の残高証明・取引報告書と照合して修正" />
+
             <TextBlock Text="銘柄情報" Style="{StaticResource SectionTitleStyle}" />
             <WrapPanel>
                 <StackPanel Width="220">

@@ -335,6 +335,8 @@ public sealed class BrokerHoldingMergeService
             changedFields.Add("参考取得額（取得条件変更のため解除）");
         }
         SetIfChanged(target.CurrentHolding.CurrentShares, source.Shares, value => target.CurrentHolding.CurrentShares = value, "現在保有株数", changedFields);
+        target.CurrentHolding.SourceFile = source.SourceFile;
+        target.CurrentHolding.SourceRowNumber = source.SourceRowNumber;
 
         if (source.AverageAcquisitionPrice > 0m)
         {
@@ -456,6 +458,8 @@ public sealed class BrokerHoldingMergeService
         target.Purchase.ExchangeRateInputType = "CSV";
 
         SetIfChanged(target.CurrentHolding.CurrentShares, unitsHeld, value => target.CurrentHolding.CurrentShares = value, "保有口数", changedFields);
+        target.CurrentHolding.SourceFile = source.SourceFile;
+        target.CurrentHolding.SourceRowNumber = source.SourceRowNumber;
         SetIfChanged(target.CurrentHolding.CurrentPrice, currentNav, value => target.CurrentHolding.CurrentPrice = value, "基準価額", changedFields);
         target.CurrentHolding.CurrentExchangeRate = 1m;
         target.CurrentHolding.ExchangeRateAcquiredAt = snapshotAt;
@@ -542,6 +546,8 @@ public sealed class BrokerHoldingMergeService
                 ExchangeRateInputType = "CSV",
                 CurrentPriceAcquiredAt = snapshotAt,
                 CurrentPriceSource = sourceLabel,
+                SourceFile = source.SourceFile,
+                SourceRowNumber = source.SourceRowNumber,
                 UpdatedAt = snapshotAt.Date
             }
         };
@@ -606,6 +612,8 @@ public sealed class BrokerHoldingMergeService
                     : "配当なし",
                 CurrentPriceAcquiredAt = navDate,
                 CurrentPriceSource = string.IsNullOrWhiteSpace(source.NavSource) ? sourceLabel : source.NavSource,
+                SourceFile = source.SourceFile,
+                SourceRowNumber = source.SourceRowNumber,
                 UpdatedAt = snapshotAt.Date
             },
             MutualFund = new MutualFundHolding
@@ -696,6 +704,8 @@ public sealed class BrokerHoldingMergeService
                 CurrentPriceSource = source.CurrentHolding.CurrentPriceSource,
                 DividendInfoAcquiredAt = source.CurrentHolding.DividendInfoAcquiredAt,
                 DividendInfoSource = source.CurrentHolding.DividendInfoSource,
+                SourceFile = source.CurrentHolding.SourceFile,
+                SourceRowNumber = source.CurrentHolding.SourceRowNumber,
                 UpdatedAt = source.CurrentHolding.UpdatedAt
             },
             MutualFund = new MutualFundHolding

@@ -72,6 +72,23 @@
                         </DataGrid>
                     </StackPanel>
                 </Expander>
+                <Expander Header="比較指数（任意・同一期間の実測値）" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="期首・期末の日付は上の運用成績と共通です。公表値の出所を記録してください。価格指数や税引前配当込み指数は、税引後配当を含む運用成績と直接比較しません。外貨指数は上の為替欄で両時点の円換算根拠を指定します。"
+                                   Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8" />
+                        <UniformGrid Columns="2">
+                            <StackPanel><TextBlock Text="指数名" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding BenchmarkName, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                            <StackPanel><TextBlock Text="指数の通貨（例 JPY、USD）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding BenchmarkCurrency, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期首の指数値" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding BenchmarkOpening, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                            <StackPanel><TextBlock Text="期末の指数値" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding BenchmarkClosing, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="両時点の公表値・配当・税の扱いと出所" Style="{StaticResource LabelTextStyle}" />
+                        <TextBox Text="{Binding BenchmarkEvidence, UpdateSourceTrigger=PropertyChanged}" />
+                        <CheckBox IsChecked="{Binding BenchmarkIncludesNetDividends}" Margin="0,5"><TextBlock Text="税引後配当込みの指数で、運用側の配当条件と照合した" TextWrapping="Wrap" /></CheckBox>
+                        <CheckBox IsChecked="{Binding BenchmarkSourceConfirmed}" Margin="0,5"><TextBlock Text="指定期間の両時点の実測値・通貨・出所を確認した" TextWrapping="Wrap" /></CheckBox>
+                        <CheckBox IsChecked="{Binding BenchmarkIsHistoricalEstimate}" Margin="0,5"><TextBlock Text="遡及推計値を含む（比較差は表示しない）" TextWrapping="Wrap" /></CheckBox>
+                    </StackPanel>
+                </Expander>
                 <WrapPanel Margin="0,0,0,12">
                     <Button Content="3. 条件を確認して計算" Command="{Binding CalculateCommand}" Style="{StaticResource ActionButtonStyle}" />
                     <Button Content="結果と根拠を保存" Command="{Binding SaveCommand}" Style="{StaticResource SecondaryButtonStyle}" />
@@ -100,6 +117,11 @@
                     <TextBlock Text="修正ディーツ法（概算・期間）" Style="{StaticResource LabelTextStyle}" />
                     <TextBlock Text="{Binding Dietz}" FontSize="26" />
                     <TextBlock Text="{Binding Result.ModifiedDietz.Status}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,8" />
+                    <TextBlock Text="比較指数の期間収益率（円換算）" Style="{StaticResource LabelTextStyle}" />
+                    <TextBlock Text="{Binding BenchmarkPeriodReturn}" FontSize="22" />
+                    <TextBlock Text="運用TWRとの差（パーセントポイント）" Style="{StaticResource LabelTextStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="{Binding BenchmarkDifference}" FontSize="22" />
+                    <TextBlock Text="{Binding Result.Benchmark.Status}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,4,0,8" />
                     <TextBlock Text="XIRRの年率と、TWR・修正ディーツ法の期間率はそのまま比較できません。短期間の年率は大きく振れます。入力根拠に基づく参考成績で、税務用の確定損益ではありません。"
                                TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" />
                 </StackPanel>

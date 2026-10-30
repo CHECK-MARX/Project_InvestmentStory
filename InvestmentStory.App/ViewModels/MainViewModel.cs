@@ -19,8 +19,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly DataQualityService _dataQualityService = new();
     private readonly MutualFundAssetSimulationService _mutualFundAssetSimulationService = new();
     private readonly IExchangeRateService _exchangeRateService;
-    private readonly IMarketDataService _marketDataService = new MarketDataProviderFactory();
-    private readonly IPriceHistoryService _priceHistoryService = new YahooFinancePriceHistoryService();
+    private readonly IMarketDataService _marketDataService;
+    private readonly IPriceHistoryService _priceHistoryService;
     private readonly IFundMarketDataService _fundMarketDataService = new SbiFundMarketDataService();
     private readonly IStockLookupService _stockLookupService = new CompositeStockLookupService(
         new LocalStockLookupService(),
@@ -39,6 +39,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _isSampleMode;
     private bool _startupDividendVerificationStarted;
     private ExchangeRateQuote? _cashValuationQuote;
+    private readonly HashSet<int> _failedMarketStockIds = new();
 
     private static readonly IReadOnlyDictionary<string, (decimal Price, decimal AnnualDividend)> SampleQuotes =
         new Dictionary<string, (decimal Price, decimal AnnualDividend)>(StringComparer.OrdinalIgnoreCase)
@@ -57,7 +58,9 @@ public sealed class MainViewModel : ObservableObject
             ["AMD"] = (563m, 0m)
         };
 
-    public MainViewModel(InvestmentStoryRepository? normalRepository = null)
+    public MainViewModel(InvestmentStoryRepository? normalRepository = null,
+        IExchangeRateService? exchangeRateService = null, IMarketDataService? marketDataService = null,
+        IPriceHistoryService? priceHistoryService = null)
     {
         _normalRepository = normalRepository ?? new InvestmentStoryRepository();
         _normalRepository.Initialize();
@@ -68,11 +71,15 @@ public sealed class MainViewModel : ObservableObject
         _isPrivacyMode = settings.IsPrivacyMode;
         _displayDensity = UiDensityManager.Normalize(settings.DisplayDensity);
         UiDensityManager.Apply(_displayDensity);
-        _exchangeRateService = new ExchangeRateProviderFactory(() => _repository.GetSettings());
+        _exchangeRateService = exchangeRateService ?? new ExchangeRateProviderFactory(() => _repository.GetSettings());
+        _marketDataService = marketDataService ?? new MarketDataProviderFactory();
+        _priceHistoryService = priceHistoryService ?? new YahooFinancePriceHistoryService();
 
         Dashboard = new DashboardViewModel(RecordCurrentPortfolioSnapshot, OpenTodayReview, OpenTodayReviewItem);
         Performance = new PerformanceViewModel(() => new CashLedgerRepository(_repository.DatabasePath));
         Allocation = new AllocationViewModel(() => new AllocationTargetRepository(_repository.DatabasePath));
+        FundExposure = new FundExposureViewModel(() => new FundDisclosureRepository(_repository.DatabasePath));
+        ScenarioComparison = new ScenarioComparisonViewModel(() => new ScenarioComparisonRepository(_repository.DatabasePath));
         Nisa = new NisaViewModel(() => new NisaHistoryRepository(_repository.DatabasePath));
         Reminders = new ReminderViewModel(
             () => new ReminderRepository(_repository.DatabasePath),
@@ -106,8 +113,29 @@ public sealed class MainViewModel : ObservableObject
                 _repository.SaveSettings(current);
             });
         StockList.SelectedDisplayMode = settings.StockListDisplayMode;
-        StockEditor = new StockEditorViewModel(SaveStock, DeleteStock);
-        StockDetail = new StockDetailViewModel();
+        StockEditor = new StockEditorViewModel(SaveStock, DeleteStock,
+            preview => MessageBox.Show(preview, "手動修正の確認",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes);
+        StockDetail = new StockDetailViewModel(action =>
+        {
+            new CorporateActionRepository(_repository.DatabasePath).Append(action);
+            UpdateStockDetail(_currentDetailSnapshots);
+        }, (entry, reason) =>
+        {
+            if (MessageBox.Show(
+                    $"履歴ID {entry.Id} の変更前の数量・原価・口座へ戻します。\n理由: {reason}\n新しい監査履歴を残して反映しますか？",
+                    "手動変更の再調整", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return false;
+            _repository.RevertPositionChange(entry.Id, reason);
+            LoadData();
+            return true;
+        }, (stockId, asOf) => new CorporateActionRepository(_repository.DatabasePath)
+            .GetBalance(stockId, asOf),
+            (candidate, decision, reason) =>
+            {
+                new MarketAnomalyRepository(_repository.DatabasePath).Review(candidate.Id, decision, reason);
+                UpdateStockDetail(_currentDetailSnapshots);
+            }, candidateId => new MarketAnomalyRepository(_repository.DatabasePath).GetDecisions(candidateId));
         StockDetail.PriceChartRefreshRequested += (_, _) => RefreshSelectedDetailChart();
         Dividends = new DividendsViewModel(
             SaveDividend,
@@ -229,6 +257,16 @@ public sealed class MainViewModel : ObservableObject
             Allocation.Load(_snapshots);
             Navigate(Allocation, "資産配分目標");
         });
+        ShowFundExposureCommand = new RelayCommand(() =>
+        {
+            FundExposure.Load(_snapshots);
+            Navigate(FundExposure, "ETF・投信の内訳");
+        });
+        ShowScenarioComparisonCommand = new RelayCommand(() =>
+        {
+            ScenarioComparison.Load(_snapshots);
+            Navigate(ScenarioComparison, "シナリオ比較");
+        });
         ShowNisaCommand = new RelayCommand(() =>
         {
             Nisa.Load(_snapshots);
@@ -246,10 +284,15 @@ public sealed class MainViewModel : ObservableObject
             Navigate(Settings, "設定");
         });
         RefreshCommand = new RelayCommand(LoadData);
+        RefreshDetailMarketDataCommand = new RelayCommand(
+            () => RefreshMarketData(_currentDetailSnapshots, missingOnly: false));
+        RetryFailedMarketDataCommand = new RelayCommand(RetryFailedMarketData,
+            () => _failedMarketStockIds.Count > 0);
         ToggleSidebarCommand = new RelayCommand(ToggleSidebar);
         TogglePrivacyModeCommand = new RelayCommand(TogglePrivacyMode);
         ToggleSampleModeCommand = new RelayCommand(ToggleSampleMode);
         ResetSampleDataCommand = new RelayCommand(ResetSampleData);
+        Onboarding = new OnboardingViewModel(ToggleSampleMode, OpenCsvImportSafely, ShowSimpleRegistration);
 
         if (DataDisplayModes.IsSample(settings.DataDisplayMode))
         {
@@ -257,12 +300,17 @@ public sealed class MainViewModel : ObservableObject
         }
 
         LoadData();
+        if (!IsSampleMode && _normalRepository.GetPositions().Count == 0)
+            Navigate(Onboarding, "はじめに");
     }
 
     public DashboardViewModel Dashboard { get; }
+    public OnboardingViewModel Onboarding { get; }
     public CashLedgerViewModel CashLedger { get; }
     public PerformanceViewModel Performance { get; }
     public AllocationViewModel Allocation { get; }
+    public FundExposureViewModel FundExposure { get; }
+    public ScenarioComparisonViewModel ScenarioComparison { get; }
     public NisaViewModel Nisa { get; }
     public ReminderViewModel Reminders { get; }
     public event Action? DataRefreshed;
@@ -291,11 +339,15 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ShowCashLedgerCommand { get; }
     public ICommand ShowPerformanceCommand { get; }
     public ICommand ShowAllocationCommand { get; }
+    public ICommand ShowFundExposureCommand { get; }
+    public ICommand ShowScenarioComparisonCommand { get; }
     public ICommand ShowNisaCommand { get; }
     public ICommand ShowRemindersCommand { get; }
     public ICommand ShowBrokerIntegrationCommand { get; }
     public ICommand ShowSettingsCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand RefreshDetailMarketDataCommand { get; }
+    public ICommand RetryFailedMarketDataCommand { get; }
     public ICommand ToggleSidebarCommand { get; }
     public ICommand TogglePrivacyModeCommand { get; }
     public ICommand ToggleSampleModeCommand { get; }
@@ -418,9 +470,29 @@ public sealed class MainViewModel : ObservableObject
             new DividendReviewRepository(repository.DatabasePath).GetLatestDecisions());
         var goal = repository.GetGoal(DateTime.Today.Year);
         var brokerTrades = repository.GetAllBrokerTrades();
+        IReadOnlyList<MonthEndPortfolioRecord> monthEndRecords = Array.Empty<MonthEndPortfolioRecord>();
+        var monthEndStatus = string.Empty;
+        try
+        {
+            var monthEndRepository = new MonthEndPortfolioRepository(repository.DatabasePath);
+            monthEndRepository.FreezePastMonthEnds(DateTime.Today);
+            if (MonthEndPortfolioService.IsMonthEnd(DateTime.Today))
+            {
+                var monthEndRecord = new MonthEndPortfolioService().Capture(DateTime.Today,
+                    snapshots, cashAssets, dividends, brokerTrades, usdJpyQuote);
+                monthEndRepository.SaveDraft(monthEndRecord);
+            }
+            monthEndRecords = monthEndRepository.GetRecords();
+        }
+        catch (Exception ex)
+        {
+            monthEndStatus = $"月末記録を読み込めませんでした（{ex.GetType().Name}）。DB監査・復元を確認してください。";
+        }
+        var hasUnverifiedTradeCost = brokerTrades.Any(x =>
+            x.TradeType is "TransferIn" or "StockSplitCandidate");
         var realizedGainLossJpy = brokerTrades.Sum(x => x.RealizedGainLossJpy);
         var returnSummary = _portfolioAnalyticsService.BuildReturnSummary(snapshots, dividends, realizedGainLossJpy);
-        if (snapshots.Where(x => PositionEvidenceService.IsActiveHolding(x.Position))
+        if (!hasUnverifiedTradeCost && snapshots.Where(x => PositionEvidenceService.IsActiveHolding(x.Position))
             .All(x => x.HasKnownCurrentMarketValueJpy && x.HasKnownPurchaseCostJpy))
         {
             repository.SavePortfolioSnapshot(_portfolioAnalyticsService.CreatePortfolioSnapshot(
@@ -435,7 +507,8 @@ public sealed class MainViewModel : ObservableObject
             DateTime.Today,
             IsLiveExchangeRate(usdJpyQuote) ? usdJpyQuote : null,
             returnSummary,
-            comparison);
+            comparison,
+            hasUnverifiedTradeCost);
         var monthly = _calculator.AggregateMonthlyDividends(dividends, DateTime.Today.Year);
         var yearly = _calculator.AggregateYearlyDividends(dividends);
         var byStock = _calculator.AggregateDividendsByStock(dividends);
@@ -457,13 +530,16 @@ public sealed class MainViewModel : ObservableObject
         {
             _snapshots = snapshots;
             if (ReferenceEquals(CurrentPage, Allocation)) Allocation.Load(snapshots);
+            if (ReferenceEquals(CurrentPage, FundExposure)) FundExposure.Load(snapshots);
+            if (ReferenceEquals(CurrentPage, ScenarioComparison)) ScenarioComparison.Load(snapshots);
             if (ReferenceEquals(CurrentPage, Nisa)) Nisa.Load(snapshots);
             if (ReferenceEquals(CurrentPage, Reminders)) Reminders.Load(presentNew: false);
             if (ReferenceEquals(CurrentPage, CsvReview)) CsvReview.Load();
             _cashValuationQuote = cashQuote;
             Dashboard.Update(summary, snapshots, portfolioSnapshots,
                 _repository.GetRecentCsvImportLogs(20).FirstOrDefault(x => x.Result == "Succeeded")?.ImportedAtUtc,
-                cashAssets, todayReview);
+                cashAssets, todayReview, usdJpyQuote, brokerTrades);
+            Dashboard.UpdateMonthEndRecords(monthEndRecords, monthEndStatus);
             StockList.Update(snapshots, dividends, brokerTrades);
             Dividends.Update(positions, dividends, goal, DateTime.Today);
             PassiveIncome.Update(summary, goal, monthly, yearly, byStock, monthlyBreakdown, dividendRankings);
@@ -480,6 +556,9 @@ public sealed class MainViewModel : ObservableObject
 
     private void RecordCurrentPortfolioSnapshot()
     {
+        if (_repository.GetAllBrokerTrades().Any(x =>
+                x.TradeType is "TransferIn" or "StockSplitCandidate"))
+            return;
         var dividends = _repository.GetDividendPayments();
         var realizedGainLossJpy = _repository.GetAllBrokerTrades().Sum(x => x.RealizedGainLossJpy);
         SaveCurrentPortfolioSnapshot(dividends, realizedGainLossJpy, GetUsdJpyRate());
@@ -611,7 +690,8 @@ public sealed class MainViewModel : ObservableObject
         decimal realizedGainLossJpy,
         ExchangeRateQuote usdJpyQuote)
     {
-        if (_snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy || !x.HasKnownPurchaseCostJpy))
+        if (_snapshots.Any(x => !x.HasKnownCurrentMarketValueJpy || !x.HasKnownPurchaseCostJpy) ||
+            _repository.GetAllBrokerTrades().Any(x => x.TradeType is "TransferIn" or "StockSplitCandidate"))
         {
             return;
         }
@@ -653,6 +733,12 @@ public sealed class MainViewModel : ObservableObject
         {
             repository.SaveDataQualityInfos(items);
         }
+        var anomalyService = new MarketAnomalyService();
+        var tradeAnomalies = tradesByStockId
+            .SelectMany(x => anomalyService.EvaluateTrades(x.Key, x.Value))
+            .ToList();
+        if (tradeAnomalies.Count > 0)
+            new MarketAnomalyRepository(repository.DatabasePath).RecordCandidates(tradeAnomalies);
     }
 
     private bool ApplyLatestExchangeRate(
@@ -828,7 +914,8 @@ public sealed class MainViewModel : ObservableObject
         Simulation.ReloadDividendPurchasePlan();
         Settings.Load();
         LoadData();
-        Navigate(Dashboard, "ダッシュボード");
+        Navigate(_normalRepository.GetPositions().Count == 0 ? Onboarding : Dashboard,
+            _normalRepository.GetPositions().Count == 0 ? "はじめに" : "ダッシュボード");
     }
 
     private static AppSettings CopySettings(AppSettings source) =>
@@ -913,6 +1000,8 @@ public sealed class MainViewModel : ObservableObject
 
     private void SaveStock(StockPosition position)
     {
+        if (string.IsNullOrWhiteSpace(position.ManualChangeReason))
+            position.ManualChangeReason = position.Stock.Id == 0 ? "画面から新規登録" : "画面から手動編集";
         var stockId = _repository.SavePosition(position);
         _selectedDetailStockId = stockId;
         _selectedDetailKey = null;
@@ -969,7 +1058,12 @@ public sealed class MainViewModel : ObservableObject
             snapshots,
             snapshots.Count == 1 ? _storyGenerator.Generate(snapshot) : BuildAggregateStoryForDisplay(snapshots),
             _repository.GetBrokerTrades(stockIds),
-            _repository.GetDataQualityInfos(stockIds));
+            _repository.GetDataQualityInfos(stockIds),
+            stockIds.SelectMany(_repository.GetPositionChangeAudits).OrderByDescending(x => x.Id).ToList(),
+            stockIds.SelectMany(id => new CorporateActionRepository(_repository.DatabasePath).GetForStock(id))
+                .OrderByDescending(x => x.EventDate).ThenByDescending(x => x.Id).ToList(),
+            stockIds.SelectMany(id => new MarketAnomalyRepository(_repository.DatabasePath).GetCandidates(id))
+                .OrderByDescending(x => x.Id).ToList());
         RefreshSelectedDetailChart();
     }
 
@@ -1216,6 +1310,12 @@ public sealed class MainViewModel : ObservableObject
         RefreshMarketData(_snapshots, missingOnly: true);
     }
 
+    private void RetryFailedMarketData()
+    {
+        var failed = _failedMarketStockIds.ToHashSet();
+        RefreshMarketData(_snapshots.Where(x => failed.Contains(x.Position.Stock.Id)), missingOnly: false);
+    }
+
     private void RefreshMarketData(IEnumerable<StockSnapshot> snapshots, bool missingOnly)
     {
         var targets = snapshots
@@ -1240,56 +1340,114 @@ public sealed class MainViewModel : ObservableObject
         var updated = 0;
         var calendarEventsSaved = 0;
         var failed = 0;
+        var reviewRequired = 0;
         var latestPriceAt = DateTime.MinValue;
         var sources = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
+        var failedIds = new HashSet<int>();
         foreach (var position in targets)
         {
             var symbol = ResolveMarketDataSymbol(position);
             if (string.IsNullOrWhiteSpace(symbol))
             {
                 failed++;
+                failedIds.Add(position.Stock.Id);
+                if (errors.Count < 3) errors.Add($"{position.Stock.Ticker}: 取得用コードなし");
                 continue;
             }
 
-            var result = _marketDataService.GetQuote(symbol, settings);
-            SaveApiFetchLogs(result.Logs);
-            if (!result.IsSuccess || result.Quote is null)
+            try
+            {
+                var result = _marketDataService.GetQuote(symbol, settings);
+                SaveApiFetchLogs(result.Logs);
+                if (!result.IsSuccess || result.Quote is null)
+                {
+                    failed++;
+                    failedIds.Add(position.Stock.Id);
+                    if (errors.Count < 3)
+                        errors.Add($"{position.Stock.Ticker}: 取得失敗（保存済みの最終値を維持）");
+                    continue;
+                }
+
+                var anomalies = new MarketAnomalyService().EvaluateQuote(position, result.Quote);
+                if (anomalies.Count > 0)
+                {
+                    var anomalyRepository = new MarketAnomalyRepository(_repository.DatabasePath);
+                    anomalyRepository.RecordCandidates(anomalies);
+                    // A review cannot make a price quoted in another currency compatible
+                    // with this holding. Correct the ticker/source or the registered currency first.
+                    if (anomalies.Any(x => x.Category == "通貨不一致" || !anomalyRepository.IsAccepted(x)))
+                    {
+                        reviewRequired++;
+                        failedIds.Add(position.Stock.Id);
+                        if (errors.Count < 3)
+                            errors.Add($"{position.Stock.Ticker}: 異常値候補の確認待ち（銘柄詳細を確認）");
+                        continue;
+                    }
+                }
+
+                calendarEventsSaved += _repository.SaveDividendCalendarEvents(
+                    position.Stock.Id,
+                    result.Quote.DividendEvents);
+
+                if (ApplyMarketQuote(position, result.Quote))
+                {
+                    _repository.SavePosition(position);
+                    updated++;
+                    if (position.CurrentHolding.CurrentPriceAcquiredAt > latestPriceAt)
+                        latestPriceAt = position.CurrentHolding.CurrentPriceAcquiredAt;
+                    if (!string.IsNullOrWhiteSpace(position.CurrentHolding.CurrentPriceSource))
+                        sources.Add(position.CurrentHolding.CurrentPriceSource);
+                }
+            }
+            catch (Exception ex)
             {
                 failed++;
-                if (errors.Count < 3)
-                {
-                    errors.Add($"{position.Stock.Ticker}: {result.ErrorMessage}");
-                }
-
-                continue;
-            }
-
-            calendarEventsSaved += _repository.SaveDividendCalendarEvents(
-                position.Stock.Id,
-                result.Quote.DividendEvents);
-
-            if (ApplyMarketQuote(position, result.Quote))
-            {
-                _repository.SavePosition(position);
-                updated++;
-                if (position.CurrentHolding.CurrentPriceAcquiredAt > latestPriceAt)
-                {
-                    latestPriceAt = position.CurrentHolding.CurrentPriceAcquiredAt;
-                }
-
-                if (!string.IsNullOrWhiteSpace(position.CurrentHolding.CurrentPriceSource))
-                {
-                    sources.Add(position.CurrentHolding.CurrentPriceSource);
-                }
+                failedIds.Add(position.Stock.Id);
+                var id = WriteMarketDiagnostic("株価取得または保存", position.Stock.Ticker, ex);
+                if (errors.Count < 3) errors.Add($"{position.Stock.Ticker}: 取得または保存失敗（診断ID {id}）");
             }
         }
 
-        LoadData();
+        foreach (var target in targets)
+            _failedMarketStockIds.Remove(target.Stock.Id);
+        _failedMarketStockIds.UnionWith(failedIds);
+        ((RelayCommand)RetryFailedMarketDataCommand).RaiseCanExecuteChanged();
+        try
+        {
+            LoadData();
+        }
+        catch (Exception ex)
+        {
+            var id = WriteMarketDiagnostic("保存後の画面更新", string.Empty, ex);
+            Dashboard.SetMarketRefreshStatus($"株価の保存処理は終了しましたが、画面更新に失敗しました。再読込してください。診断ID {id}");
+            StockList.Message = Dashboard.MarketRefreshStatus;
+            return;
+        }
         var errorText = errors.Count == 0 ? string.Empty : $" 失敗例: {string.Join(" / ", errors)}";
         var latestText = latestPriceAt == DateTime.MinValue ? string.Empty : $" 最終株価取得: {latestPriceAt:yyyy/MM/dd HH:mm}";
         var sourceText = sources.Count == 0 ? string.Empty : $" 取得元: {string.Join(", ", sources.Take(3))}";
-        StockList.Message = $"API更新を実行しました。銘柄更新 {updated}件、配当日程 {calendarEventsSaved}件、失敗 {failed}件。{latestText}{sourceText}{errorText}";
+        StockList.Message = $"API更新を実行しました。銘柄更新 {updated}件、配当日程 {calendarEventsSaved}件、失敗 {failed}件、異常値確認待ち {reviewRequired}件。{latestText}{sourceText}{errorText}";
+        Dashboard.SetMarketRefreshStatus(failed > 0 || reviewRequired > 0
+            ? $"株価更新: 取得・保存失敗 {failed}件 / 異常値確認待ち {reviewRequired}件。保存済みの最終値と取得日時を維持しています。確認後、対象のみ再試行できます。{errorText}"
+            : $"株価更新完了 {updated}件。{latestText}");
+    }
+
+    private static string WriteMarketDiagnostic(string stage, string ticker, Exception exception)
+    {
+        var id = Guid.NewGuid().ToString("N")[..10];
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "InvestmentStory", "diagnostics");
+            Directory.CreateDirectory(directory);
+            // Never write exception messages, URLs, headers or API keys to the diagnostic file.
+            File.WriteAllText(Path.Combine(directory, $"market_{id}.txt"),
+                $"日時: {DateTime.Now:O}{Environment.NewLine}処理: {stage}{Environment.NewLine}" +
+                $"銘柄: {ticker}{Environment.NewLine}例外種別: {exception.GetType().FullName}{Environment.NewLine}");
+        }
+        catch (Exception) { /* Diagnostics must not interrupt the UI. */ }
+        return id;
     }
 
     public async Task VerifyDividendSchedulesOnStartupAsync()
@@ -1596,7 +1754,20 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        _repository.SaveApiFetchLogs(logs);
+        var settings = _repository.GetSettings();
+        string Clean(string? value) => ApiDiagnosticRedactor.Redact(value,
+            new[] { settings.AlphaVantageApiKey, settings.JQuantsApiKey });
+        _repository.SaveApiFetchLogs(logs.Select(x => new ApiFetchLogEntry
+        {
+            ApiType = Clean(x.ApiType),
+            Provider = Clean(x.Provider),
+            Symbol = Clean(x.Symbol),
+            HttpStatusCode = x.HttpStatusCode,
+            IsSuccess = x.IsSuccess,
+            ErrorMessage = Clean(x.ErrorMessage),
+            FetchedAt = x.FetchedAt,
+            Summary = Clean(x.Summary)
+        }).ToList());
     }
 
     private IReadOnlyList<StockSnapshot> ResolveDetailSnapshots()

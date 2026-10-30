@@ -102,12 +102,12 @@ public sealed class DatabaseAuditService
                 WHERE SignedQuantity > 0
                   AND UnitPrice = 0
                   AND SettlementAmountJpy = 0
-                  AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+                  AND TradeType NOT IN ('TransferIn', 'OpeningBalance', 'StockSplit', 'StockSplitCandidate', 'ReverseSplit', 'UnknownAdjustment');
                 """),
             StockSplitCandidates = Scalar(connection, """
                 SELECT COUNT(*)
                 FROM BrokerTrades
-                WHERE TradeType = 'StockSplit'
+                WHERE TradeType IN ('StockSplit', 'StockSplitCandidate')
                    OR (SignedQuantity > 0 AND UnitPrice = 0 AND SettlementAmountJpy = 0);
                 """),
             MissingTransactionHistoryPositions = Scalar(connection, """

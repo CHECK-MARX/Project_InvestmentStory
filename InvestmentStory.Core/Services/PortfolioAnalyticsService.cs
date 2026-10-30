@@ -78,7 +78,11 @@ public sealed class PortfolioAnalyticsService
                 ActualJpy = actual.TryGetValue(month, out var actualAmount) ? actualAmount : 0m,
                 PlannedJpy = planned.TryGetValue(month, out var plannedAmount) ? plannedAmount : 0m,
                 PreviousYearActualJpy = previous.TryGetValue(month, out var previousAmount) ? previousAmount : 0m,
-                MonthlyGoalJpy = monthlyGoalJpy
+                MonthlyGoalJpy = monthlyGoalJpy,
+                HasActualRecord = actual.ContainsKey(month),
+                HasPlannedRecord = planned.ContainsKey(month),
+                HasPreviousYearRecord = previous.ContainsKey(month),
+                HasMonthlyGoal = monthlyGoalJpy > 0m
             })
             .ToList();
     }

@@ -505,7 +505,7 @@ public sealed class CsvImportSafetyTests
             Quantity = 10m, SignedQuantity = 10m, UnitPrice = 0m, Currency = "USD"
         };
         var ledger = new TradeLedgerService().BuildLedger(1, new[] { buy, inbound });
-        Assert.Equal("StockSplit", ledger[1].TradeType);
+        Assert.Equal("StockSplitCandidate", ledger[1].TradeType);
 
         Assert.Equal(2, TradeHistoryService.Merge(ledger, new[] { buy, inbound }, "EXMP").Count);
     }

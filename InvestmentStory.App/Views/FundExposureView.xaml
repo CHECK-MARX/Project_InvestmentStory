@@ -1,0 +1,81 @@
+<UserControl x:Class="InvestmentStory.App.Views.FundExposureView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <TextBlock Text="ETF・投資信託の公表内訳" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="内訳は公表資料の参考表示です。ファンドの保有評価額を組入先へ振り分け、ファンド本体を重ねて加算しません。直接保有株と同じ銘柄は直接分と間接分を別欄で表示します。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,12" />
+            <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,10" />
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="公表資料を登録する" Style="{StaticResource SectionTitleStyle}" />
+                    <UniformGrid Columns="2" Margin="0,8,0,0">
+                        <StackPanel><TextBlock Text="保有中のETF・投信ティッカー" Style="{StaticResource LabelTextStyle}" />
+                            <ComboBox ItemsSource="{Binding FundOptions}" IsEditable="True" MinWidth="220" HorizontalAlignment="Left"
+                                      Text="{Binding FundTicker, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="公表日" Style="{StaticResource LabelTextStyle}" />
+                            <DatePicker SelectedDate="{Binding PublishedDate}" /></StackPanel>
+                        <StackPanel><TextBlock Text="資料名・URLなどの出所" Style="{StaticResource LabelTextStyle}" />
+                            <TextBox Text="{Binding Source, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel><TextBlock Text="利用条件を確認した資料・用途" Style="{StaticResource LabelTextStyle}" />
+                            <TextBox Text="{Binding RightsNote, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                    </UniformGrid>
+                    <CheckBox IsChecked="{Binding IsFundConfirmed}" Margin="0,8,0,0"><TextBlock Text="対象がETFまたは投資信託であることを確認した" TextWrapping="Wrap" /></CheckBox>
+                    <CheckBox IsChecked="{Binding RightsConfirmed}" Margin="0,4,0,0"><TextBlock Text="公表資料の利用条件を確認し、この端末での手入力・参考表示に使える" TextWrapping="Wrap" /></CheckBox>
+                    <TextBlock Text="組入先の比率（%）。合計100%未満の残りは『内訳未公表』として残します。自動取得や第三者への送信は行いません。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,10,0,5" />
+                    <DataGrid ItemsSource="{Binding Constituents}" SelectedItem="{Binding SelectedConstituent}" Height="210"
+                              AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="組入先ティッカー" Binding="{Binding Ticker, UpdateSourceTrigger=PropertyChanged}" Width="150" />
+                            <DataGridTextColumn Header="組入先の名前" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                            <DataGridTextColumn Header="比率（%）" Binding="{Binding Weight, UpdateSourceTrigger=PropertyChanged}" Width="120" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <WrapPanel Margin="0,8,0,0">
+                        <Button Content="組入先を追加" Command="{Binding AddConstituentCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="選択行を除く" Command="{Binding RemoveConstituentCommand}" Style="{StaticResource SecondaryButtonStyle}" Margin="8,0,0,0" />
+                        <Button Content="公表内訳を新しい版として保存" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="直接保有とファンド内訳の照合" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="{Binding PortfolioValue}" Style="{StaticResource SubtleTextStyle}" Margin="0,6,0,8" />
+                    <DataGrid ItemsSource="{Binding Exposures}" Height="310" IsReadOnly="True" AutoGenerateColumns="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="銘柄・区分" Binding="{Binding Ticker}" Width="160" />
+                            <DataGridTextColumn Header="名前" Binding="{Binding Name}" Width="*" />
+                            <DataGridTextColumn Header="直接保有" Binding="{Binding Direct}" Width="125" />
+                            <DataGridTextColumn Header="ファンド内" Binding="{Binding Indirect}" Width="125" />
+                            <DataGridTextColumn Header="合計" Binding="{Binding Total}" Width="125" />
+                            <DataGridTextColumn Header="扱い" Binding="{Binding Kind}" Width="110" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <ItemsControl ItemsSource="{Binding Notes}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,2" /></DataTemplate></ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="保存した公表資料（訂正版も履歴に残す）" Style="{StaticResource SectionTitleStyle}" />
+                    <DataGrid ItemsSource="{Binding Disclosures}" SelectedItem="{Binding SelectedDisclosure}" Height="190"
+                              IsReadOnly="True" AutoGenerateColumns="False" Margin="0,8,0,0">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="ファンド" Binding="{Binding FundTicker}" Width="120" />
+                            <DataGridTextColumn Header="公表日" Binding="{Binding PublishedDate}" Width="110" />
+                            <DataGridTextColumn Header="カバー率" Binding="{Binding Coverage}" Width="100" />
+                            <DataGridTextColumn Header="出所" Binding="{Binding Source}" Width="*" />
+                            <DataGridTextColumn Header="利用条件" Binding="{Binding Rights}" Width="220" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Button Content="選択した版を編集欄に読み込む" Command="{Binding UseSelectedCommand}" Style="{StaticResource SecondaryButtonStyle}"
+                            HorizontalAlignment="Left" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

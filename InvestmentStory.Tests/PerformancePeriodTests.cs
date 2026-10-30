@@ -54,12 +54,55 @@ public sealed class PerformancePeriodTests : IDisposable
         Assert.NotNull(actual); Assert.InRange(actual.Value, expected - tolerance, expected + tolerance);
     }
 
+    private static PerformancePeriodInput WithBenchmark(PerformanceBenchmark benchmark, IReadOnlyList<PerformanceFx>? fx = null) => new()
+    {
+        StartDate = Start, EndDate = End, OpeningSecuritiesJpy = 1000m, ClosingSecuritiesJpy = 1100m,
+        OpeningEvidence = "期首残高明細", ClosingEvidence = "期末残高明細", SecuritiesConfirmed = true,
+        AllAccountsConfirmed = true, NoInKindTransfersConfirmed = true, Benchmark = benchmark, Fx = fx ?? []
+    };
+
     [Fact]
     public void NoFlowsProducesTenPercentWithoutAnnualizingPeriodTwr()
     {
         var result = _service.Calculate(Input(), Ledger());
         Assert.Empty(result.Problems); Assert.Equal(100m, result.ProfitJpy);
         Near(.1, result.TimeWeighted.Value); Near(.1, result.MoneyWeighted.Value); Near(.1, result.ModifiedDietz.Value);
+    }
+
+    [Fact]
+    public void BenchmarkComparisonRequiresMatchingPeriodNetDividendBasisAndMeasuredEvidence()
+    {
+        var comparable = new PerformanceBenchmark("税引後配当込み指数", Start, End, "JPY", 100m, 105m,
+            true, true, false, "両日の公表値と配当条件を確認");
+        var result = _service.Calculate(WithBenchmark(comparable), Ledger());
+        Near(.05, result.Benchmark.BenchmarkPeriodReturn);
+        Near(.05, result.Benchmark.Difference);
+
+        var mismatch = comparable with { EndDate = End.AddDays(-1) };
+        Assert.Null(_service.Calculate(WithBenchmark(mismatch), Ledger()).Benchmark.Difference);
+        Assert.Contains("期間", _service.Calculate(WithBenchmark(mismatch), Ledger()).Benchmark.Status);
+        Assert.Null(_service.Calculate(WithBenchmark(comparable with { IncludesNetDividends = false }), Ledger()).Benchmark.Difference);
+        Assert.Null(_service.Calculate(WithBenchmark(comparable with { IsHistoricalEstimate = true }), Ledger()).Benchmark.Difference);
+        Assert.Contains("遡及推計", _service.Calculate(WithBenchmark(comparable with { IsHistoricalEstimate = true }), Ledger()).Benchmark.Status);
+        Assert.Null(_service.Calculate(WithBenchmark(comparable with { SourceConfirmed = false }), Ledger()).Benchmark.Difference);
+        Assert.Null(PerformancePeriodService.CompareBenchmark(WithBenchmark(comparable), new(null, "評価時点の根拠不足")).Difference);
+    }
+
+    [Fact]
+    public void ForeignBenchmarkNeedsEndpointFxAndIsComparedInYen()
+    {
+        var benchmark = new PerformanceBenchmark("外貨の税引後配当込み指数", Start, End, "USD", 100m, 100m,
+            true, true, false, "両日の指数公表値");
+        var missing = _service.Calculate(WithBenchmark(benchmark), Ledger());
+        Assert.Empty(missing.Problems);
+        Assert.Null(missing.Benchmark.Difference);
+        Assert.Contains("為替根拠", missing.Benchmark.Status);
+
+        PerformanceFx[] fx = [new(Start, "USD", 100m, Start, "期首公表レート"),
+            new(End, "USD", 110m, End, "期末公表レート")];
+        var result = _service.Calculate(WithBenchmark(benchmark, fx), Ledger());
+        Near(.1, result.Benchmark.BenchmarkPeriodReturn);
+        Near(0, result.Benchmark.Difference);
     }
     [Theory]
     [InlineData(500, 0, 500)]
@@ -259,6 +302,18 @@ public sealed class PerformancePeriodTests : IDisposable
         Assert.Equal(100m, reloaded.Result.ProfitJpy); Assert.Empty(reloaded.LedgerEvidence.Operations);
         Assert.NotEqual(reloaded.LedgerFingerprint, PerformancePeriodService.Fingerprint(_repository.GetState(), End));
         Assert.Throws<InvalidOperationException>(() => _repository.SavePerformanceReport(input, PerformancePeriodService.Fingerprint(_repository.GetState(), End)));
+    }
+    [Fact]
+    public void SavedReportKeepsBenchmarkBasisAndComparison()
+    {
+        Seed(Ledger());
+        var benchmark = new PerformanceBenchmark("税引後配当込み指数", Start, End, "JPY", 100m, 105m,
+            true, true, false, "指数の公表資料");
+        var input = WithBenchmark(benchmark);
+        _repository.SavePerformanceReport(input, PerformancePeriodService.Fingerprint(_repository.GetState(), End));
+        var reloaded = Assert.Single(new CashLedgerRepository(_path).GetPerformanceReports());
+        Assert.Equal(benchmark, reloaded.Input.Benchmark);
+        Near(.05, reloaded.Result.Benchmark.Difference);
     }
     [Fact]
     public void MigrationAndRestoreIncludePerformanceReports()

@@ -19,11 +19,21 @@ public sealed class InvestmentStoryRepositoryTests
             {
                 Stock = new Stock { Ticker = "EX", Name = "Example", Currency = "USD" },
                 Purchase = new Purchase { PurchaseDate = DateTime.MinValue, Shares = 10m, UnitPrice = 20m },
-                CurrentHolding = new CurrentHolding { CurrentShares = 10m, CurrentPrice = 25m, CurrentExchangeRate = 150m }
+                CurrentHolding = new CurrentHolding
+                {
+                    CurrentShares = 10m, CurrentPrice = 25m, CurrentExchangeRate = 150m,
+                    SourceFile = @"C:\imports\holdings.csv", SourceRowNumber = 7
+                }
             });
 
             var position = Assert.Single(new InvestmentStoryRepository(databasePath).GetPositions());
             Assert.Equal(DateTime.MinValue, position.Purchase.PurchaseDate);
+            Assert.Equal(@"C:\imports\holdings.csv", position.CurrentHolding.SourceFile);
+            Assert.Equal(7, position.CurrentHolding.SourceRowNumber);
+            var quantityEvidence = new DataQualityService()
+                .BuildForPosition(position, new DateTime(2026, 10, 26))
+                .Single(item => item.FieldName == "保有数量");
+            Assert.Contains("holdings.csv:7行", quantityEvidence.SourceName);
             Assert.False(new InvestmentCalculator().CreateSnapshot(position).HasKnownPurchaseCostJpy);
         }
         finally

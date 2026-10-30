@@ -339,6 +339,167 @@
                     </ScrollViewer>
                 </TabItem>
 
+                <TabItem Header="変更・企業行動">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,16,4,4">
+                            <TextBlock Text="手動変更の履歴" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBlock Text="保存前の確認内容・変更理由・記録時の評価額差です。過去の変更は削除されません。"
+                                       TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="4,4,4,8" />
+                            <DataGrid ItemsSource="{Binding ManualChangeRows}"
+                                      SelectedItem="{Binding SelectedManualChange, Mode=TwoWay}"
+                                      Height="240" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="60" />
+                                    <DataGridTextColumn Header="記録日時" Binding="{Binding RecordedAt}" Width="145" />
+                                    <DataGridTextColumn Header="理由" Binding="{Binding Reason}" Width="190" />
+                                    <DataGridTextColumn Header="変更前" Binding="{Binding Before}" Width="*" />
+                                    <DataGridTextColumn Header="変更後" Binding="{Binding After}" Width="*" />
+                                    <DataGridTextColumn Header="確定原価差" Binding="{Binding ConfirmedCostChange}" Width="120" />
+                                    <DataGridTextColumn Header="評価額差" Binding="{Binding MarketValueChange}" Width="170" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Orientation="Horizontal" Margin="4,8,4,0">
+                                <TextBox Text="{Binding RevertReason, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource InputTextBoxStyle}" Width="360"
+                                         ToolTip="再調整する理由を入力" />
+                                <Button Content="選択した変更を再調整" Command="{Binding RevertManualChangeCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding ManualChangeMessage}" Foreground="{DynamicResource WarningBrush}"
+                                       TextWrapping="Wrap" Margin="4,4,4,8" />
+                            <TextBlock Text="移管・企業行動の専用台帳" Style="{StaticResource SectionTitleStyle}" Margin="0,18,0,0" />
+                            <TextBlock Text="開始残高と根拠が揃わない期間の口座別残高は確定できません。CSVの無償入庫は分割候補または移管要確認として扱います。"
+                                       TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="4,4,4,8" />
+                            <Expander Header="移管・分割などを根拠付きで記録" Margin="4,0,4,12">
+                                <StackPanel Margin="12">
+                                    <TextBlock Text="{Binding ActionCorrectionLabel}" Foreground="{DynamicResource WarningBrush}"
+                                               TextWrapping="Wrap" Margin="0,0,0,8" />
+                                    <TextBlock Text="複数口座を集約した表示では登録できません。対象口座を開いてから入力してください。開始残高の時点より前は再現できません。"
+                                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,8" />
+                                    <WrapPanel>
+                                        <StackPanel Width="160">
+                                            <TextBlock Text="発生日" Style="{StaticResource LabelTextStyle}" />
+                                            <DatePicker SelectedDate="{Binding ActionDate, Mode=TwoWay}" Margin="0,0,12,8" />
+                                        </StackPanel>
+                                        <StackPanel Width="175">
+                                            <TextBlock Text="種別" Style="{StaticResource LabelTextStyle}" />
+                                            <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding ActionKind, Mode=TwoWay}" Margin="0,0,12,8">
+                                                <ComboBoxItem Content="開始残高" Tag="OpeningBalance" />
+                                                <ComboBoxItem Content="口座移管" Tag="Transfer" />
+                                                <ComboBoxItem Content="分割・併合" Tag="StockSplit" />
+                                                <ComboBoxItem Content="銘柄コード変更" Tag="TickerChange" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Width="165">
+                                            <TextBlock Text="確認状態" Style="{StaticResource LabelTextStyle}" />
+                                            <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding ActionStatus, Mode=TwoWay}" Margin="0,0,12,8">
+                                                <ComboBoxItem Content="要確認" Tag="Pending" />
+                                                <ComboBoxItem Content="根拠確認済み" Tag="Confirmed" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Width="165">
+                                            <TextBlock Text="数量（分割は分割前）" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionQuantity, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="165">
+                                            <TextBlock Text="分割比率" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionSplitRatio, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="180">
+                                            <TextBlock Text="引継原価（円・不明は空欄）" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionCarriedCostJpy, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                    </WrapPanel>
+                                    <WrapPanel>
+                                        <StackPanel Width="205">
+                                            <TextBlock Text="元証券会社" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionSourceBroker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="170">
+                                            <TextBlock Text="元口座" Style="{StaticResource LabelTextStyle}" />
+                                            <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding ActionSourceAccount, Mode=TwoWay}" Margin="0,0,12,8">
+                                                <ComboBoxItem Content="不明" Tag="Unknown" /><ComboBoxItem Content="特定" Tag="Specific" />
+                                                <ComboBoxItem Content="一般" Tag="General" /><ComboBoxItem Content="NISA成長" Tag="NisaGrowth" />
+                                                <ComboBoxItem Content="NISA積立" Tag="NisaAccumulation" /><ComboBoxItem Content="旧NISA" Tag="NisaLegacy" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Width="205">
+                                            <TextBlock Text="先証券会社" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionDestinationBroker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="170">
+                                            <TextBlock Text="先口座" Style="{StaticResource LabelTextStyle}" />
+                                            <ComboBox SelectedValuePath="Tag" SelectedValue="{Binding ActionDestinationAccount, Mode=TwoWay}" Margin="0,0,12,8">
+                                                <ComboBoxItem Content="不明" Tag="Unknown" /><ComboBoxItem Content="特定" Tag="Specific" />
+                                                <ComboBoxItem Content="一般" Tag="General" /><ComboBoxItem Content="NISA成長" Tag="NisaGrowth" />
+                                                <ComboBoxItem Content="NISA積立" Tag="NisaAccumulation" /><ComboBoxItem Content="旧NISA" Tag="NisaLegacy" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </WrapPanel>
+                                    <WrapPanel>
+                                        <StackPanel Width="190">
+                                            <TextBlock Text="旧コード（銘柄変更時）" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionOldTicker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="190">
+                                            <TextBlock Text="新コード（銘柄変更時）" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionNewTicker, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="330">
+                                            <TextBlock Text="根拠（確認済みでは必須）" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionEvidence, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Width="220">
+                                            <TextBlock Text="メモ・保留理由" Style="{StaticResource LabelTextStyle}" />
+                                            <TextBox Text="{Binding ActionReason, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource InputTextBoxStyle}" />
+                                        </StackPanel>
+                                    </WrapPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="台帳に記録" Command="{Binding SaveCorporateActionCommand}"
+                                                Style="{StaticResource ActionButtonStyle}" />
+                                        <Button Content="下表の選択行を訂正" Command="{Binding LoadCorporateActionCorrectionCommand}"
+                                                Style="{StaticResource SecondaryButtonStyle}" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding CorporateActionMessage}" Foreground="{DynamicResource WarningBrush}"
+                                               TextWrapping="Wrap" Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Expander>
+                            <DataGrid ItemsSource="{Binding CorporateActionRows}"
+                                      SelectedItem="{Binding SelectedCorporateAction, Mode=TwoWay}"
+                                      Height="240" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="60" />
+                                    <DataGridTextColumn Header="発生日" Binding="{Binding EventDate}" Width="105" />
+                                    <DataGridTextColumn Header="種別" Binding="{Binding Kind}" Width="130" />
+                                    <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="110" />
+                                    <DataGridTextColumn Header="元口座" Binding="{Binding Source}" Width="170" />
+                                    <DataGridTextColumn Header="先口座" Binding="{Binding Destination}" Width="170" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="100" />
+                                    <DataGridTextColumn Header="引継原価" Binding="{Binding CarriedCost}" Width="120" />
+                                    <DataGridTextColumn Header="根拠" Binding="{Binding Evidence}" Width="*" />
+                                    <DataGridTextColumn Header="メモ・訂正元" Binding="{Binding Reason}" Width="190" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="口座別の時点残高" Style="{StaticResource SectionTitleStyle}" Margin="0,18,0,6" />
+                            <StackPanel Orientation="Horizontal" Margin="4,0,4,8">
+                                <DatePicker SelectedDate="{Binding HistoricalBalanceDate, Mode=TwoWay}" Width="150" />
+                                <Button Content="指定日の残高を再計算" Command="{Binding RefreshHistoricalBalanceCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding HistoricalBalanceStatus}" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource WarningBrush}" Margin="4,0,4,8" />
+                            <DataGrid ItemsSource="{Binding HistoricalBalanceRows}" Height="180" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="証券会社" Binding="{Binding Broker}" Width="*" />
+                                    <DataGridTextColumn Header="口座" Binding="{Binding Account}" Width="*" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="120" />
+                                    <DataGridTextColumn Header="引継原価" Binding="{Binding CostJpy}" Width="160" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
                 <TabItem Header="データ情報">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="4,16,4,4">
@@ -358,6 +519,33 @@
                                     </StackPanel>
                                 </Border>
                             </UniformGrid>
+                            <TextBlock Text="異常値候補と確認履歴" Style="{StaticResource SectionTitleStyle}" Margin="4,12,4,8" />
+                            <TextBlock Text="株価・通貨・取引の異常候補と根拠を表示します。取引データは自動修正しません。株価急変は確認後に再取得できます。通貨不一致は登録・取得元の修正が必要です。"
+                                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="4,0,4,8" />
+                            <DataGrid ItemsSource="{Binding MarketAnomalyRows}" SelectedItem="{Binding SelectedMarketAnomaly, Mode=TwoWay}"
+                                      Height="190" IsReadOnly="True" AutoGenerateColumns="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="検知日時" Binding="{Binding ObservedAt}" Width="140" />
+                                    <DataGridTextColumn Header="種類" Binding="{Binding Category}" Width="110" />
+                                    <DataGridTextColumn Header="前回 → 今回" Binding="{Binding Difference}" Width="140" />
+                                    <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="130" />
+                                    <DataGridTextColumn Header="根拠" Binding="{Binding Evidence}" Width="*" />
+                                    <DataGridTextColumn Header="確認事項" Binding="{Binding SuggestedCheck}" Width="220" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="選択した候補の判断履歴" Style="{StaticResource SubtleTextStyle}" Margin="4,8,4,3" />
+                            <ItemsControl ItemsSource="{Binding MarketAnomalyDecisionRows}" Margin="8,0,4,8" />
+                            <TextBox Text="{Binding MarketAnomalyReason, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="確認した根拠と判断理由を入力してください" Margin="4,0,4,6" />
+                            <StackPanel Orientation="Horizontal" Margin="4,0,4,6">
+                                <Button Content="異常として保留" Command="{Binding ConfirmMarketAnomalyCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,0" />
+                                <Button Content="確認済み・候補を除外" Command="{Binding AcceptMarketAnomalyCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,0" />
+                                <Button Content="この銘柄を再取得" Command="{Binding DataContext.RefreshDetailMarketDataCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Style="{StaticResource SecondaryButtonStyle}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding MarketAnomalyMessage}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="4,0,4,8" />
                             <TextBlock Text="項目別データ品質" Style="{StaticResource SectionTitleStyle}" Margin="4,12,4,8" />
                             <DataGrid ItemsSource="{Binding DataQualityRows}" Height="360">
                                 <DataGrid.Columns>

@@ -209,7 +209,8 @@ public sealed class InvestmentStoryRepository
                 s.CanonicalSecurityKey,
                 p.AcquisitionAmountJpy,
                 p.ReferenceAcquisitionAmountJpy, p.ReferenceAcquisitionForeignAmount, p.ReferenceAcquisitionSource,
-                p.AcquisitionAmountSource, p.AcquisitionAmountConfirmedAt
+                p.AcquisitionAmountSource, p.AcquisitionAmountConfirmedAt,
+                ch.SourceFile, ch.SourceRowNumber
             FROM Stocks s
             LEFT JOIN Purchases p ON p.Id = (SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1)
             LEFT JOIN StockSplits sp ON sp.Id = (SELECT Id FROM StockSplits WHERE StockId = s.Id ORDER BY SplitDate DESC, Id DESC LIMIT 1)
@@ -289,7 +290,9 @@ public sealed class InvestmentStoryRepository
                     CurrentPriceSource = GetString(reader, 39),
                     DividendInfoAcquiredAt = GetDateTimeOrDefault(reader, 40, DateTime.MinValue),
                     DividendInfoSource = GetString(reader, 41),
-                    UpdatedAt = GetDateOrToday(reader, 42)
+                    UpdatedAt = GetDateOrToday(reader, 42),
+                    SourceFile = GetString(reader, 69),
+                    SourceRowNumber = GetInt32OrZero(reader, 70)
                 },
                 MutualFund = new MutualFundHolding
                 {
@@ -343,6 +346,17 @@ public sealed class InvestmentStoryRepository
             }
         }
 
+        var beforeManualChange = string.IsNullOrWhiteSpace(position.ManualChangeReason)
+            ? null : ReadPositionAuditSnapshot(connection, transaction, position.Stock.Id);
+        if (!string.IsNullOrWhiteSpace(position.ExpectedAuditAfterJson))
+        {
+            var original = JsonSerializer.Deserialize<PositionAuditSnapshot>(position.ExpectedAuditBeforeJson);
+            var expected = JsonSerializer.Deserialize<PositionAuditSnapshot>(position.ExpectedAuditAfterJson);
+            if (original is null || expected is null || beforeManualChange is null ||
+                !MatchesTouchedAuditFields(beforeManualChange, original, expected))
+                throw new InvalidOperationException("監査履歴の後に対象値が変更されています。最新値を確認してください。");
+        }
+
         var stockId = position.Stock.Id == 0
             ? InsertStock(connection, transaction, position.Stock)
             : UpdateStock(connection, transaction, position.Stock);
@@ -363,6 +377,12 @@ public sealed class InvestmentStoryRepository
         }
 
         SyncAutoInitialPositionTrade(connection, transaction, position);
+        if (!string.IsNullOrWhiteSpace(position.ManualChangeReason))
+        {
+            var afterManualChange = ReadPositionAuditSnapshot(connection, transaction, stockId)!;
+            SavePositionChangeAudit(connection, transaction, stockId,
+                position.ManualChangeReason.Trim(), beforeManualChange, afterManualChange);
+        }
         ownedTransaction?.Commit();
         return stockId;
     }
@@ -370,9 +390,170 @@ public sealed class InvestmentStoryRepository
     public void DeleteStock(int stockId)
     {
         using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var before = ReadPositionAuditSnapshot(connection, transaction, stockId);
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "DELETE FROM Stocks WHERE Id = $id;";
         command.Parameters.AddWithValue("$id", stockId);
+        command.ExecuteNonQuery();
+        if (before is not null)
+            SavePositionChangeAudit(connection, transaction, stockId, "画面から銘柄を削除",
+                before, new PositionAuditSnapshot("[削除]", before.Broker, before.Account,
+                    before.Custody, 0m, 0m, 0m, 0m, 0m, 0m, 0m, before.Currency,
+                    string.Empty, string.Empty));
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<PositionChangeAudit> GetPositionChangeAudits(int stockId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, StockId, RecordedAtUtc, Reason, BeforeJson, AfterJson, MarketValueChangeJpy
+            FROM PositionChangeAudits WHERE StockId = $stockId ORDER BY Id DESC;
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+        using var reader = command.ExecuteReader();
+        var result = new List<PositionChangeAudit>();
+        while (reader.Read())
+            result.Add(new PositionChangeAudit(
+                reader.GetInt64(0), reader.GetInt32(1),
+                DateTime.Parse(reader.GetString(2), CultureInfo.InvariantCulture),
+                reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5), reader.IsDBNull(6) ? null :
+                    decimal.Parse(reader.GetString(6), CultureInfo.InvariantCulture)));
+        return result;
+    }
+
+    public void RevertPositionChange(long auditId, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("再調整の理由を入力してください。");
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT StockId, BeforeJson, AfterJson FROM PositionChangeAudits WHERE Id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", auditId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.IsDBNull(1))
+            throw new InvalidOperationException("新規登録または存在しない履歴は自動で戻せません。");
+        var stockId = reader.GetInt32(0);
+        var beforeJson = reader.GetString(1);
+        var afterJson = reader.GetString(2);
+        reader.Close();
+        var original = JsonSerializer.Deserialize<PositionAuditSnapshot>(beforeJson)!;
+        var changed = JsonSerializer.Deserialize<PositionAuditSnapshot>(afterJson)!;
+        var position = GetPosition(stockId) ??
+            throw new InvalidOperationException("銘柄が削除されているため自動で戻せません。");
+        if (original.Ticker != changed.Ticker) position.Stock.Ticker = original.Ticker;
+        if (original.Broker != changed.Broker) position.Stock.Broker = original.Broker;
+        if (original.Account != changed.Account) position.Stock.AccountType = original.Account;
+        if (original.Custody != changed.Custody) position.Stock.CustodyType = original.Custody;
+        if (original.Currency != changed.Currency) position.Stock.Currency = original.Currency;
+        if (original.PurchaseShares != changed.PurchaseShares) position.Purchase.Shares = original.PurchaseShares;
+        if (original.PurchaseUnitPrice != changed.PurchaseUnitPrice)
+            position.Purchase.UnitPrice = original.PurchaseUnitPrice;
+        if (original.CurrentShares != changed.CurrentShares)
+            position.CurrentHolding.CurrentShares = original.CurrentShares;
+        if (original.ConfirmedCostJpy != changed.ConfirmedCostJpy)
+        {
+            position.Purchase.AcquisitionAmountJpy = original.ConfirmedCostJpy;
+            position.Purchase.AcquisitionAmountSource = original.AcquisitionSource;
+        }
+        if (original.ReferenceCostJpy != changed.ReferenceCostJpy)
+        {
+            position.Purchase.ReferenceAcquisitionAmountJpy = original.ReferenceCostJpy;
+            position.Purchase.ReferenceAcquisitionSource = original.ReferenceSource;
+        }
+        position.ManualChangeReason = $"履歴ID {auditId} の再調整: {reason.Trim()}";
+        position.ExpectedAuditBeforeJson = beforeJson;
+        position.ExpectedAuditAfterJson = afterJson;
+        SavePosition(position);
+    }
+
+    private sealed record PositionAuditSnapshot(
+        string Ticker, string Broker, string Account, string Custody,
+        decimal PurchaseShares, decimal PurchaseUnitPrice, decimal CurrentShares,
+        decimal ConfirmedCostJpy, decimal ReferenceCostJpy,
+        decimal CurrentPrice, decimal CurrentExchangeRate, string Currency,
+        string AcquisitionSource, string ReferenceSource)
+    {
+        public decimal? MarketValueJpy => CurrentShares > 0m && CurrentPrice > 0m &&
+            (Currency == "JPY" || CurrentExchangeRate > 0m)
+                ? CurrentShares * CurrentPrice * (Currency == "JPY" ? 1m : CurrentExchangeRate)
+                : null;
+    }
+
+    private static PositionAuditSnapshot? ReadPositionAuditSnapshot(
+        SqliteConnection connection, SqliteTransaction transaction, int stockId)
+    {
+        if (stockId <= 0) return null;
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT s.Ticker, s.Broker, s.AccountType, s.CustodyType,
+                   p.Shares, p.UnitPrice, ch.CurrentShares,
+                   p.AcquisitionAmountJpy, p.ReferenceAcquisitionAmountJpy,
+                   ch.CurrentPrice, ch.CurrentExchangeRate, s.Currency,
+                   p.AcquisitionAmountSource, p.ReferenceAcquisitionSource
+            FROM Stocks s
+            LEFT JOIN Purchases p ON p.Id =
+                (SELECT Id FROM Purchases WHERE StockId = s.Id ORDER BY PurchaseDate, Id LIMIT 1)
+            LEFT JOIN CurrentHoldings ch ON ch.StockId = s.Id
+            WHERE s.Id = $stockId;
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? new PositionAuditSnapshot(
+            GetString(reader, 0), GetString(reader, 1), GetString(reader, 2), GetString(reader, 3),
+            GetDecimalOrZero(reader, 4), GetDecimalOrZero(reader, 5), GetDecimalOrZero(reader, 6),
+            GetDecimalOrZero(reader, 7), GetDecimalOrZero(reader, 8),
+            GetDecimalOrZero(reader, 9), GetDecimalOrZero(reader, 10), GetString(reader, 11),
+            GetString(reader, 12), GetString(reader, 13)) : null;
+    }
+
+    private static bool MatchesTouchedAuditFields(PositionAuditSnapshot current,
+        PositionAuditSnapshot original, PositionAuditSnapshot expected)
+    {
+        static bool Match<T>(T now, T before, T after) =>
+            EqualityComparer<T>.Default.Equals(before, after) ||
+            EqualityComparer<T>.Default.Equals(now, after);
+        return Match(current.Ticker, original.Ticker, expected.Ticker) &&
+               Match(current.Broker, original.Broker, expected.Broker) &&
+               Match(current.Account, original.Account, expected.Account) &&
+               Match(current.Custody, original.Custody, expected.Custody) &&
+               Match(current.Currency, original.Currency, expected.Currency) &&
+               Match(current.PurchaseShares, original.PurchaseShares, expected.PurchaseShares) &&
+               Match(current.PurchaseUnitPrice, original.PurchaseUnitPrice, expected.PurchaseUnitPrice) &&
+               Match(current.CurrentShares, original.CurrentShares, expected.CurrentShares) &&
+               Match(current.ConfirmedCostJpy, original.ConfirmedCostJpy, expected.ConfirmedCostJpy) &&
+               Match(current.ReferenceCostJpy, original.ReferenceCostJpy, expected.ReferenceCostJpy);
+    }
+
+    private static void SavePositionChangeAudit(SqliteConnection connection, SqliteTransaction transaction,
+        int stockId, string reason, PositionAuditSnapshot? before, PositionAuditSnapshot after)
+    {
+        var beforeJson = before is null ? null : JsonSerializer.Serialize(before);
+        var afterJson = JsonSerializer.Serialize(after);
+        if (beforeJson == afterJson) return;
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO PositionChangeAudits
+                (StockId, RecordedAtUtc, Reason, BeforeJson, AfterJson, MarketValueChangeJpy)
+            VALUES ($stockId, $recordedAt, $reason, $before, $after, $delta);
+            """;
+        command.Parameters.AddWithValue("$stockId", stockId);
+        command.Parameters.AddWithValue("$recordedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$reason", reason);
+        command.Parameters.AddWithValue("$before", (object?)beforeJson ?? DBNull.Value);
+        command.Parameters.AddWithValue("$after", afterJson);
+        var delta = before?.MarketValueJpy is decimal oldValue && after.MarketValueJpy is decimal newValue
+            ? newValue - oldValue : (decimal?)null;
+        command.Parameters.AddWithValue("$delta", delta.HasValue
+            ? delta.Value.ToString("G29", CultureInfo.InvariantCulture) : DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -1306,7 +1487,44 @@ public sealed class InvestmentStoryRepository
             InsertBrokerTrade(connection, transaction, trade, ++occurrenceIndex);
         }
 
+        SaveCorporateActionCandidates(connection, transaction, ledgers);
+
         ownedTransaction?.Commit();
+    }
+
+    private static void SaveCorporateActionCandidates(SqliteConnection connection,
+        SqliteTransaction transaction, IEnumerable<BrokerTrade> trades)
+    {
+        foreach (var trade in trades.Where(x =>
+                     (x.TradeType is "TransferIn" or "StockSplitCandidate") &&
+                     !string.IsNullOrWhiteSpace(x.SourceFile) && x.SourceRowNumber > 0))
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT OR IGNORE INTO CorporateActions
+                    (StockId, EventDate, Kind, SourceBroker, SourceAccount,
+                     DestinationBroker, DestinationAccount, Quantity, SplitRatio,
+                     CarriedCostJpy, Evidence, SourceFile, SourceRowNumber,
+                     Status, Reason, RecordedAtUtc)
+                VALUES ($stockId, $date, $kind, '', 'Unknown', $broker, $account,
+                        $quantity, '1', NULL, $evidence, $sourceFile, $sourceRow,
+                        'Pending', $reason, $recordedAt);
+                """;
+            command.Parameters.AddWithValue("$stockId", trade.StockId);
+            command.Parameters.AddWithValue("$date", trade.TradeDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$kind", trade.TradeType == "StockSplitCandidate" ? "StockSplit" : "Transfer");
+            command.Parameters.AddWithValue("$broker", trade.Broker);
+            command.Parameters.AddWithValue("$account", trade.AccountType);
+            command.Parameters.AddWithValue("$quantity", trade.Quantity.ToString("G29", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$evidence", "取引履歴CSVの無償入庫（未確認）");
+            command.Parameters.AddWithValue("$sourceFile", trade.SourceFile);
+            command.Parameters.AddWithValue("$sourceRow", trade.SourceRowNumber);
+            command.Parameters.AddWithValue("$reason", trade.TradeType == "StockSplitCandidate"
+                ? "分割候補。根拠確認が必要" : "移管元・引継原価の確認が必要");
+            command.Parameters.AddWithValue("$recordedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            command.ExecuteNonQuery();
+        }
     }
 
     public void SaveCsvImportReviewTrade(BrokerTradeRecord trade, string reason)
@@ -2335,9 +2553,9 @@ public sealed class InvestmentStoryRepository
         command.CommandText = currentHolding.Id == 0
             ? """
               INSERT INTO CurrentHoldings
-                  (StockId, CurrentShares, CurrentPrice, CurrentExchangeRate, ExchangeRateAcquiredAt, ExchangeRateSource, ExchangeRateInputType, AnnualDividendPerShare, DividendStatus, DividendFrequency, DividendMonths, CurrentPriceAcquiredAt, CurrentPriceSource, DividendInfoAcquiredAt, DividendInfoSource, UpdatedAt)
+                  (StockId, CurrentShares, CurrentPrice, CurrentExchangeRate, ExchangeRateAcquiredAt, ExchangeRateSource, ExchangeRateInputType, AnnualDividendPerShare, DividendStatus, DividendFrequency, DividendMonths, CurrentPriceAcquiredAt, CurrentPriceSource, DividendInfoAcquiredAt, DividendInfoSource, SourceFile, SourceRowNumber, UpdatedAt)
               VALUES
-                  ($stockId, $currentShares, $currentPrice, $currentExchangeRate, $exchangeRateAcquiredAt, $exchangeRateSource, $exchangeRateInputType, $annualDividendPerShare, $dividendStatus, $dividendFrequency, $dividendMonths, $currentPriceAcquiredAt, $currentPriceSource, $dividendInfoAcquiredAt, $dividendInfoSource, $updatedAt);
+                  ($stockId, $currentShares, $currentPrice, $currentExchangeRate, $exchangeRateAcquiredAt, $exchangeRateSource, $exchangeRateInputType, $annualDividendPerShare, $dividendStatus, $dividendFrequency, $dividendMonths, $currentPriceAcquiredAt, $currentPriceSource, $dividendInfoAcquiredAt, $dividendInfoSource, $sourceFile, $sourceRowNumber, $updatedAt);
               """
             : """
               UPDATE CurrentHoldings
@@ -2355,6 +2573,8 @@ public sealed class InvestmentStoryRepository
                   CurrentPriceSource = $currentPriceSource,
                   DividendInfoAcquiredAt = $dividendInfoAcquiredAt,
                   DividendInfoSource = $dividendInfoSource,
+                  SourceFile = $sourceFile,
+                  SourceRowNumber = $sourceRowNumber,
                   UpdatedAt = $updatedAt
               WHERE Id = $id;
               """;
@@ -2373,6 +2593,8 @@ public sealed class InvestmentStoryRepository
         command.Parameters.AddWithValue("$currentPriceSource", currentHolding.CurrentPriceSource);
         command.Parameters.AddWithValue("$dividendInfoAcquiredAt", ToDateTimeText(currentHolding.DividendInfoAcquiredAt));
         command.Parameters.AddWithValue("$dividendInfoSource", currentHolding.DividendInfoSource);
+        command.Parameters.AddWithValue("$sourceFile", currentHolding.SourceFile);
+        command.Parameters.AddWithValue("$sourceRowNumber", currentHolding.SourceRowNumber);
         command.Parameters.AddWithValue("$updatedAt", ToDateText(currentHolding.UpdatedAt));
         if (currentHolding.Id != 0)
         {

@@ -18,5 +18,7 @@ public sealed class CurrentHolding
     public string CurrentPriceSource { get; set; } = string.Empty;
     public DateTime DividendInfoAcquiredAt { get; set; } = DateTime.MinValue;
     public string DividendInfoSource { get; set; } = string.Empty;
+    public string SourceFile { get; set; } = string.Empty;
+    public int SourceRowNumber { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.Today;
 }

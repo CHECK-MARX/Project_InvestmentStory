@@ -8,6 +8,10 @@ public sealed class MonthlyDividendBreakdown
     public decimal PlannedJpy { get; init; }
     public decimal PreviousYearActualJpy { get; init; }
     public decimal MonthlyGoalJpy { get; init; }
+    public bool HasActualRecord { get; init; }
+    public bool HasPlannedRecord { get; init; }
+    public bool HasPreviousYearRecord { get; init; }
+    public bool HasMonthlyGoal { get; init; }
     public decimal ForecastJpy => ActualJpy + PlannedJpy;
     public string Label => $"{Month}月";
 }

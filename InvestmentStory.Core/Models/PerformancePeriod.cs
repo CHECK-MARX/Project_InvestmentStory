@@ -4,6 +4,11 @@ public sealed record PerformanceFx(DateTime Date, string Currency, decimal JpyPe
     DateTime QuoteDate, string Evidence);
 public sealed record PerformanceFlowValuation(string OperationId, int Sequence,
     decimal? BeforeJpy, decimal? AfterJpy, bool Confirmed, string Evidence);
+public sealed record PerformanceBenchmark(string Name, DateTime StartDate, DateTime EndDate,
+    string Currency, decimal? OpeningLevel, decimal? ClosingLevel,
+    bool IncludesNetDividends, bool SourceConfirmed, bool IsHistoricalEstimate, string Evidence);
+public sealed record PerformanceBenchmarkComparison(double? BenchmarkPeriodReturn,
+    double? PortfolioPeriodReturn, double? Difference, string Status);
 
 public sealed class PerformancePeriodInput
 {
@@ -19,6 +24,7 @@ public sealed class PerformancePeriodInput
     public bool NoInKindTransfersConfirmed { get; init; }
     public IReadOnlyList<PerformanceFx> Fx { get; init; } = [];
     public IReadOnlyList<PerformanceFlowValuation> FlowValuations { get; init; } = [];
+    public PerformanceBenchmark? Benchmark { get; init; }
 }
 
 public sealed record PerformanceCashBalance(string Account, string Currency,
@@ -40,6 +46,7 @@ public sealed class PerformancePeriodResult
     public ReturnMeasure TimeWeighted { get; init; } = new(null, "未計算");
     public ReturnMeasure MoneyWeighted { get; init; } = new(null, "未計算");
     public ReturnMeasure ModifiedDietz { get; init; } = new(null, "未計算");
+    public PerformanceBenchmarkComparison Benchmark { get; init; } = new(null, null, null, "比較指数未指定");
 }
 
 public sealed record PerformanceReport(string Id, DateTime CreatedAtUtc, string LedgerFingerprint,

@@ -25,9 +25,9 @@ public sealed class DataQualityService
                 snapshot.HasKnownPurchaseCostJpy ? $"{snapshot.PurchaseTotalJpy:N0}円" : "未確認",
                 PositionEvidenceService.CostQuality(snapshot) == AcquisitionCostQuality.Estimated ? DataSourceTypes.Estimated :
                     snapshot.HasKnownPurchaseCostJpy ? ResolveSourceType(position.Stock.DataSource) : DataSourceTypes.Unknown,
-                position.IsMutualFund ? position.Stock.DataSource :
+                position.IsMutualFund ? WithHoldingRow(position.Stock.DataSource, position.CurrentHolding) :
                     snapshot.IsReferencePurchaseCostJpy ? position.Purchase.ReferenceAcquisitionSource :
-                    position.Purchase.AcquisitionAmountJpy > 0m ? position.Purchase.AcquisitionAmountSource : position.Purchase.ExchangeRateSource,
+                    position.Purchase.AcquisitionAmountJpy > 0m ? WithHoldingRow(position.Purchase.AcquisitionAmountSource, position.CurrentHolding) : position.Purchase.ExchangeRateSource,
                 position.IsMutualFund ? position.CurrentHolding.UpdatedAt : position.Purchase.PurchaseDate,
                 PositionEvidenceService.CostQuality(snapshot) switch
                 {
@@ -56,7 +56,7 @@ public sealed class DataQualityService
                     holdingSnapshotDate ? DataSourceTypes.BrokerCsv :
                     quickRegistrationDate ? DataSourceTypes.Manual : ResolveSourceType(position.Stock.DataSource),
                 purchaseDateAfterBuy ? "取引履歴との照合" :
-                    holdingSnapshotDate ? position.Stock.DataSource :
+                    holdingSnapshotDate ? WithHoldingRow(position.Stock.DataSource, position.CurrentHolding) :
                     quickRegistrationDate ? "かんたん登録" : position.Stock.DataSource,
                 position.Purchase.PurchaseDate,
                 position.Purchase.PurchaseDate == DateTime.MinValue ? DataQualityStates.Missing :
@@ -79,7 +79,7 @@ public sealed class DataQualityService
                 "保有数量",
                 FormatQuantity(position),
                 ResolveSourceType(position.Stock.DataSource),
-                position.Stock.DataSource,
+                WithHoldingRow(position.Stock.DataSource, position.CurrentHolding),
                 position.CurrentHolding.UpdatedAt,
                 CurrentQuantity(position) > 0m ? DataQualityStates.Confirmed : DataQualityStates.Missing,
                 memo: CurrentQuantity(position) > 0m ? string.Empty : "保有数量が未取得です。"),
@@ -91,7 +91,7 @@ public sealed class DataQualityService
                         ? $"{position.MutualFund.AverageCostNav:N0}" : $"{position.Purchase.UnitPrice:N2}",
                 ResolveSourceType(position.IsMutualFund ? position.Stock.DataSource :
                     position.Purchase.ExchangeRateInputType == "CSV" ? position.Purchase.ExchangeRateSource : position.Stock.DataSource),
-                position.IsMutualFund ? position.Stock.DataSource : position.Purchase.ExchangeRateSource,
+                position.IsMutualFund ? WithHoldingRow(position.Stock.DataSource, position.CurrentHolding) : position.Purchase.ExchangeRateSource,
                 position.IsMutualFund ? position.CurrentHolding.UpdatedAt : position.Purchase.PurchaseDate,
                 (position.IsMutualFund ? position.MutualFund.AverageCostNav : position.Purchase.UnitPrice) > 0m
                     ? DataQualityStates.Confirmed : DataQualityStates.Missing,
@@ -103,7 +103,7 @@ public sealed class DataQualityService
                 !HasCurrentPrice(position) ? "未取得" :
                     position.IsMutualFund ? $"{position.MutualFund.CurrentNav:N0}" : $"{position.CurrentHolding.CurrentPrice:N2}",
                 ResolveSourceType(position.IsMutualFund ? position.MutualFund.NavSource : position.CurrentHolding.CurrentPriceSource),
-                position.IsMutualFund ? position.MutualFund.NavSource : position.CurrentHolding.CurrentPriceSource,
+                WithHoldingRow(position.IsMutualFund ? position.MutualFund.NavSource : position.CurrentHolding.CurrentPriceSource, position.CurrentHolding),
                 position.IsMutualFund ? position.MutualFund.NavDate : position.CurrentHolding.CurrentPriceAcquiredAt,
                 HasCurrentPrice(position) ? DataQualityStates.Reliable : DataQualityStates.Missing,
                 isStale: PositionEvidenceService.Freshness(position.IsMutualFund ? position.MutualFund.NavDate : position.CurrentHolding.CurrentPriceAcquiredAt, asOf) == DataFreshness.Delayed,
@@ -191,6 +191,11 @@ public sealed class DataQualityService
 
     private static bool HasCurrentPrice(StockPosition position) =>
         position.IsMutualFund ? position.MutualFund.CurrentNav > 0m : position.CurrentHolding.CurrentPrice > 0m;
+
+    private static string WithHoldingRow(string source, CurrentHolding holding) =>
+        string.IsNullOrWhiteSpace(holding.SourceFile) || holding.SourceRowNumber <= 0
+            ? source
+            : $"{source} / {Path.GetFileName(holding.SourceFile)}:{holding.SourceRowNumber}行";
 
     private static string ResolveSourceType(string source)
     {

@@ -40,6 +40,7 @@ public sealed class DashboardSummary
     public decimal AnnualGoalGapJpy { get; init; }
     public decimal MonthlyGoalGapJpy { get; init; }
     public decimal RealizedGainLossJpy { get; init; }
+    public bool HasUnverifiedTradeCost { get; init; }
     public decimal CumulativeDividendJpy { get; init; }
     public decimal TotalReturnJpy { get; init; }
     public decimal Top5ConcentrationRate { get; init; }

@@ -15,12 +15,16 @@ public sealed class MonthlyDividendBreakdownRowViewModel
         ForecastJpy = value.ForecastJpy;
         PreviousYearActualJpy = value.PreviousYearActualJpy;
         MonthlyGoalJpy = value.MonthlyGoalJpy;
+        HasActualRecord = value.HasActualRecord;
+        HasForecastRecord = value.HasActualRecord || value.HasPlannedRecord;
+        HasPreviousYearRecord = value.HasPreviousYearRecord;
+        HasMonthlyGoal = value.HasMonthlyGoal;
         Actual = Year > DateTime.Today.Year || Year == DateTime.Today.Year && Month > DateTime.Today.Month
-            ? "—" : Formatters.Jpy(ActualJpy);
-        Planned = Formatters.Jpy(PlannedJpy);
-        Forecast = Formatters.Jpy(ForecastJpy);
-        PreviousYear = Formatters.Jpy(PreviousYearActualJpy);
-        Goal = Formatters.Jpy(MonthlyGoalJpy);
+            ? "—" : HasActualRecord ? Formatters.Jpy(ActualJpy) : "記録なし";
+        Planned = value.HasPlannedRecord ? Formatters.Jpy(PlannedJpy) : "記録なし";
+        Forecast = HasForecastRecord ? Formatters.Jpy(ForecastJpy) : "記録なし";
+        PreviousYear = HasPreviousYearRecord ? Formatters.Jpy(PreviousYearActualJpy) : "記録なし";
+        Goal = HasMonthlyGoal ? Formatters.Jpy(MonthlyGoalJpy) : "未設定";
     }
 
     public int Year { get; }
@@ -31,6 +35,10 @@ public sealed class MonthlyDividendBreakdownRowViewModel
     public decimal ForecastJpy { get; }
     public decimal PreviousYearActualJpy { get; }
     public decimal MonthlyGoalJpy { get; }
+    public bool HasActualRecord { get; }
+    public bool HasForecastRecord { get; }
+    public bool HasPreviousYearRecord { get; }
+    public bool HasMonthlyGoal { get; }
     public string Actual { get; }
     public string Planned { get; }
     public string Forecast { get; }

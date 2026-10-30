@@ -10,6 +10,7 @@ public sealed class DatabaseInitializer
 {
     public void Initialize(string databasePath)
     {
+        var existingDatabase = File.Exists(databasePath);
         var directory = Path.GetDirectoryName(databasePath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
@@ -26,11 +27,17 @@ public sealed class DatabaseInitializer
         CsvReviewDispositionRepository.EnsureSchema(connection, databasePath);
         DividendReviewRepository.EnsureSchema(connection, databasePath);
         NisaHistoryRepository.EnsureSchema(connection, databasePath);
+        MonthEndPortfolioRepository.EnsureSchema(connection, databasePath, existingDatabase);
+        FundDisclosureRepository.EnsureSchema(connection, databasePath, existingDatabase);
+        ScenarioComparisonRepository.EnsureSchema(connection, databasePath, existingDatabase);
         BackupBeforeDividendPurchasePlanMigrationIfNeeded(connection, databasePath);
         BackupBeforeDividendCalendarMigrationIfNeeded(connection, databasePath);
         BackupBeforeNetOnlyDividendMigrationIfNeeded(connection, databasePath);
         BackupBeforeCsvChangeMigrationIfNeeded(connection, databasePath);
         CreateTables(connection);
+        EnsureCorporateActionSchema(connection, databasePath, existingDatabase);
+        EnsurePositionChangeAuditSchema(connection, databasePath, existingDatabase);
+        EnsureMarketAnomalySchema(connection, databasePath, existingDatabase);
         BackupBeforeSecurityMigrationIfNeeded(connection, databasePath);
         BackupBeforeCostEvidenceMigrationIfNeeded(connection, databasePath);
         DropCsvIdempotencyIndexesBeforeMigration(connection);
@@ -42,12 +49,161 @@ public sealed class DatabaseInitializer
             AddColumnIfMissing(connection, "BrokerTrades", "SourceRowNumber", "INTEGER NOT NULL DEFAULT 0");
         }
         RepairCsvReimportDuplicates(connection, databasePath);
+        BackfillCorporateActionCandidates(connection, databasePath);
         BackfillInitialPositionTrades(connection, databasePath);
         CreateCsvIdempotencyIndexes(connection);
         MigrateReviewTradeSourceRowsIfNeeded(connection, databasePath);
         MigrateReviewTradeResolutionIfNeeded(connection, databasePath);
         BackfillCanonicalSecurityKeys(connection);
         BackfillStockSectors(connection, databasePath);
+    }
+
+    private static void EnsurePositionChangeAuditSchema(SqliteConnection connection, string databasePath,
+        bool existingDatabase)
+    {
+        if (TableExists(connection, "PositionChangeAudits")) return;
+        if (existingDatabase)
+            BackupDatabase(connection, databasePath, "before_position_change_audit");
+        Execute(connection, """
+            CREATE TABLE PositionChangeAudits (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                RecordedAtUtc TEXT NOT NULL,
+                Reason TEXT NOT NULL,
+                BeforeJson TEXT NULL,
+                AfterJson TEXT NOT NULL,
+                MarketValueChangeJpy TEXT NULL
+            );
+            CREATE INDEX IX_PositionChangeAudits_StockId ON PositionChangeAudits(StockId, Id DESC);
+            """);
+    }
+
+    private static void EnsureMarketAnomalySchema(SqliteConnection connection, string databasePath,
+        bool existingDatabase)
+    {
+        if (TableExists(connection, "MarketAnomalyCandidates") &&
+            TableExists(connection, "MarketAnomalyDecisions")) return;
+        if (existingDatabase)
+            BackupDatabase(connection, databasePath, "before_market_anomaly_review");
+        Execute(connection, """
+            CREATE TABLE IF NOT EXISTS MarketAnomalyCandidates (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                Fingerprint TEXT NOT NULL UNIQUE,
+                Category TEXT NOT NULL,
+                RuleVersion TEXT NOT NULL,
+                PreviousValue TEXT NOT NULL,
+                IncomingValue TEXT NOT NULL,
+                Evidence TEXT NOT NULL,
+                SuggestedCheck TEXT NOT NULL,
+                ObservedAt TEXT NOT NULL,
+                Status TEXT NOT NULL DEFAULT 'Pending',
+                RecordedAtUtc TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_MarketAnomalyCandidates_StockStatus
+            ON MarketAnomalyCandidates(StockId, Status, Id DESC);
+            CREATE TABLE IF NOT EXISTS MarketAnomalyDecisions (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CandidateId INTEGER NOT NULL,
+                Decision TEXT NOT NULL,
+                Reason TEXT NOT NULL,
+                RecordedAtUtc TEXT NOT NULL,
+                FOREIGN KEY(CandidateId) REFERENCES MarketAnomalyCandidates(Id)
+            );
+            CREATE INDEX IF NOT EXISTS IX_MarketAnomalyDecisions_Candidate
+            ON MarketAnomalyDecisions(CandidateId, Id DESC);
+            """);
+    }
+
+    private static void EnsureCorporateActionSchema(SqliteConnection connection, string databasePath,
+        bool existingDatabase)
+    {
+        if (TableExists(connection, "CorporateActions"))
+        {
+            if (!ColumnExists(connection, "CorporateActions", "SupersedesId"))
+            {
+                BackupDatabase(connection, databasePath, "before_corporate_action_corrections");
+                AddColumnIfMissing(connection, "CorporateActions", "SupersedesId", "INTEGER NULL");
+                Execute(connection, """
+                    CREATE UNIQUE INDEX IF NOT EXISTS UX_CorporateActions_Supersedes
+                    ON CorporateActions(SupersedesId) WHERE SupersedesId IS NOT NULL;
+                    """);
+            }
+            Execute(connection, """
+                CREATE UNIQUE INDEX IF NOT EXISTS UX_CorporateActions_ImportedCandidate
+                ON CorporateActions(StockId, SourceFile, SourceRowNumber)
+                WHERE SourceFile <> '' AND SourceRowNumber > 0 AND Status = 'Pending' AND SupersedesId IS NULL;
+                """);
+            return;
+        }
+        if (existingDatabase)
+            BackupDatabase(connection, databasePath, "before_corporate_action_ledger");
+        Execute(connection, """
+            CREATE TABLE CorporateActions (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                StockId INTEGER NOT NULL,
+                EventDate TEXT NOT NULL,
+                Kind TEXT NOT NULL,
+                SourceBroker TEXT NOT NULL DEFAULT '',
+                SourceAccount TEXT NOT NULL DEFAULT 'Unknown',
+                DestinationBroker TEXT NOT NULL DEFAULT '',
+                DestinationAccount TEXT NOT NULL DEFAULT 'Unknown',
+                Quantity TEXT NOT NULL DEFAULT '0',
+                SplitRatio TEXT NOT NULL DEFAULT '1',
+                CarriedCostJpy TEXT NULL,
+                OldTicker TEXT NOT NULL DEFAULT '',
+                NewTicker TEXT NOT NULL DEFAULT '',
+                Evidence TEXT NOT NULL DEFAULT '',
+                SourceFile TEXT NOT NULL DEFAULT '',
+                SourceRowNumber INTEGER NOT NULL DEFAULT 0,
+                Status TEXT NOT NULL DEFAULT 'Pending',
+                Reason TEXT NOT NULL DEFAULT '',
+                SupersedesId INTEGER NULL,
+                RecordedAtUtc TEXT NOT NULL
+            );
+            CREATE INDEX IX_CorporateActions_StockDate ON CorporateActions(StockId, EventDate, Id);
+            CREATE UNIQUE INDEX UX_CorporateActions_Supersedes
+            ON CorporateActions(SupersedesId) WHERE SupersedesId IS NOT NULL;
+            CREATE UNIQUE INDEX UX_CorporateActions_ImportedCandidate
+            ON CorporateActions(StockId, SourceFile, SourceRowNumber)
+            WHERE SourceFile <> '' AND SourceRowNumber > 0 AND Status = 'Pending' AND SupersedesId IS NULL;
+            """);
+    }
+
+    private static void BackfillCorporateActionCandidates(SqliteConnection connection, string databasePath)
+    {
+        using var count = connection.CreateCommand();
+        count.CommandText = """
+            SELECT COUNT(*) FROM BrokerTrades bt
+            WHERE bt.TradeType IN ('TransferIn', 'StockSplitCandidate')
+              AND bt.SourceFile <> '' AND bt.SourceRowNumber > 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM CorporateActions ca
+                  WHERE ca.StockId = bt.StockId AND ca.SourceFile = bt.SourceFile
+                    AND ca.SourceRowNumber = bt.SourceRowNumber AND ca.Status = 'Pending'
+                    AND ca.SupersedesId IS NULL);
+            """;
+        if (Convert.ToInt32(count.ExecuteScalar()) == 0) return;
+        BackupDatabase(connection, databasePath, "before_corporate_action_candidates");
+        Execute(connection, """
+            INSERT OR IGNORE INTO CorporateActions
+                (StockId, EventDate, Kind, SourceBroker, SourceAccount,
+                 DestinationBroker, DestinationAccount, Quantity, SplitRatio,
+                 CarriedCostJpy, Evidence, SourceFile, SourceRowNumber,
+                 Status, Reason, RecordedAtUtc)
+            SELECT bt.StockId, bt.TradeDate,
+                   CASE WHEN bt.TradeType = 'StockSplitCandidate' THEN 'StockSplit' ELSE 'Transfer' END,
+                   '', 'Unknown', bt.Broker, bt.AccountType,
+                   CAST(bt.Quantity AS TEXT), '1', NULL,
+                   '取引履歴CSVの無償入庫（未確認）', bt.SourceFile, bt.SourceRowNumber,
+                   'Pending',
+                   CASE WHEN bt.TradeType = 'StockSplitCandidate' THEN '分割候補。根拠確認が必要'
+                        ELSE '移管元・引継原価の確認が必要' END,
+                   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            FROM BrokerTrades bt
+            WHERE bt.TradeType IN ('TransferIn', 'StockSplitCandidate')
+              AND bt.SourceFile <> '' AND bt.SourceRowNumber > 0;
+            """);
     }
 
     private static void BackfillStockSectors(SqliteConnection connection, string databasePath)
@@ -205,6 +361,8 @@ public sealed class DatabaseInitializer
                 CurrentPriceSource TEXT NOT NULL DEFAULT '',
                 DividendInfoAcquiredAt TEXT NOT NULL DEFAULT '',
                 DividendInfoSource TEXT NOT NULL DEFAULT '',
+                SourceFile TEXT NOT NULL DEFAULT '',
+                SourceRowNumber INTEGER NOT NULL DEFAULT 0,
                 UpdatedAt TEXT NOT NULL,
                 FOREIGN KEY (StockId) REFERENCES Stocks(Id) ON DELETE CASCADE
             );
@@ -667,6 +825,8 @@ public sealed class DatabaseInitializer
         AddColumnIfMissing(connection, "CurrentHoldings", "CurrentPriceSource", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CurrentHoldings", "DividendInfoAcquiredAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "CurrentHoldings", "DividendInfoSource", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CurrentHoldings", "SourceFile", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "CurrentHoldings", "SourceRowNumber", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "DividendPayments", "ExchangeRate", "REAL NOT NULL DEFAULT 1");
         AddColumnIfMissing(connection, "DividendPayments", "ExchangeRateAcquiredAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "DividendPayments", "ExchangeRateSource", "TEXT NOT NULL DEFAULT '手入力'");
@@ -1170,7 +1330,7 @@ public sealed class DatabaseInitializer
             WHERE SignedQuantity > 0
               AND UnitPrice = 0
               AND SettlementAmountJpy = 0
-              AND TradeType NOT IN ('OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+              AND TradeType NOT IN ('OpeningBalance', 'TransferIn', 'StockSplitCandidate', 'ReverseSplit', 'UnknownAdjustment');
             """;
 
         return Convert.ToInt32(command.ExecuteScalar());
@@ -1181,61 +1341,17 @@ public sealed class DatabaseInitializer
         Execute(connection, """
             UPDATE BrokerTrades
             SET TradeType = CASE
-                    WHEN (AfterTradeQuantity > SignedQuantity
-                       AND ROUND(AfterTradeQuantity / NULLIF(AfterTradeQuantity - SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10))
-                      OR EXISTS (
-                          SELECT 1
-                          FROM CurrentHoldings ch
-                          WHERE ch.StockId = BrokerTrades.StockId
-                            AND ch.CurrentShares > BrokerTrades.SignedQuantity
-                            AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
-                      )
-                        THEN 'StockSplit'
+                    WHEN TradeType = 'StockSplit'
+                      OR (AfterTradeQuantity > SignedQuantity
+                          AND ROUND(AfterTradeQuantity / NULLIF(AfterTradeQuantity - SignedQuantity, 0), 6)
+                              IN (2, 3, 4, 5, 10))
+                        THEN 'StockSplitCandidate'
                     ELSE 'TransferIn'
-                END,
-                AfterTradeQuantity = CASE
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM CurrentHoldings ch
-                        WHERE ch.StockId = BrokerTrades.StockId
-                          AND ch.CurrentShares > BrokerTrades.SignedQuantity
-                          AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
-                    )
-                        THEN (
-                            SELECT ch.CurrentShares
-                            FROM CurrentHoldings ch
-                            WHERE ch.StockId = BrokerTrades.StockId
-                            LIMIT 1
-                        )
-                    ELSE AfterTradeQuantity
-                END,
-                AfterTradeAverageCost = CASE
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM CurrentHoldings ch
-                        WHERE ch.StockId = BrokerTrades.StockId
-                          AND ch.CurrentShares > BrokerTrades.SignedQuantity
-                          AND ROUND(ch.CurrentShares / NULLIF(ch.CurrentShares - BrokerTrades.SignedQuantity, 0), 6) IN (2, 3, 4, 5, 10)
-                    )
-                        THEN COALESCE((
-                            SELECT CASE
-                                WHEN ch.CurrentShares <= 0 THEN BrokerTrades.AfterTradeAverageCost
-                                WHEN s.AssetType = 'MutualFund' THEN NULLIF(mf.AverageCostNav, 0)
-                                ELSE NULLIF(p.Shares * p.UnitPrice / ch.CurrentShares, 0)
-                            END
-                            FROM CurrentHoldings ch
-                            INNER JOIN Stocks s ON s.Id = ch.StockId
-                            LEFT JOIN Purchases p ON p.StockId = ch.StockId
-                            LEFT JOIN MutualFundHoldings mf ON mf.StockId = ch.StockId
-                            WHERE ch.StockId = BrokerTrades.StockId
-                            LIMIT 1
-                        ), AfterTradeAverageCost)
-                    ELSE AfterTradeAverageCost
                 END
             WHERE SignedQuantity > 0
               AND UnitPrice = 0
               AND SettlementAmountJpy = 0
-              AND TradeType NOT IN ('OpeningBalance', 'StockSplit', 'ReverseSplit', 'UnknownAdjustment');
+              AND TradeType NOT IN ('OpeningBalance', 'TransferIn', 'StockSplitCandidate', 'ReverseSplit', 'UnknownAdjustment');
             """);
     }
 

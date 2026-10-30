@@ -51,13 +51,20 @@ public sealed class PortfolioAnalyticsServiceTests
         Assert.Equal(0m, june.PlannedJpy);
         Assert.Equal(700m, june.PreviousYearActualJpy);
         Assert.Equal(10_000m, june.MonthlyGoalJpy);
+        Assert.True(june.HasActualRecord);
+        Assert.True(june.HasPreviousYearRecord);
+        Assert.True(june.HasMonthlyGoal);
 
         var august = result.Single(x => x.Month == 8);
         Assert.Equal(0m, august.ActualJpy);
         Assert.Equal(5000m, august.PlannedJpy);
         Assert.Equal(5000m, august.ForecastJpy);
+        Assert.False(august.HasActualRecord);
+        Assert.True(august.HasPlannedRecord);
+        Assert.False(august.HasPreviousYearRecord);
 
         Assert.Equal(0m, result.Single(x => x.Month == 9).PlannedJpy);
+        Assert.False(result.Single(x => x.Month == 9).HasPlannedRecord);
     }
 
     [Fact]

@@ -123,10 +123,10 @@ public sealed class StockRowViewModel
     public string FundCurrentNav => Snapshot.Position.MutualFund.CurrentNav <= 0m
         ? "基準価額未更新"
         : FormatFundNav(Snapshot.Position.MutualFund.CurrentNav, Snapshot.Position.MutualFund.UnitBase);
-    public string FundAcquisitionAmount => Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : Formatters.Jpy(PurchaseTotalJpy);
+    public string FundAcquisitionAmount => Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : ReferencePrefix + Formatters.Jpy(PurchaseTotalJpy);
     public string FundMarketValue => MarketValueJpy;
-    public string FundUnrealizedGainLoss => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : Formatters.SignedJpy(UnrealizedGainJpyValue);
-    public string FundUnrealizedGainLossRate => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : Formatters.SignedPercent(UnrealizedGainRateJpyValue);
+    public string FundUnrealizedGainLoss => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : ReferencePrefix + Formatters.SignedJpy(UnrealizedGainJpyValue);
+    public string FundUnrealizedGainLossRate => HasUnknownMarketValue ? "算出不可" : Snapshots.Any(x => !x.HasKnownPurchaseCostJpy) ? "未確認" : ReferencePrefix + Formatters.SignedPercent(UnrealizedGainRateJpyValue);
     public string FundNavDate => Snapshot.Position.MutualFund.NavDate == DateTime.MinValue
         ? Snapshot.Position.MutualFund.CurrentNav > 0m ? "時刻不明" : "基準価額未更新"
         : Snapshot.Position.MutualFund.NavDate.ToString("yyyy/MM/dd");

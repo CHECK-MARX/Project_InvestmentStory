@@ -33,7 +33,7 @@ public sealed class TradeLedgerService
             if (stockSplitCandidate)
             {
                 currentQuantity += signedQuantity;
-                eventType = "StockSplit";
+                eventType = "StockSplitCandidate";
             }
             else if (zeroPriceInbound)
             {

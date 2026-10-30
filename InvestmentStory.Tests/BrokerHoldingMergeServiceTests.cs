@@ -60,7 +60,9 @@ public sealed class BrokerHoldingMergeServiceTests
             MarketValue = 620000m,
             Currency = "JPY",
             Product = "国内株式",
-            SnapshotDate = new DateTime(2026, 7, 7)
+            SnapshotDate = new DateTime(2026, 7, 7),
+            SourceFile = @"C:\imports\holdings.csv",
+            SourceRowNumber = 12
         };
 
         var result = service.MergeHoldings(new[] { existing }, new[] { brokerHolding }, new DateTime(2026, 7, 7, 15, 0, 0));
@@ -75,6 +77,8 @@ public sealed class BrokerHoldingMergeServiceTests
         Assert.Equal("伊藤園", decision.Merged.Stock.Name);
         Assert.Equal("独自分類", decision.Merged.Stock.Sector);
         Assert.Equal("証券会社データ", decision.Merged.Stock.DataSource);
+        Assert.Equal(@"C:\imports\holdings.csv", decision.Merged.CurrentHolding.SourceFile);
+        Assert.Equal(12, decision.Merged.CurrentHolding.SourceRowNumber);
         Assert.Equal("manual memo", decision.Merged.Stock.Memo);
         Assert.Equal("manual purchase memo", decision.Merged.Purchase.Memo);
         Assert.Equal("split memo", decision.Merged.Split.Memo);

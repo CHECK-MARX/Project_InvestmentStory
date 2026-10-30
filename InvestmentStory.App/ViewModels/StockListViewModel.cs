@@ -21,6 +21,7 @@ public sealed class StockListViewModel : ObservableObject
     private readonly Action<string> _displayModeChanged;
     private readonly Action<string> _saveFilterState;
     private readonly List<StockSnapshot> _allSnapshots = new();
+    private readonly List<BrokerTrade> _allTrades = new();
     private readonly HashSet<int> _dividendStockIds = new();
     private readonly HashSet<int> _acquisitionDateReviewStockIds = new();
     private StockRowViewModel? _selectedRow;
@@ -262,7 +263,9 @@ public sealed class StockListViewModel : ObservableObject
     {
         _allSnapshots.Clear();
         _allSnapshots.AddRange(snapshots);
-        var tradesByStockId = (trades ?? Array.Empty<BrokerTrade>())
+        _allTrades.Clear();
+        _allTrades.AddRange(trades ?? Array.Empty<BrokerTrade>());
+        var tradesByStockId = _allTrades
             .GroupBy(x => x.StockId)
             .ToDictionary(x => x.Key, x => (IReadOnlyList<BrokerTrade>)x.ToList());
         _acquisitionDateReviewStockIds.Clear();
@@ -320,11 +323,18 @@ public sealed class StockListViewModel : ObservableObject
             ? $"評価額 {Formatters.Jpy(knownMarketValue)}"
             : $"評価額合計 算出不可（確認済み {Formatters.Jpy(knownMarketValue)} / 未確認 {unknownMarketValueCount:N0} 件）";
         var coverage = PositionEvidenceCoverage.Build(visibleSnapshots, DateTime.Today);
+        var gainCoverage = new KnownGainCoverageService().Build(visibleSnapshots, _allTrades);
+        var gainSummary = gainCoverage.HasConfirmedSubtotal
+            ? gainCoverage.IsComplete
+                ? $" ・ 含み損益合計 {Formatters.SignedJpy(gainCoverage.ConfirmedGainJpy)}"
+                : $" ・ 含み損益の根拠あり分 {Formatters.SignedJpy(gainCoverage.ConfirmedGainJpy)}" +
+                  $"（{gainCoverage.ConfirmedCount}/{gainCoverage.ActiveCount}件、全体額ではありません）"
+            : string.Empty;
         VisibleSummary = $"表示 {Rows.Count:N0} 行（口座別 {visibleSnapshots.Count:N0} 件） / 全 {_allSnapshots.Count:N0} 件 ・ {marketValueSummary} ・ " +
             $"取得額 概算 {coverage.EstimatedCostCount:N0} 件 / 未確認 {coverage.UnconfirmedCostCount:N0} 件（損益集計対象外の評価額 " +
             $"{(coverage.ExcludedMarketValueJpy is decimal excluded ? Formatters.Jpy(excluded) : "算出不可")}） ・ " +
             $"価格更新遅れ {coverage.DelayedPriceCount:N0} 件 / 時刻不明 {coverage.UnknownPriceTimeCount:N0} 件 ・ " +
-            $"取得日要確認（全件） {_acquisitionDateReviewStockIds.Count:N0} 件";
+            $"取得日要確認（全件） {_acquisitionDateReviewStockIds.Count:N0} 件{gainSummary}";
     }
 
     private bool ShouldShow(StockSnapshot snapshot)

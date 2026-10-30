@@ -44,6 +44,13 @@
                     <TextBlock Text="{Binding MarketDataStatus}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="13" />
                     <TextBlock Text="{Binding DataUpdateStatus}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,4,0,0" />
                     <TextBlock Text="{Binding DataCoverageStatus}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding MarketRefreshStatus}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="失敗した株価のみ再試行" Command="{Binding DataContext.RetryFailedMarketDataCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,0" />
+                        <Button Content="為替・画面を再読込" Command="{Binding DataContext.RefreshCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Style="{StaticResource SecondaryButtonStyle}" />
+                    </StackPanel>
                 </StackPanel>
             </DockPanel>
 
@@ -476,6 +483,53 @@
                     </StackPanel>
                 </Border>
             </Grid>
+
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,8,0,0">
+                <Expander Header="月末記録と再集計差を確認">
+                    <StackPanel>
+                        <TextBlock Text="月末に記録した銘柄別・口座別の値と根拠を保存します。翌日以降に固定し、後から上書きしません。再集計は保存時の明細に現行の集計規則を適用した値で、現在の株価による過去日の評価ではありません。"
+                                   Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,4,0,8" />
+                        <TextBlock Text="{Binding MonthEndStatus}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <StackPanel Visibility="{Binding HasMonthEndRows, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <DataGrid ItemsSource="{Binding MonthEndRows}" SelectedItem="{Binding SelectedMonthEnd, Mode=TwoWay}"
+                                      IsReadOnly="True" AutoGenerateColumns="False" Height="160">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="月末日" Binding="{Binding Date}" Width="100" />
+                                    <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="110" />
+                                    <DataGridTextColumn Header="当時保存値" Binding="{Binding SavedTotal}" Width="*" />
+                                    <DataGridTextColumn Header="現行算式で再集計" Binding="{Binding RecalculatedTotal}" Width="*" />
+                                    <DataGridTextColumn Header="差" Binding="{Binding Difference}" Width="110" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="{Binding SelectedMonthEnd.DifferenceReason}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,3" />
+                            <TextBlock Text="{Binding SelectedMonthEnd.Formula}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding SelectedMonthEnd.Quality}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding SelectedMonthEnd.FxBasis}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" />
+                            <DataGrid ItemsSource="{Binding SelectedMonthEnd.PositionRows}" IsReadOnly="True" AutoGenerateColumns="False" Height="180" Margin="0,8,0,0">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="銘柄" Binding="{Binding Ticker}" Width="80" />
+                                    <DataGridTextColumn Header="口座" Binding="{Binding Account}" Width="130" />
+                                    <DataGridTextColumn Header="数量" Binding="{Binding Quantity}" Width="90" />
+                                    <DataGridTextColumn Header="当時評価額" Binding="{Binding MarketValue}" Width="110" />
+                                    <DataGridTextColumn Header="取得額" Binding="{Binding Cost}" Width="100" />
+                                    <DataGridTextColumn Header="品質" Binding="{Binding Quality}" Width="90" />
+                                    <DataGridTextColumn Header="取得額根拠" Binding="{Binding CostEvidence}" Width="180" />
+                                    <DataGridTextColumn Header="価格根拠" Binding="{Binding PriceEvidence}" Width="180" />
+                                    <DataGridTextColumn Header="為替根拠" Binding="{Binding FxEvidence}" Width="180" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <DataGrid ItemsSource="{Binding SelectedMonthEnd.CashRows}" IsReadOnly="True" AutoGenerateColumns="False" Height="100" Margin="0,8,0,0">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="現金口座" Binding="{Binding Account}" Width="130" />
+                                    <DataGridTextColumn Header="通貨" Binding="{Binding Currency}" Width="70" />
+                                    <DataGridTextColumn Header="円換算残高" Binding="{Binding Amount}" Width="110" />
+                                    <DataGridTextColumn Header="残高・換算根拠" Binding="{Binding Basis}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+            </Border>
 
             <Border Style="{StaticResource MetricCardStyle}" Margin="0,8,0,0">
                 <StackPanel>

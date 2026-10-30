@@ -84,7 +84,9 @@ public sealed class PerformancePeriodService
         {
             Problems = problems.Distinct().ToArray(), Balances = balances, Flows = flows,
             TimeWeighted = new(null, "不足条件を確認してください"), MoneyWeighted = new(null, "不足条件を確認してください"),
-            ModifiedDietz = new(null, "不足条件を確認してください")
+            ModifiedDietz = new(null, "不足条件を確認してください"),
+            Benchmark = new(null, null, null, input.Benchmark is null ? "比較指数未指定" :
+                "運用側の残高・外部入出金・為替に不足があるため比較できません。")
         };
         var openingTotal = input.OpeningSecuritiesJpy!.Value + balances.Sum(x => x.OpeningJpy!.Value);
         var closingTotal = input.ClosingSecuritiesJpy!.Value + balances.Sum(x => x.ClosingJpy!.Value);
@@ -101,8 +103,49 @@ public sealed class PerformancePeriodService
         return new()
         {
             OpeningTotalJpy = openingTotal, ClosingTotalJpy = closingTotal, ExternalNetFlowJpy = externalNet, ProfitJpy = profit,
-            Balances = balances, Flows = flows, TimeWeighted = twr, ModifiedDietz = dietz, MoneyWeighted = Xirr(cashFlows)
+            Balances = balances, Flows = flows, TimeWeighted = twr, ModifiedDietz = dietz, MoneyWeighted = Xirr(cashFlows),
+            Benchmark = CompareBenchmark(input, twr)
         };
+    }
+
+    public static PerformanceBenchmarkComparison CompareBenchmark(PerformancePeriodInput input, ReturnMeasure portfolioTwr)
+    {
+        var benchmark = input.Benchmark;
+        if (benchmark is null) return new(null, portfolioTwr.Value, null, "比較指数未指定");
+        if (benchmark.StartDate.Date != input.StartDate.Date || benchmark.EndDate.Date != input.EndDate.Date)
+            return new(null, portfolioTwr.Value, null, "指数と運用成績の期首・期末が異なります。期間を揃えてください。");
+        if (benchmark.IsHistoricalEstimate)
+            return new(null, portfolioTwr.Value, null, "遡及推計の指数値は実測と区別し、比較差を算出しません。");
+        if (!benchmark.SourceConfirmed || string.IsNullOrWhiteSpace(benchmark.Name) || string.IsNullOrWhiteSpace(benchmark.Evidence))
+            return new(null, portfolioTwr.Value, null, "指数名、両時点の公表値・出所と確認状態が必要です。");
+        if (!benchmark.IncludesNetDividends)
+            return new(null, portfolioTwr.Value, null, "保有成績は税引後配当を含みます。配当条件の異なる価格指数・税引前指数とは比較しません。");
+        if (!CashLedgerService.IsCurrency(benchmark.Currency) || benchmark.OpeningLevel is null or <= 0m ||
+            benchmark.ClosingLevel is null or <= 0m)
+            return new(null, portfolioTwr.Value, null, "指数の通貨と両時点の正の指数値を確認してください。");
+
+        double? YenRate(DateTime date)
+        {
+            if (benchmark.Currency == "JPY") return 1d;
+            var quotes = input.Fx.Where(x => x.Currency == benchmark.Currency && x.Date.Date == date.Date).ToArray();
+            if (quotes.Length != 1 || quotes[0].JpyPerUnit <= 0m || quotes[0].QuoteDate.Date > date.Date ||
+                (date.Date - quotes[0].QuoteDate.Date).TotalDays > 7 || string.IsNullOrWhiteSpace(quotes[0].Evidence))
+                return null;
+            return (double)quotes[0].JpyPerUnit;
+        }
+        var openingRate = YenRate(input.StartDate);
+        var closingRate = YenRate(input.EndDate);
+        if (openingRate is null || closingRate is null)
+            return new(null, portfolioTwr.Value, null, "指数の通貨を円に揃える期首・期末の為替根拠が不足しています。");
+        var openingJpy = (double)benchmark.OpeningLevel.Value * openingRate.Value;
+        var closingJpy = (double)benchmark.ClosingLevel.Value * closingRate.Value;
+        var benchmarkReturn = closingJpy / openingJpy - 1d;
+        if (!double.IsFinite(benchmarkReturn))
+            return new(null, portfolioTwr.Value, null, "指数値が計算可能な範囲を超えています。");
+        if (portfolioTwr.Value is not double twr)
+            return new(benchmarkReturn, null, null, "運用側の同期間TWRが算出不可です。XIRR年率・概算率との比較差は表示しません。");
+        return new(benchmarkReturn, twr, twr - benchmarkReturn,
+            "同一期間・円建て・税引後配当込み指数との期間率比較。指数と実際の税・手数料条件の差は根拠で確認してください。");
     }
 
     private static ReturnMeasure TimeWeighted(decimal opening, decimal closing,

@@ -7,5 +7,8 @@ public sealed class StockPosition
     public StockSplit Split { get; set; } = new();
     public CurrentHolding CurrentHolding { get; set; } = new();
     public MutualFundHolding MutualFund { get; set; } = new();
+    public string ManualChangeReason { get; set; } = string.Empty;
+    public string ExpectedAuditBeforeJson { get; set; } = string.Empty;
+    public string ExpectedAuditAfterJson { get; set; } = string.Empty;
     public bool IsMutualFund => AssetTypes.IsMutualFund(Stock.AssetType);
 }

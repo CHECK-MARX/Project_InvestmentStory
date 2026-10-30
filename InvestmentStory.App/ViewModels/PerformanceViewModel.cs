@@ -30,6 +30,7 @@ public sealed record PerformanceHistoryRow(PerformanceReport Report, bool Matche
         $"期首根拠: {Report.Input.OpeningEvidence}\n期末根拠: {Report.Input.ClosingEvidence}\n" +
         $"TWR: {PerformanceViewModel.Rate(Report.Result.TimeWeighted.Value)} / {Report.Result.TimeWeighted.Status}\nXIRR: {Xirr} / {Report.Result.MoneyWeighted.Status}\n" +
         $"修正ディーツ法: {PerformanceViewModel.Rate(Report.Result.ModifiedDietz.Value)} / {Report.Result.ModifiedDietz.Status}\n" +
+        $"比較指数: {Report.Input.Benchmark?.Name ?? "未指定"} / 差 {PerformanceViewModel.PercentagePoints(Report.Result.Benchmark.Difference)} / {Report.Result.Benchmark.Status}\n" +
         string.Join("\n", Report.Input.Fx.Select(x => $"{x.Date:yyyy/MM/dd} {x.Currency}: {x.JpyPerUnit}円 / 公表 {x.QuoteDate:yyyy/MM/dd} / {x.Evidence}")) + "\n" +
         string.Join("\n", Report.Input.FlowValuations.Select(x => $"入出金時点: 直前 {x.BeforeJpy}円 → 直後 {x.AfterJpy}円 / 順序{x.Sequence} / {x.Evidence}"));
 }
@@ -57,6 +58,8 @@ public sealed class PerformanceViewModel : ObservableObject
     private PerformancePeriodResult _result = new();
     private DateTime? _startDate = new DateTime(DateTime.Today.Year, 1, 1).AddDays(-1), _endDate = DateTime.Today.AddDays(-1);
     private string _opening = "", _closing = "", _openingEvidence = "", _closingEvidence = "", _message = "期間と評価根拠を入力し、現金台帳の残高照合を確認してください。";
+    private string _benchmarkName = "", _benchmarkCurrency = "JPY", _benchmarkOpening = "", _benchmarkClosing = "", _benchmarkEvidence = "";
+    private bool _benchmarkIncludesNetDividends, _benchmarkSourceConfirmed, _benchmarkIsHistoricalEstimate;
     private bool _securitiesConfirmed, _accountsConfirmed, _noInKindConfirmed, _isBusy;
     private PerformanceHistoryRow? _selectedHistory;
     private PerformanceFxRow? _selectedFx;
@@ -100,6 +103,14 @@ public sealed class PerformanceViewModel : ObservableObject
     public string Closing { get => _closing; set { if (SetProperty(ref _closing, value)) RequireReconfirmation(); } }
     public string OpeningEvidence { get => _openingEvidence; set { if (SetProperty(ref _openingEvidence, value)) RequireReconfirmation(); } }
     public string ClosingEvidence { get => _closingEvidence; set { if (SetProperty(ref _closingEvidence, value)) RequireReconfirmation(); } }
+    public string BenchmarkName { get => _benchmarkName; set { if (SetProperty(ref _benchmarkName, value)) Invalidate(); } }
+    public string BenchmarkCurrency { get => _benchmarkCurrency; set { if (SetProperty(ref _benchmarkCurrency, value)) Invalidate(); } }
+    public string BenchmarkOpening { get => _benchmarkOpening; set { if (SetProperty(ref _benchmarkOpening, value)) Invalidate(); } }
+    public string BenchmarkClosing { get => _benchmarkClosing; set { if (SetProperty(ref _benchmarkClosing, value)) Invalidate(); } }
+    public string BenchmarkEvidence { get => _benchmarkEvidence; set { if (SetProperty(ref _benchmarkEvidence, value)) Invalidate(); } }
+    public bool BenchmarkIncludesNetDividends { get => _benchmarkIncludesNetDividends; set { if (SetProperty(ref _benchmarkIncludesNetDividends, value)) Invalidate(); } }
+    public bool BenchmarkSourceConfirmed { get => _benchmarkSourceConfirmed; set { if (SetProperty(ref _benchmarkSourceConfirmed, value)) Invalidate(); } }
+    public bool BenchmarkIsHistoricalEstimate { get => _benchmarkIsHistoricalEstimate; set { if (SetProperty(ref _benchmarkIsHistoricalEstimate, value)) Invalidate(); } }
     public bool SecuritiesConfirmed { get => _securitiesConfirmed; set { if (SetProperty(ref _securitiesConfirmed, value)) Invalidate(); } }
     public bool AccountsConfirmed { get => _accountsConfirmed; set { if (SetProperty(ref _accountsConfirmed, value)) Invalidate(); } }
     public bool NoInKindConfirmed { get => _noInKindConfirmed; set { if (SetProperty(ref _noInKindConfirmed, value)) Invalidate(); } }
@@ -112,6 +123,8 @@ public sealed class PerformanceViewModel : ObservableObject
     public string Twr => Rate(Result.TimeWeighted.Value);
     public string Xirr => Rate(Result.MoneyWeighted.Value);
     public string Dietz => Rate(Result.ModifiedDietz.Value);
+    public string BenchmarkPeriodReturn => Rate(Result.Benchmark.BenchmarkPeriodReturn);
+    public string BenchmarkDifference => PercentagePoints(Result.Benchmark.Difference);
     public string RequiredCashPeriod => StartDate is DateTime start && EndDate is DateTime end && start < end
         ? $"現金台帳では、各口座・通貨について {start.AddDays(1):yyyy/MM/dd} ～ {end:yyyy/MM/dd} を照合してください。期首は開始日の前日末、期末は終了日末です。"
         : "開始日末より後の終了日末を指定してください。";
@@ -120,6 +133,8 @@ public sealed class PerformanceViewModel : ObservableObject
     public PerformanceFxRow? SelectedFx { get => _selectedFx; set => SetProperty(ref _selectedFx, value); }
     public PerformanceHistoryRow? SelectedHistory { get => _selectedHistory; set { SetProperty(ref _selectedHistory, value); UseHistoryCommand.RaiseCanExecuteChanged(); } }
     public static string Rate(double? value) => value is double rate ? rate.ToString("P2", CultureInfo.CurrentCulture) : "算出不可";
+    public static string PercentagePoints(double? value) => value is double difference
+        ? (difference * 100d).ToString("+#,0.00;-#,0.00;0.00", CultureInfo.CurrentCulture) + " pt" : "算出不可";
     public static string Money(decimal? value) => value is decimal amount ? amount.ToString("#,0.##", CultureInfo.CurrentCulture) + "円" : "未確認";
     private void RefreshCommands()
     {
@@ -166,6 +181,9 @@ public sealed class PerformanceViewModel : ObservableObject
         FxRows.Clear(); History.Clear(); SelectedHistory = null; SelectedFx = null;
         ClearFlowValuations();
         _opening = _closing = _openingEvidence = _closingEvidence = "";
+        _benchmarkName = _benchmarkOpening = _benchmarkClosing = _benchmarkEvidence = "";
+        _benchmarkCurrency = "JPY";
+        _benchmarkIncludesNetDividends = _benchmarkSourceConfirmed = _benchmarkIsHistoricalEstimate = false;
         _securitiesConfirmed = _accountsConfirmed = _noInKindConfirmed = false;
         _startDate = new DateTime(DateTime.Today.Year, 1, 1).AddDays(-1); _endDate = DateTime.Today.AddDays(-1);
         Invalidate(); Message = "期間と評価根拠を入力してください。";
@@ -182,6 +200,10 @@ public sealed class PerformanceViewModel : ObservableObject
         OpeningSecuritiesJpy = ParseAmount(Opening), ClosingSecuritiesJpy = ParseAmount(Closing),
         OpeningEvidence = OpeningEvidence.Trim(), ClosingEvidence = ClosingEvidence.Trim(),
         SecuritiesConfirmed = SecuritiesConfirmed, AllAccountsConfirmed = AccountsConfirmed, NoInKindTransfersConfirmed = NoInKindConfirmed,
+        Benchmark = string.IsNullOrWhiteSpace(BenchmarkName) ? null : new PerformanceBenchmark(BenchmarkName.Trim(),
+            StartDate ?? DateTime.MinValue, EndDate ?? DateTime.MinValue, BenchmarkCurrency.Trim().ToUpperInvariant(),
+            ParseAmount(BenchmarkOpening), ParseAmount(BenchmarkClosing), BenchmarkIncludesNetDividends,
+            BenchmarkSourceConfirmed, BenchmarkIsHistoricalEstimate, BenchmarkEvidence.Trim()),
         Fx = FxRows.Select(x => new PerformanceFx(x.Date ?? DateTime.MinValue, x.Currency.Trim().ToUpperInvariant(),
             ParseAmount(x.Rate) ?? 0m, x.QuoteDate ?? DateTime.MinValue, x.Evidence.Trim())).ToArray(),
         FlowValuations = FlowValuations.Select(x => new PerformanceFlowValuation(x.OperationId,
@@ -230,7 +252,9 @@ public sealed class PerformanceViewModel : ObservableObject
             if (StartDate is not DateTime start || EndDate is not DateTime end || start >= end) throw new ArgumentException("期間を指定してください。");
             var ledger = PerformancePeriodService.RelevantLedger(_repository().GetState(), end);
             var currencies = ledger.Operations.SelectMany(x => x.Legs).Select(x => x.Currency)
-                .Concat(ledger.Reconciliations.Select(x => x.Currency)).Where(x => x != "JPY").Distinct();
+                .Concat(ledger.Reconciliations.Select(x => x.Currency))
+                .Concat(string.IsNullOrWhiteSpace(BenchmarkName) ? [] : [BenchmarkCurrency.Trim().ToUpperInvariant()])
+                .Where(x => x != "JPY" && CashLedgerService.IsCurrency(x)).Distinct();
             var required = currencies.SelectMany(currency => new[] { (Date: start.Date, Currency: currency), (Date: end.Date, Currency: currency) })
                 .Concat(ledger.Operations.Where(x => x.CancelledAtUtc is null && x.Date.Date > start.Date &&
                     x.Kind is CashOperationKind.Deposit or CashOperationKind.Withdrawal)
@@ -250,6 +274,14 @@ public sealed class PerformanceViewModel : ObservableObject
         Opening = input.OpeningSecuritiesJpy?.ToString(CultureInfo.CurrentCulture) ?? "";
         Closing = input.ClosingSecuritiesJpy?.ToString(CultureInfo.CurrentCulture) ?? "";
         OpeningEvidence = input.OpeningEvidence; ClosingEvidence = input.ClosingEvidence;
+        BenchmarkName = input.Benchmark?.Name ?? "";
+        BenchmarkCurrency = input.Benchmark?.Currency ?? "JPY";
+        BenchmarkOpening = input.Benchmark?.OpeningLevel?.ToString(CultureInfo.CurrentCulture) ?? "";
+        BenchmarkClosing = input.Benchmark?.ClosingLevel?.ToString(CultureInfo.CurrentCulture) ?? "";
+        BenchmarkEvidence = input.Benchmark?.Evidence ?? "";
+        BenchmarkIncludesNetDividends = input.Benchmark?.IncludesNetDividends ?? false;
+        BenchmarkSourceConfirmed = input.Benchmark?.SourceConfirmed ?? false;
+        BenchmarkIsHistoricalEstimate = input.Benchmark?.IsHistoricalEstimate ?? false;
         foreach (var row in FxRows) row.PropertyChanged -= FxChanged;
         FxRows.Clear();
         foreach (var fx in input.Fx) AddFx(new() { Date = fx.Date, QuoteDate = fx.QuoteDate, Currency = fx.Currency,

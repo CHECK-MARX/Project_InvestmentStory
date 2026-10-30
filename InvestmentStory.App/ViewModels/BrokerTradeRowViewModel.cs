@@ -5,7 +5,7 @@ namespace InvestmentStory.App.ViewModels;
 
 public sealed class BrokerTradeRowViewModel
 {
-    public BrokerTradeRowViewModel(BrokerTrade trade)
+    public BrokerTradeRowViewModel(BrokerTrade trade, bool costUnverified = false)
     {
         TradeDate = trade.TradeDate.ToString("yyyy/MM/dd");
         SettlementDate = trade.SettlementDate.ToString("yyyy/MM/dd");
@@ -19,9 +19,12 @@ public sealed class BrokerTradeRowViewModel
         SettlementAmountJpy = Formatters.Jpy(trade.SettlementAmountJpy);
         FeeJpy = Formatters.Jpy(trade.FeeJpy);
         TaxJpy = Formatters.Jpy(trade.TaxJpy);
-        RealizedGainLossJpy = Formatters.SignedJpy(trade.RealizedGainLossJpy);
+        RealizedGainLossJpy = costUnverified && trade.SignedQuantity < 0m
+            ? "算出不可" : Formatters.SignedJpy(trade.RealizedGainLossJpy);
         AfterTradeQuantity = Formatters.Number(trade.AfterTradeQuantity);
-        AfterTradeAverageCost = Formatters.Money(trade.AfterTradeAverageCost, trade.Currency);
+        AfterTradeAverageCost = costUnverified || trade.TradeType is "StockSplitCandidate" or "TransferIn"
+            ? "原価要確認"
+            : Formatters.Money(trade.AfterTradeAverageCost, trade.Currency);
         Source = string.IsNullOrWhiteSpace(trade.Source) ? "未取得" : FormatSource(trade.Source);
     }
 
@@ -55,6 +58,11 @@ public sealed class BrokerTradeRowViewModel
             return "株式分割";
         }
 
+        if (tradeType.Equals("StockSplitCandidate", StringComparison.OrdinalIgnoreCase))
+        {
+            return "無償入庫（分割候補・要確認）";
+        }
+
         if (tradeType.Equals("ReverseSplit", StringComparison.OrdinalIgnoreCase) ||
             tradeType.Equals("ReverseStockSplit", StringComparison.OrdinalIgnoreCase) ||
             tradeType.Equals("StockConsolidation", StringComparison.OrdinalIgnoreCase))
@@ -64,7 +72,7 @@ public sealed class BrokerTradeRowViewModel
 
         if (tradeType.Equals("TransferIn", StringComparison.OrdinalIgnoreCase))
         {
-            return "入庫";
+            return "入庫（移管元・原価要確認）";
         }
 
         if (tradeType.Equals("TransferOut", StringComparison.OrdinalIgnoreCase))

@@ -20,6 +20,9 @@
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
             <views:DashboardView />
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:OnboardingViewModel}">
+            <views:OnboardingView />
+        </DataTemplate>
         <DataTemplate DataType="{x:Type vm:StockListViewModel}">
             <views:StockListView />
         </DataTemplate>
@@ -55,6 +58,12 @@
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:AllocationViewModel}">
             <views:AllocationView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:FundExposureViewModel}">
+            <views:FundExposureView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ScenarioComparisonViewModel}">
+            <views:ScenarioComparisonView />
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:NisaViewModel}">
             <views:NisaView />
@@ -194,6 +203,18 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="A" Style="{StaticResource NavIconTextStyle}" />
                             <TextBlock Text="資産配分目標" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowFundExposureCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="ETF・投信の内訳">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="F" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="ETF・投信の内訳" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding ShowScenarioComparisonCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="シナリオ比較">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="S" Style="{StaticResource NavIconTextStyle}" />
+                            <TextBlock Text="シナリオ比較" Style="{StaticResource NavLabelTextStyle}" Visibility="{Binding SidebarTextVisibility}" />
                         </StackPanel>
                     </Button>
                     <Button Command="{Binding ShowNisaCommand}" Style="{StaticResource NavButtonStyle}" ToolTipService.IsEnabled="{Binding IsSidebarCollapsed}" ToolTip="NISA評価額と投資枠">

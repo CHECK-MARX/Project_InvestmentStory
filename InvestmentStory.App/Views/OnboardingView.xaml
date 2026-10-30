@@ -1,0 +1,46 @@
+<UserControl x:Class="InvestmentStory.App.Views.OnboardingView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24" MaxWidth="900" HorizontalAlignment="Left">
+            <TextBlock Text="はじめに" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="まだ保有データがありません。始め方を一つ選び、次の画面で内容を確認してください。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,18" />
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="1. 始め方を選ぶ" Style="{StaticResource SectionTitleStyle}" />
+                    <Button Content="サンプルで画面を試す" Command="{Binding SelectSampleCommand}"
+                            Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Stretch" Margin="0,12,0,0" />
+                    <TextBlock Text="練習用の別DBを使います。通常データへ戻れます。" Style="{StaticResource SubtleTextStyle}" Margin="8,4,0,8" />
+                    <Button Content="証券会社のCSVから始める" Command="{Binding SelectCsvCommand}"
+                            Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Stretch" />
+                    <TextBlock Text="取込前に形式、行数、差分を確認します。" Style="{StaticResource SubtleTextStyle}" Margin="8,4,0,8" />
+                    <Button Content="銘柄を手動で登録する" Command="{Binding SelectManualCommand}"
+                            Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Stretch" />
+                    <TextBlock Text="手元の明細を見ながら一件ずつ登録します。" Style="{StaticResource SubtleTextStyle}" Margin="8,4,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0"
+                    Visibility="{Binding HasSelection, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Text="2. 次に進む" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="{Binding SelectedTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,8,0,4" />
+                    <TextBlock Text="{Binding NextAction}" TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" />
+                    <WrapPanel Margin="0,12,0,0">
+                        <Button Content="選び直す" Command="{Binding BackCommand}" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button Content="{Binding StartButtonText}" Command="{Binding StartCommand}" Style="{StaticResource ActionButtonStyle}" Margin="8,0,0,0" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="用語の目安" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="保有残高: ある日付に口座で持っている銘柄と数量。取得額: 買付や移管の根拠に基づく購入元本。評価額: 現在の価格と為替を使った参考額。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="CSVを取り込んだ後は『今日の確認』で未照合・取得額不足を確認してください。根拠がない金額は0円や確定損益として扱いません。"
+                               TextWrapping="Wrap" Style="{StaticResource SubtleTextStyle}" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

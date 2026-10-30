@@ -9,11 +9,18 @@ public sealed class StockEditorViewModel : ObservableObject
 {
     private readonly Action<StockPosition> _save;
     private readonly Action<int> _delete;
+    private readonly Func<string, bool>? _confirmChanges;
     private int _stockId;
     private int _purchaseId;
     private int _splitId;
     private int _currentHoldingId;
+    private string _currentHoldingSourceFile = string.Empty;
+    private int _currentHoldingSourceRowNumber;
     private decimal _loadedPurchaseShares;
+    private decimal _loadedCurrentShares;
+    private decimal _loadedCurrentPrice;
+    private decimal _loadedCurrentExchangeRate;
+    private string _loadedBroker = string.Empty;
     private decimal _loadedPurchaseUnitPrice;
     private decimal _loadedPurchaseExchangeRate;
     private decimal _loadedAcquisitionAmountJpy;
@@ -30,10 +37,12 @@ public sealed class StockEditorViewModel : ObservableObject
     private string _loadedCustodyType = string.Empty;
     private string _errorMessage = string.Empty;
 
-    public StockEditorViewModel(Action<StockPosition> save, Action<int> delete)
+    public StockEditorViewModel(Action<StockPosition> save, Action<int> delete,
+        Func<string, bool>? confirmChanges = null)
     {
         _save = save;
         _delete = delete;
+        _confirmChanges = confirmChanges;
         SaveCommand = new RelayCommand(Save);
         NewCommand = new RelayCommand(() => Load(null));
         DeleteCommand = new RelayCommand(Delete, () => StockId != 0);
@@ -70,6 +79,7 @@ public sealed class StockEditorViewModel : ObservableObject
     public string Market { get; set; } = string.Empty;
     public string DataSource { get; set; } = "手入力";
     public string StockMemo { get; set; } = string.Empty;
+    public string ChangeReason { get; set; } = string.Empty;
     public DateTime PurchaseDate { get; set; } = DateTime.MinValue;
     public DateTime? PurchaseDateSelection
     {
@@ -135,6 +145,8 @@ public sealed class StockEditorViewModel : ObservableObject
         _purchaseId = position?.Purchase.Id ?? 0;
         _splitId = position?.Split.Id ?? 0;
         _currentHoldingId = position?.CurrentHolding.Id ?? 0;
+        _currentHoldingSourceFile = position?.CurrentHolding.SourceFile ?? string.Empty;
+        _currentHoldingSourceRowNumber = position?.CurrentHolding.SourceRowNumber ?? 0;
         Name = position?.Stock.Name ?? string.Empty;
         Ticker = position?.Stock.Ticker ?? string.Empty;
         Country = position?.Stock.Country ?? "米国";
@@ -143,6 +155,8 @@ public sealed class StockEditorViewModel : ObservableObject
         _loadedAccountType = position?.Stock.AccountType ?? AccountTypes.Unknown;
         _loadedCustodyType = position?.Stock.CustodyType ?? string.Empty;
         Broker = position?.Stock.Broker ?? string.Empty;
+        _loadedBroker = Broker;
+        ChangeReason = string.Empty;
         Sector = position?.Stock.Sector ?? string.Empty;
         Industry = position?.Stock.Industry ?? string.Empty;
         Market = position?.Stock.Market ?? string.Empty;
@@ -175,6 +189,9 @@ public sealed class StockEditorViewModel : ObservableObject
         CurrentShares = position?.CurrentHolding.CurrentShares ?? 0m;
         CurrentPrice = position?.CurrentHolding.CurrentPrice ?? 0m;
         CurrentExchangeRate = position?.CurrentHolding.CurrentExchangeRate ?? 1m;
+        _loadedCurrentShares = CurrentShares;
+        _loadedCurrentPrice = CurrentPrice;
+        _loadedCurrentExchangeRate = CurrentExchangeRate;
         CurrentExchangeRateAcquiredAt = position?.CurrentHolding.ExchangeRateAcquiredAt ?? DateTime.Now;
         CurrentExchangeRateSource = position?.CurrentHolding.ExchangeRateSource ?? "手入力";
         CurrentExchangeRateInputType = position?.CurrentHolding.ExchangeRateInputType ?? "手入力";
@@ -222,6 +239,16 @@ public sealed class StockEditorViewModel : ObservableObject
         try
         {
             var position = BuildPosition();
+            if (StockId != 0 && _confirmChanges is not null)
+            {
+                if (string.IsNullOrWhiteSpace(ChangeReason))
+                {
+                    ErrorMessage = "手動修正の理由を入力してください。";
+                    return;
+                }
+                if (!_confirmChanges(BuildChangePreview(position)))
+                    return;
+            }
             _save(position);
             var missingForeignCost = position.Stock.Currency != "JPY" &&
                 !new InvestmentCalculator().CreateSnapshot(position).HasKnownPurchaseCostJpy;
@@ -272,6 +299,7 @@ public sealed class StockEditorViewModel : ObservableObject
 
         return new StockPosition
         {
+            ManualChangeReason = ChangeReason.Trim(),
             Stock = new Stock
             {
                 Id = StockId,
@@ -340,9 +368,34 @@ public sealed class StockEditorViewModel : ObservableObject
                 CurrentPriceSource = CurrentPriceSource.Trim(),
                 DividendInfoAcquiredAt = DividendInfoAcquiredAt,
                 DividendInfoSource = DividendInfoSource.Trim(),
+                SourceFile = _currentHoldingSourceFile,
+                SourceRowNumber = _currentHoldingSourceRowNumber,
                 UpdatedAt = UpdatedAt
             }
         };
+    }
+
+    private string BuildChangePreview(StockPosition position)
+    {
+        decimal? beforeValue = _loadedCurrentPrice > 0m &&
+            (_loadedCurrency == "JPY" || _loadedCurrentExchangeRate > 0m)
+            ? _loadedCurrentShares * _loadedCurrentPrice *
+              (_loadedCurrency == "JPY" ? 1m : _loadedCurrentExchangeRate) : null;
+        decimal? afterValue = position.CurrentHolding.CurrentPrice > 0m &&
+            (position.Stock.Currency == "JPY" || position.CurrentHolding.CurrentExchangeRate > 0m)
+            ? position.CurrentHolding.CurrentShares * position.CurrentHolding.CurrentPrice *
+              (position.Stock.Currency == "JPY" ? 1m : position.CurrentHolding.CurrentExchangeRate) : null;
+        var valueDifference = beforeValue.HasValue && afterValue.HasValue
+            ? $"{afterValue.Value - beforeValue.Value:+#,0;-#,0;0}円" : "算出不可（株価・為替を確認）";
+        return $"手動修正の影響を確認してください。\n\n" +
+               $"証券会社: {_loadedBroker} → {position.Stock.Broker}\n" +
+               $"口座: {AccountTypes.DisplayName(_loadedAccountType)}（変更なし）\n" +
+               $"保有数量: {_loadedCurrentShares:N4} → {position.CurrentHolding.CurrentShares:N4}\n" +
+               $"確定取得額: {_loadedAcquisitionAmountJpy:N0}円 → {position.Purchase.AcquisitionAmountJpy:N0}円\n" +
+               $"確定取得額の差: {position.Purchase.AcquisitionAmountJpy - _loadedAcquisitionAmountJpy:+#,0;-#,0;0}円\n" +
+               $"参考取得額: {_loadedReferenceAcquisitionAmountJpy:N0}円 → {position.Purchase.ReferenceAcquisitionAmountJpy:N0}円\n" +
+               $"評価額の概算差: {valueDifference}\n" +
+               $"理由: {ChangeReason.Trim()}\n\n保存しますか？";
     }
 
     private bool Validate()

@@ -594,7 +594,7 @@ public sealed class DatabaseInitializerTests
                       AND Quantity = 45
                     LIMIT 1;
                     """;
-                Assert.Equal("StockSplit", (string)command.ExecuteScalar()!);
+                Assert.Equal("StockSplitCandidate", (string)command.ExecuteScalar()!);
             }
         }
         finally
@@ -609,7 +609,7 @@ public sealed class DatabaseInitializerTests
     }
 
     [Fact]
-    public void Initialize_NormalizesTransferInSplitCandidateUsingCurrentHoldings()
+    public void Initialize_DoesNotInferHistoricalSplitFromCurrentHoldings()
     {
         var path = Path.Combine(Path.GetTempPath(), $"investment_story_current_holding_split_repair_{Guid.NewGuid():N}.db");
         try
@@ -654,9 +654,9 @@ public sealed class DatabaseInitializerTests
                     """;
                 using var reader = command.ExecuteReader();
                 Assert.True(reader.Read());
-                Assert.Equal("StockSplit", reader.GetString(0));
-                Assert.Equal(30d, reader.GetDouble(1), precision: 0);
-                Assert.Equal(170.723398984269d, reader.GetDouble(2), precision: 6);
+                Assert.Equal("TransferIn", reader.GetString(0));
+                Assert.Equal(20d, reader.GetDouble(1), precision: 0);
+                Assert.Equal(0d, reader.GetDouble(2), precision: 6);
             }
         }
         finally

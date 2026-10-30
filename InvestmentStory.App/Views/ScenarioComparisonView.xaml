@@ -1,0 +1,60 @@
+<UserControl x:Class="InvestmentStory.App.Views.ScenarioComparisonView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <TextBlock Text="拠出・配当・為替のシナリオ比較" Style="{StaticResource SectionTitleStyle}" />
+            <TextBlock Text="現在の保有を基準に、将来の仮定を変えて比較します。実際の入出金・保有・配当記録は変更しません。"
+                       Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,6,0,14" />
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="1. 条件を入力" Style="{StaticResource SectionTitleStyle}" />
+                    <UniformGrid Columns="3" Margin="0,8,0,0">
+                        <StackPanel Margin="0,0,12,8"><TextBlock Text="案の名前" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel Margin="0,0,12,8"><TextBlock Text="毎月の追加拠出（円）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding MonthlyContribution, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel Margin="0,0,12,8"><TextBlock Text="想定年率（%）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding AnnualReturn, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel Margin="0,0,12,8"><TextBlock Text="配当減少率（%）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding DividendReduction, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel Margin="0,0,12,8"><TextBlock Text="USD/JPYの変化（円、円高はマイナス）" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding UsdJpyChange, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                        <StackPanel Margin="0,0,12,8"><TextBlock Text="予測年数" Style="{StaticResource LabelTextStyle}" /><TextBox Text="{Binding Years, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                    </UniformGrid>
+                    <Button Content="計算" Command="{Binding CalculateCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="2. 結果を確認" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="{Binding BaselineText}" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,6" />
+                    <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap" FontSize="18" Margin="0,4,0,8" />
+                    <TextBlock Text="{Binding Message}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="3. 前提と注意" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="評価額は確認済みの保有がすべて揃う場合のみ計算します。月末に拠出し、想定年率を月割りした複利で計算します。売買・手数料・税・インフレは反映しません。配当減少率は現在の年間税引前見込みに適用し、将来資産への再投資には含めません。USD/JPY変化はUSD建て保有と配当見込みにだけ適用し、現金や他通貨は対象外です。これは実績や確定予測ではありません。"
+                               Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="4. 保存した案を比較" Style="{StaticResource SectionTitleStyle}" />
+                    <Button Content="この条件と結果を保存" Command="{Binding SaveCommand}" Style="{StaticResource ActionButtonStyle}" HorizontalAlignment="Left" Margin="0,8,0,10" />
+                    <WrapPanel>
+                        <StackPanel Width="350" Margin="0,0,12,0"><TextBlock Text="案 A" Style="{StaticResource LabelTextStyle}" /><ComboBox ItemsSource="{Binding History}" SelectedItem="{Binding SelectedA}" /></StackPanel>
+                        <StackPanel Width="350"><TextBlock Text="案 B" Style="{StaticResource LabelTextStyle}" /><ComboBox ItemsSource="{Binding History}" SelectedItem="{Binding SelectedB}" /></StackPanel>
+                    </WrapPanel>
+                    <TextBlock Text="{Binding Comparison}" TextWrapping="Wrap" Margin="0,10,0,8" />
+                    <DataGrid ItemsSource="{Binding History}" AutoGenerateColumns="False" IsReadOnly="True" Height="250">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="保存案" Binding="{Binding Label}" Width="190" />
+                            <DataGridTextColumn Header="保存時の実データ基準" Binding="{Binding Baseline}" Width="220" />
+                            <DataGridTextColumn Header="仮定" Binding="{Binding Assumptions}" Width="*" />
+                            <DataGridTextColumn Header="将来参考評価額" Binding="{Binding Projected}" Width="150" />
+                            <DataGridTextColumn Header="年間税引前配当見込み" Binding="{Binding Dividend}" Width="170" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

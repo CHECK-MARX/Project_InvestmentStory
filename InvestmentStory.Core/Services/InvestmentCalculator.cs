@@ -122,7 +122,8 @@ public sealed class InvestmentCalculator
         DateTime asOf,
         ExchangeRateQuote? usdJpyQuote = null,
         PortfolioReturnSummary? returnSummary = null,
-        SnapshotComparison? comparison = null)
+        SnapshotComparison? comparison = null,
+        bool hasUnverifiedTradeCost = false)
     {
         var snapshotList = snapshots.ToList();
         var activeSnapshots = snapshotList.Where(x => PositionEvidenceService.IsActiveHolding(x.Position)).ToList();
@@ -236,6 +237,7 @@ public sealed class InvestmentCalculator
             AnnualGoalGapJpy = goal is null ? 0m : Math.Max(0m, goal.AnnualPassiveIncomeGoal - thisYearActual),
             MonthlyGoalGapJpy = goal is null ? 0m : Math.Max(0m, goal.MonthlyPassiveIncomeGoal - thisMonthActual),
             RealizedGainLossJpy = returnSummary?.RealizedGainLossJpy ?? 0m,
+            HasUnverifiedTradeCost = hasUnverifiedTradeCost,
             CumulativeDividendJpy = returnSummary?.CumulativeDividendJpy ?? actualDividends.Sum(x => x.NetAmountJpy > 0m ? x.NetAmountJpy : x.JpyAmount),
             TotalReturnJpy = returnSummary?.TotalReturnJpy ?? totalGainJpy,
             Top5ConcentrationRate = returnSummary?.Top5ConcentrationRate ?? 0m,

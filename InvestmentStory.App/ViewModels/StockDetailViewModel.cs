@@ -20,15 +20,147 @@ public sealed class StockDetailViewModel : ObservableObject
     private decimal _chartCurrentPriceValue;
     private decimal _chartAverageCostValue;
     private string _chartCurrency = "JPY";
+    private readonly Action<CorporateAction>? _saveCorporateAction;
+    private readonly Func<PositionChangeAudit, string, bool>? _revertPositionChange;
+    private readonly Func<int, DateTime, CorporateActionBalance>? _loadHistoricalBalance;
+    private readonly Action<MarketAnomalyCandidate, string, string>? _reviewMarketAnomaly;
+    private readonly Func<int, IReadOnlyList<MarketAnomalyDecision>>? _loadMarketAnomalyDecisions;
+    private MarketAnomalyRowViewModel? _selectedMarketAnomaly;
+    private string _marketAnomalyMessage = string.Empty;
+    private string _corporateActionMessage = string.Empty;
+    private CorporateActionRowViewModel? _selectedCorporateAction;
+    private PositionChangeAuditRowViewModel? _selectedManualChange;
+    private string _manualChangeMessage = string.Empty;
+    private string _historicalBalanceStatus = string.Empty;
 
-    public StockDetailViewModel()
+    public StockDetailViewModel(Action<CorporateAction>? saveCorporateAction = null,
+        Func<PositionChangeAudit, string, bool>? revertPositionChange = null,
+        Func<int, DateTime, CorporateActionBalance>? loadHistoricalBalance = null,
+        Action<MarketAnomalyCandidate, string, string>? reviewMarketAnomaly = null,
+        Func<int, IReadOnlyList<MarketAnomalyDecision>>? loadMarketAnomalyDecisions = null)
     {
+        _saveCorporateAction = saveCorporateAction;
+        _revertPositionChange = revertPositionChange;
+        _loadHistoricalBalance = loadHistoricalBalance;
+        _reviewMarketAnomaly = reviewMarketAnomaly;
+        _loadMarketAnomalyDecisions = loadMarketAnomalyDecisions;
         RefreshPriceChartCommand = new RelayCommand(() => PriceChartRefreshRequested?.Invoke(this, EventArgs.Empty));
+        SaveCorporateActionCommand = new RelayCommand(SaveCorporateAction);
+        LoadCorporateActionCorrectionCommand = new RelayCommand(LoadCorporateActionCorrection);
+        RevertManualChangeCommand = new RelayCommand(RevertManualChange);
+        RefreshHistoricalBalanceCommand = new RelayCommand(RefreshHistoricalBalance);
+        ConfirmMarketAnomalyCommand = new RelayCommand(() => ReviewMarketAnomaly("Confirmed"));
+        AcceptMarketAnomalyCommand = new RelayCommand(() => ReviewMarketAnomaly("Dismissed"));
     }
 
     public event EventHandler? PriceChartRefreshRequested;
 
+    public ObservableCollection<MarketAnomalyRowViewModel> MarketAnomalyRows { get; } = new();
+    public ObservableCollection<string> MarketAnomalyDecisionRows { get; } = new();
+    public MarketAnomalyRowViewModel? SelectedMarketAnomaly
+    {
+        get => _selectedMarketAnomaly;
+        set
+        {
+            if (!SetProperty(ref _selectedMarketAnomaly, value)) return;
+            MarketAnomalyDecisionRows.Clear();
+            if (value is null || _loadMarketAnomalyDecisions is null) return;
+            foreach (var decision in _loadMarketAnomalyDecisions(value.Candidate.Id))
+                MarketAnomalyDecisionRows.Add($"{decision.RecordedAtUtc.ToLocalTime():yyyy/MM/dd HH:mm} / " +
+                    $"{(decision.Decision == "Confirmed" ? "異常として保留" : decision.Decision == "Dismissed" ? "確認済み・候補を除外" : "再確認待ち")} / {decision.Reason}");
+        }
+    }
+    public string MarketAnomalyReason { get; set; } = string.Empty;
+    public string MarketAnomalyMessage
+    {
+        get => _marketAnomalyMessage;
+        private set => SetProperty(ref _marketAnomalyMessage, value);
+    }
+    public ICommand ConfirmMarketAnomalyCommand { get; }
+    public ICommand AcceptMarketAnomalyCommand { get; }
+
+    private void ReviewMarketAnomaly(string decision)
+    {
+        if (SelectedMarketAnomaly is null || _reviewMarketAnomaly is null)
+        {
+            MarketAnomalyMessage = "確認する候補を選択してください。";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(MarketAnomalyReason))
+        {
+            MarketAnomalyMessage = "判断理由を入力してください。";
+            return;
+        }
+        if (decision == "Dismissed" && SelectedMarketAnomaly.Category == "通貨不一致")
+        {
+            MarketAnomalyMessage = "通貨が異なる価格は採用できません。ティッカー・取得元または登録通貨を修正し、再取得してください。";
+            return;
+        }
+        try
+        {
+            var category = SelectedMarketAnomaly.Category;
+            _reviewMarketAnomaly(SelectedMarketAnomaly.Candidate, decision, MarketAnomalyReason);
+            MarketAnomalyReason = string.Empty;
+            OnPropertyChanged(nameof(MarketAnomalyReason));
+            MarketAnomalyMessage = decision == "Dismissed"
+                ? category == "株価急変"
+                    ? "確認済みです。同じ価格を再取得すると採用できます。"
+                    : "確認済みとして候補を除外しました。取引データは変更されていません。"
+                : "異常として保留しました。元データは変更されていません。";
+        }
+        catch (Exception ex) { MarketAnomalyMessage = $"判断を保存できませんでした: {ex.Message}"; }
+    }
+
     public bool HasStock => _snapshot is not null;
+    public ICommand SaveCorporateActionCommand { get; }
+    public ICommand RevertManualChangeCommand { get; }
+    public ICommand RefreshHistoricalBalanceCommand { get; }
+    public DateTime HistoricalBalanceDate { get; set; } = DateTime.Today;
+    public ObservableCollection<AccountBalanceRowViewModel> HistoricalBalanceRows { get; } = new();
+    public string HistoricalBalanceStatus
+    {
+        get => _historicalBalanceStatus;
+        private set => SetProperty(ref _historicalBalanceStatus, value);
+    }
+    public PositionChangeAuditRowViewModel? SelectedManualChange
+    {
+        get => _selectedManualChange;
+        set => SetProperty(ref _selectedManualChange, value);
+    }
+    public string RevertReason { get; set; } = string.Empty;
+    public string ManualChangeMessage
+    {
+        get => _manualChangeMessage;
+        private set => SetProperty(ref _manualChangeMessage, value);
+    }
+    public ICommand LoadCorporateActionCorrectionCommand { get; }
+    public CorporateActionRowViewModel? SelectedCorporateAction
+    {
+        get => _selectedCorporateAction;
+        set => SetProperty(ref _selectedCorporateAction, value);
+    }
+    public long? ActionSupersedesId { get; private set; }
+    public string ActionCorrectionLabel => ActionSupersedesId.HasValue
+        ? $"ID {ActionSupersedesId} を訂正します。元記録は履歴に残ります。" : "新規イベントを記録します。";
+    public DateTime ActionDate { get; set; } = DateTime.Today;
+    public string ActionKind { get; set; } = "Transfer";
+    public string ActionStatus { get; set; } = "Pending";
+    public string ActionSourceBroker { get; set; } = string.Empty;
+    public string ActionSourceAccount { get; set; } = AccountTypes.Unknown;
+    public string ActionDestinationBroker { get; set; } = string.Empty;
+    public string ActionDestinationAccount { get; set; } = AccountTypes.Unknown;
+    public decimal ActionQuantity { get; set; }
+    public decimal ActionSplitRatio { get; set; } = 1m;
+    public decimal? ActionCarriedCostJpy { get; set; }
+    public string ActionOldTicker { get; set; } = string.Empty;
+    public string ActionNewTicker { get; set; } = string.Empty;
+    public string ActionEvidence { get; set; } = string.Empty;
+    public string ActionReason { get; set; } = string.Empty;
+    public string CorporateActionMessage
+    {
+        get => _corporateActionMessage;
+        private set => SetProperty(ref _corporateActionMessage, value);
+    }
     public bool IsAggregated => _snapshots.Count > 1;
     public bool IsMutualFund => _snapshot?.Position.IsMutualFund == true;
     public Visibility StockDetailVisibility => IsMutualFund ? Visibility.Collapsed : Visibility.Visible;
@@ -159,10 +291,10 @@ public sealed class StockDetailViewModel : ObservableObject
     public string FundCurrentNav => _snapshot is null || Sum(x => x.CurrentMarketValueJpy) <= 0m
         ? "基準価額未更新"
         : FormatFundNav(WeightedFundNav(x => x.CurrentMarketValueJpy), FundUnitBase);
-    public string FundAcquisitionAmount => _snapshot is null ? "-" : HasUnknownPurchaseCost ? "未確認" : Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
+    public string FundAcquisitionAmount => _snapshot is null ? "-" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.Jpy(Sum(x => x.PurchaseTotalJpy));
     public string FundMarketValue => CurrentMarketValueJpy;
-    public string FundUnrealizedGainLoss => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : Formatters.SignedJpy(Sum(x => x.UnrealizedGainJpy));
-    public string FundUnrealizedGainLossRate => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : Formatters.SignedPercent(CalculateRate(Sum(x => x.UnrealizedGainJpy), Sum(x => x.PurchaseTotalJpy)));
+    public string FundUnrealizedGainLoss => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.SignedJpy(Sum(x => x.UnrealizedGainJpy));
+    public string FundUnrealizedGainLossRate => _snapshot is null ? "-" : HasUnknownMarketValue ? "算出不可" : HasUnknownPurchaseCost ? "未確認" : ReferencePrefix + Formatters.SignedPercent(CalculateRate(Sum(x => x.UnrealizedGainJpy), Sum(x => x.PurchaseTotalJpy)));
     public string FundNavDate => _snapshot is null
         ? "-"
         : _snapshots
@@ -196,6 +328,8 @@ public sealed class StockDetailViewModel : ObservableObject
             (x.Position.MutualFund.TotalPurchaseAmount > 0m ? x.Position.MutualFund.TotalPurchaseAmount : x.PurchaseTotalJpy)));
 
     public ObservableCollection<BrokerTradeRowViewModel> TradeRows { get; } = new();
+    public ObservableCollection<PositionChangeAuditRowViewModel> ManualChangeRows { get; } = new();
+    public ObservableCollection<CorporateActionRowViewModel> CorporateActionRows { get; } = new();
     public ObservableCollection<DataQualityRowViewModel> DataQualityRows { get; } = new();
     public IReadOnlyList<string> ChartPeriods { get; } = new[] { "1か月", "3か月", "6か月", "1年", "3年", "5年", "全期間" };
     public ICommand RefreshPriceChartCommand { get; }
@@ -241,7 +375,9 @@ public sealed class StockDetailViewModel : ObservableObject
     public string TradeCount => $"{_trades.Count:N0}件";
     public string TotalBuyAmountJpy => Formatters.Jpy(TotalBuyAmountForDisplayJpy);
     public string TotalSaleAmountJpy => Formatters.Jpy(_trades.Where(IsSellTrade).Sum(x => Math.Abs(x.SettlementAmountJpy)));
-    public string RealizedGainLossJpy => Formatters.SignedJpy(_trades.Sum(x => x.RealizedGainLossJpy));
+    public string RealizedGainLossJpy => HasUnverifiedInbound
+        ? "算出不可（入庫要確認）"
+        : Formatters.SignedJpy(_trades.Sum(x => x.RealizedGainLossJpy));
     public string CurrentTradeQuantity => CanUseReconstructedTradeSummary
         ? Formatters.Number(ReconstructedTradeQuantity)
         : SnapshotQuantity > 0m
@@ -249,14 +385,18 @@ public sealed class StockDetailViewModel : ObservableObject
             : _trades.Count == 0
             ? "-"
             : Formatters.Number(LatestTrade.AfterTradeQuantity);
-    public string AverageTradeCost => CanUseReconstructedTradeSummary && ReconstructedAverageTradeCost > 0m
+    public string AverageTradeCost => HasUnverifiedInbound
+        ? "算出不可（入庫要確認）"
+        : CanUseReconstructedTradeSummary && ReconstructedAverageTradeCost > 0m
         ? Formatters.Money(ReconstructedAverageTradeCost, _snapshot?.Position.Stock.Currency ?? "JPY")
         : SnapshotQuantity > 0m
             ? Formatters.Money(SnapshotAverageCost, _snapshot?.Position.Stock.Currency ?? "JPY")
             : _trades.Count == 0
             ? "-"
             : Formatters.Money(LatestTrade.AfterTradeAverageCost, _snapshot?.Position.Stock.Currency ?? "JPY");
-    public string TradeDataWarning => HasTradeQuantityMismatch
+    public string TradeDataWarning => HasUnverifiedInbound
+        ? "無償入庫の移管元・引継原価または分割根拠が未確認です。取引履歴からの平均取得単価と実現損益は確定できません。"
+        : HasTradeQuantityMismatch
         ? "取引履歴CSVの復元数量と保有残高CSVの数量が一致しないため、現在数量・平均取得単価・取得額は保有残高CSVを優先しています。実現損益は取引履歴CSVから計算した参考値です。"
         : ShouldUseSnapshotCostBasisForBuyAmount && _trades.Count > 0 && ActualBuyAmountJpy <= 0m
             ? "取引履歴CSVの約定金額が不足しているため、累計買付額は保有残高CSVの取得額を優先しています。実現損益は取引履歴CSVから計算した参考値です。"
@@ -339,8 +479,11 @@ public sealed class StockDetailViewModel : ObservableObject
         && SnapshotQuantity > 0m
         && Math.Abs(ReconstructedTradeQuantity - SnapshotQuantity) > 0.0001m;
 
+    private bool HasUnverifiedInbound => _trades.Any(x => x.TradeType is "TransferIn" or "StockSplitCandidate");
+
     private bool CanUseReconstructedTradeSummary => _trades.Count > 0
         && ReconstructedTradeQuantity > 0m
+        && !HasUnverifiedInbound
         && !HasTradeQuantityMismatch;
 
     private bool ShouldUseSnapshotCostBasisForBuyAmount => _snapshot is not null
@@ -355,19 +498,29 @@ public sealed class StockDetailViewModel : ObservableObject
         StockSnapshot? snapshot,
         string? story,
         IReadOnlyList<BrokerTrade>? trades = null,
-        IReadOnlyList<DataQualityInfo>? dataQualityInfos = null)
+        IReadOnlyList<DataQualityInfo>? dataQualityInfos = null,
+        IReadOnlyList<PositionChangeAudit>? manualChanges = null,
+        IReadOnlyList<CorporateAction>? corporateActions = null,
+        IReadOnlyList<MarketAnomalyCandidate>? marketAnomalies = null)
     {
-        Update(snapshot is null ? Array.Empty<StockSnapshot>() : new[] { snapshot }, story, trades, dataQualityInfos);
+        Update(snapshot is null ? Array.Empty<StockSnapshot>() : new[] { snapshot }, story,
+            trades, dataQualityInfos, manualChanges, corporateActions, marketAnomalies);
     }
 
     public void Update(
         IReadOnlyList<StockSnapshot> snapshots,
         string? story,
         IReadOnlyList<BrokerTrade>? trades = null,
-        IReadOnlyList<DataQualityInfo>? dataQualityInfos = null)
+        IReadOnlyList<DataQualityInfo>? dataQualityInfos = null,
+        IReadOnlyList<PositionChangeAudit>? manualChanges = null,
+        IReadOnlyList<CorporateAction>? corporateActions = null,
+        IReadOnlyList<MarketAnomalyCandidate>? marketAnomalies = null)
     {
+        var previousStockId = _snapshot?.Position.Stock.Id;
         _snapshots = snapshots;
         _snapshot = snapshots.FirstOrDefault();
+        if (previousStockId != _snapshot?.Position.Stock.Id)
+            ResetCorporateActionForm();
         (_trades, _hasSyntheticInitialPositionTrades) = BuildDisplayTrades(snapshots, trades ?? Array.Empty<BrokerTrade>());
         _story = (_snapshots.Any(x => x.IsReferencePurchaseCostJpy)
             ? "以下の円建て取得額・損益は公表為替に基づく概算で、実際の円決済額や税務上の取得価額ではありません。 "
@@ -378,9 +531,13 @@ public sealed class StockDetailViewModel : ObservableObject
             : "チャートを取得中です。");
 
         TradeRows.Clear();
+        var earliestUnverified = _trades
+            .Where(x => x.TradeType is "TransferIn" or "StockSplitCandidate")
+            .Select(x => (DateTime?)x.TradeDate.Date).Min();
         foreach (var trade in _trades.OrderByDescending(x => x.TradeDate).ThenByDescending(x => x.Id))
         {
-            TradeRows.Add(new BrokerTradeRowViewModel(trade));
+            TradeRows.Add(new BrokerTradeRowViewModel(trade,
+                earliestUnverified.HasValue && trade.TradeDate.Date >= earliestUnverified.Value));
         }
 
         DataQualityRows.Clear();
@@ -388,8 +545,182 @@ public sealed class StockDetailViewModel : ObservableObject
         {
             DataQualityRows.Add(new DataQualityRowViewModel(item));
         }
+        MarketAnomalyRows.Clear();
+        foreach (var candidate in marketAnomalies ?? Array.Empty<MarketAnomalyCandidate>())
+            MarketAnomalyRows.Add(new MarketAnomalyRowViewModel(candidate));
+        SelectedMarketAnomaly = null;
+
+        ManualChangeRows.Clear();
+        foreach (var item in manualChanges ?? Array.Empty<PositionChangeAudit>())
+            ManualChangeRows.Add(new PositionChangeAuditRowViewModel(item));
+        SelectedManualChange = null;
+        CorporateActionRows.Clear();
+        var allActions = corporateActions ?? Array.Empty<CorporateAction>();
+        var supersededIds = allActions.Where(x => x.SupersedesId.HasValue)
+            .Select(x => x.SupersedesId!.Value).ToHashSet();
+        foreach (var item in allActions)
+            CorporateActionRows.Add(new CorporateActionRowViewModel(item, supersededIds.Contains(item.Id)));
+        SelectedCorporateAction = null;
+        RefreshHistoricalBalance();
 
         RefreshAllProperties();
+    }
+
+    private void RefreshHistoricalBalance()
+    {
+        HistoricalBalanceRows.Clear();
+        if (_snapshot is null || _loadHistoricalBalance is null)
+        {
+            HistoricalBalanceStatus = "銘柄を選択してください。";
+            return;
+        }
+        try
+        {
+            var balance = _loadHistoricalBalance(_snapshot.Position.Stock.Id, HistoricalBalanceDate.Date);
+            if (balance.IsComplete)
+                foreach (var row in balance.Accounts.OrderBy(x => x.Broker).ThenBy(x => x.Account))
+                    HistoricalBalanceRows.Add(new AccountBalanceRowViewModel(row));
+            HistoricalBalanceStatus = balance.IsComplete
+                ? $"{HistoricalBalanceDate:yyyy/MM/dd}（受渡日基準） / 数量 {balance.TotalQuantity:N4} / " +
+                  (balance.TotalCostJpy.HasValue ? $"引継原価 {balance.TotalCostJpy:N0}円" : "引継原価は不明")
+                : $"{HistoricalBalanceDate:yyyy/MM/dd}の口座別残高は算出不可: {balance.Reason}";
+        }
+        catch (Exception ex)
+        {
+            HistoricalBalanceStatus = $"残高を再現できませんでした: {ex.Message}";
+        }
+    }
+
+    private void RevertManualChange()
+    {
+        if (SelectedManualChange is null || _revertPositionChange is null)
+        {
+            ManualChangeMessage = "再調整する履歴行を選択してください。";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(RevertReason))
+        {
+            ManualChangeMessage = "再調整の理由を入力してください。";
+            return;
+        }
+        try
+        {
+            if (!_revertPositionChange(SelectedManualChange.Entry, RevertReason.Trim()))
+                return;
+            RevertReason = string.Empty;
+            OnPropertyChanged(nameof(RevertReason));
+            ManualChangeMessage = "履歴を残して再調整しました。";
+        }
+        catch (Exception ex)
+        {
+            ManualChangeMessage = $"再調整できませんでした: {ex.Message}";
+        }
+    }
+
+    private void SaveCorporateAction()
+    {
+        if (_snapshot is null || _snapshots.Count != 1 || _saveCorporateAction is null)
+        {
+            CorporateActionMessage = "口座別の銘柄詳細を選択してください。";
+            return;
+        }
+
+        try
+        {
+            var action = new CorporateAction
+            {
+                StockId = _snapshot.Position.Stock.Id,
+                EventDate = ActionDate.Date, Kind = ActionKind, Status = ActionStatus,
+                SourceBroker = ActionSourceBroker.Trim(), SourceAccount = ActionSourceAccount,
+                DestinationBroker = ActionDestinationBroker.Trim(),
+                DestinationAccount = ActionDestinationAccount,
+                Quantity = ActionQuantity, SplitRatio = ActionSplitRatio,
+                CarriedCostJpy = ActionCarriedCostJpy,
+                OldTicker = ActionOldTicker.Trim(), NewTicker = ActionNewTicker.Trim(),
+                Evidence = ActionEvidence.Trim(), Reason = ActionReason.Trim(),
+                SupersedesId = ActionSupersedesId
+            };
+            CorporateActionLedgerService.Validate(action);
+            _saveCorporateAction(action);
+            ResetCorporateActionForm();
+            CorporateActionMessage = "企業行動を履歴付きで記録しました。";
+        }
+        catch (Exception ex)
+        {
+            CorporateActionMessage = $"記録できませんでした: {ex.Message}";
+        }
+    }
+
+    private void LoadCorporateActionCorrection()
+    {
+        if (SelectedCorporateAction is null)
+        {
+            CorporateActionMessage = "訂正する台帳行を選択してください。";
+            return;
+        }
+        if (SelectedCorporateAction.Status == "訂正済み")
+        {
+            CorporateActionMessage = "訂正済みの行です。最新の行を選択してください。";
+            return;
+        }
+        var item = SelectedCorporateAction.Action;
+        ActionSupersedesId = item.Id;
+        ActionDate = item.EventDate;
+        ActionKind = item.Kind;
+        ActionStatus = item.Status;
+        ActionSourceBroker = item.SourceBroker;
+        ActionSourceAccount = item.SourceAccount;
+        ActionDestinationBroker = item.DestinationBroker;
+        ActionDestinationAccount = item.DestinationAccount;
+        ActionQuantity = item.Quantity;
+        ActionSplitRatio = item.SplitRatio;
+        ActionCarriedCostJpy = item.CarriedCostJpy;
+        ActionOldTicker = item.OldTicker;
+        ActionNewTicker = item.NewTicker;
+        ActionEvidence = item.Evidence;
+        ActionReason = string.Empty;
+        CorporateActionMessage = "訂正内容と理由を入力し、台帳へ記録してください。";
+        RaiseCorporateActionFormProperties();
+    }
+
+    private void ResetCorporateActionForm()
+    {
+        ActionDate = DateTime.Today;
+        ActionKind = "Transfer";
+        ActionStatus = "Pending";
+        ActionSourceBroker = _snapshot?.Position.Stock.Broker ?? string.Empty;
+        ActionSourceAccount = _snapshot?.Position.Stock.AccountType ?? AccountTypes.Unknown;
+        ActionDestinationBroker = _snapshot?.Position.Stock.Broker ?? string.Empty;
+        ActionDestinationAccount = _snapshot?.Position.Stock.AccountType ?? AccountTypes.Unknown;
+        ActionQuantity = 0m;
+        ActionSplitRatio = 1m;
+        ActionCarriedCostJpy = null;
+        ActionOldTicker = _snapshot?.Position.Stock.Ticker ?? string.Empty;
+        ActionNewTicker = string.Empty;
+        ActionEvidence = string.Empty;
+        ActionReason = string.Empty;
+        ActionSupersedesId = null;
+        CorporateActionMessage = string.Empty;
+        RaiseCorporateActionFormProperties();
+    }
+
+    private void RaiseCorporateActionFormProperties()
+    {
+        OnPropertyChanged(nameof(ActionCorrectionLabel));
+        OnPropertyChanged(nameof(ActionDate));
+        OnPropertyChanged(nameof(ActionKind));
+        OnPropertyChanged(nameof(ActionStatus));
+        OnPropertyChanged(nameof(ActionSourceBroker));
+        OnPropertyChanged(nameof(ActionSourceAccount));
+        OnPropertyChanged(nameof(ActionDestinationBroker));
+        OnPropertyChanged(nameof(ActionDestinationAccount));
+        OnPropertyChanged(nameof(ActionQuantity));
+        OnPropertyChanged(nameof(ActionSplitRatio));
+        OnPropertyChanged(nameof(ActionCarriedCostJpy));
+        OnPropertyChanged(nameof(ActionOldTicker));
+        OnPropertyChanged(nameof(ActionNewTicker));
+        OnPropertyChanged(nameof(ActionEvidence));
+        OnPropertyChanged(nameof(ActionReason));
     }
 
     public void SetPriceChartLoading(string symbol)
@@ -527,6 +858,7 @@ public sealed class StockDetailViewModel : ObservableObject
         trade.TradeType.Equals("TransferIn", StringComparison.OrdinalIgnoreCase) ||
         trade.TradeType.Equals("OpeningBalance", StringComparison.OrdinalIgnoreCase) ||
         trade.TradeType.Equals("StockSplit", StringComparison.OrdinalIgnoreCase) ||
+        trade.TradeType.Equals("StockSplitCandidate", StringComparison.OrdinalIgnoreCase) ||
         trade.TradeType.Equals("ReverseSplit", StringComparison.OrdinalIgnoreCase) ||
         trade.TradeType.Equals("ReverseStockSplit", StringComparison.OrdinalIgnoreCase) ||
         trade.TradeType.Equals("StockConsolidation", StringComparison.OrdinalIgnoreCase) ||

@@ -6,7 +6,7 @@ namespace InvestmentStory.Tests;
 public sealed class TradeReconstructionServiceTests
 {
     [Fact]
-    public void BuildLedger_ClassifiesZeroPriceSplitCandidate_AsStockSplit()
+    public void BuildLedger_LeavesZeroPriceSplitCandidateUnconfirmed()
     {
         var trades = new[]
         {
@@ -41,7 +41,7 @@ public sealed class TradeReconstructionServiceTests
 
         var ledger = new TradeLedgerService().BuildLedger(1, trades);
 
-        Assert.Equal("StockSplit", ledger[1].TradeType);
+        Assert.Equal("StockSplitCandidate", ledger[1].TradeType);
         Assert.Equal(50m, ledger[1].AfterTradeQuantity);
         Assert.Equal(10m, ledger[1].AfterTradeAverageCost);
         Assert.Equal(0m, ledger[1].RealizedGainLossJpy);

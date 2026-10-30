@@ -149,7 +149,8 @@ public static class TradeHistoryService
         type.Contains("売", StringComparison.Ordinal) || type.Equals("Sell", StringComparison.OrdinalIgnoreCase) ? "Sell" :
         type.Contains("入庫", StringComparison.Ordinal) ||
         type.Equals("TransferIn", StringComparison.OrdinalIgnoreCase) ||
-        type.Equals("StockSplit", StringComparison.OrdinalIgnoreCase) ? "TransferIn" :
+        type.Equals("StockSplit", StringComparison.OrdinalIgnoreCase) ||
+        type.Equals("StockSplitCandidate", StringComparison.OrdinalIgnoreCase) ? "TransferIn" :
         type;
 
     private static string NormalizeDecimal(decimal value) => value.ToString("G29", CultureInfo.InvariantCulture);

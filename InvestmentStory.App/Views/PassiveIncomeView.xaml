@@ -115,35 +115,31 @@
             <TextBlock Text="{Binding TaxDataNote}" Foreground="{DynamicResource SecondaryTextBrush}"
                        TextWrapping="Wrap" Margin="8,0,8,10" />
 
-            <Grid Margin="0,8,0,16">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
+            <StackPanel Margin="0,8,0,16">
+                <Border Style="{StaticResource MetricCardStyle}">
                     <StackPanel>
                         <TextBlock Text="今年の月別配当（1～12月）" Style="{StaticResource SectionTitleStyle}" />
-                        <UniformGrid Columns="2" Margin="0,8,0,2">
+                        <WrapPanel Margin="0,8,0,2">
                             <StackPanel Orientation="Horizontal" Margin="0,0,4,4">
                                 <Border Width="20" Height="3" Background="{DynamicResource AccentBlueBrush}" VerticalAlignment="Center" />
-                                <TextBlock Text="今年の入金実績" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
+                                <TextBlock Text="今年の入金実績（実線）" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,4,4">
                                 <Border Width="20" Height="3" Background="{DynamicResource DividendBrush}" VerticalAlignment="Center" />
-                                <TextBlock Text="見込み（実績＋予定）" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
+                                <TextBlock Text="見込み（実績＋予定・破線）" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,4,4">
                                 <Border Width="20" Height="3" Background="{DynamicResource NeutralBrush}" VerticalAlignment="Center" />
-                                <TextBlock Text="前年同月の入金実績" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
+                                <TextBlock Text="前年同月の入金実績（一点鎖線）" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,4,4">
                                 <Border Width="20" Height="3" Background="{DynamicResource WarningBrush}" VerticalAlignment="Center" />
-                                <TextBlock Text="月間目標" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
+                                <TextBlock Text="月間目標（点線）" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </StackPanel>
-                        </UniformGrid>
+                        </WrapPanel>
                         <TextBlock Text="{Binding MonthlyBreakdownAsOf}"
                                    Margin="0,2,0,6" Style="{StaticResource SubtleTextStyle}" TextWrapping="Wrap"/>
-                        <TextBlock Text="グラフをクリック後、左右キーで月を選択できます。" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,4" />
+                        <TextBlock Text="記録のない月は線をつながず、表に『記録なし』と表示します。グラフをクリック後、左右キーで月を選択できます。" Style="{StaticResource SubtleTextStyle}" Margin="0,0,0,4" TextWrapping="Wrap" />
                         <controls:MonthlyDividendLineChartControl Items="{Binding MonthlyBreakdownRows}" Height="340"
                                                                   AutomationProperties.Name="月別配当の折れ線グラフ" />
                         <Expander Header="月別の数値を表で確認" Margin="0,8,0,0">
@@ -160,7 +156,7 @@
                         </Expander>
                     </StackPanel>
                 </Border>
-                <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">
+                <Border Style="{StaticResource MetricCardStyle}" Margin="0,10,0,0">
                     <StackPanel>
                         <TextBlock Text="年別配当グラフ" Style="{StaticResource SectionTitleStyle}" />
                         <TextBlock Text="緑：各年の入金実績（税引後）" Margin="0,6,0,0" Style="{StaticResource SubtleTextStyle}" />
@@ -184,7 +180,7 @@
                         </ItemsControl>
                     </StackPanel>
                 </Border>
-            </Grid>
+            </StackPanel>
 
             <Grid>
                 <Grid.ColumnDefinitions>

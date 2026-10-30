@@ -37,15 +37,14 @@ public sealed class ExchangeRateProviderFactory : IExchangeRateService
         }
         catch
         {
-            var fallback = _mockExchangeRateService.GetUsdJpyRate();
+            // A sample quote must never masquerade as the last confirmed market rate.
+            // Callers retain their persisted quote and show its original acquisition time.
             return new ExchangeRateQuote
             {
-                BaseCurrency = fallback.BaseCurrency,
-                QuoteCurrency = fallback.QuoteCurrency,
-                Rate = fallback.Rate,
-                AcquiredAt = fallback.AcquiredAt,
-                Source = $"{fallback.Source} (Yahoo Finance failed)",
-                InputType = "Mock"
+                Rate = 0m,
+                AcquiredAt = DateTime.MinValue,
+                Source = "Yahoo Finance (取得失敗)",
+                InputType = "Unavailable"
             };
         }
     }

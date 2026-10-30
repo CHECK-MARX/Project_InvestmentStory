@@ -192,9 +192,12 @@ public sealed class SettingsViewModel : ObservableObject
         if (_restoreService is null) return;
         foreach (var backup in _restoreService.GetBackups()) Backups.Add(backup);
         var totalBytes = Backups.Sum(backup => backup.SizeBytes);
-        BackupStorageSummary = Backups.Count == 0 ? "バックアップはありません。" :
+        var notDrilledCount = Backups.Count(backup => backup.Status == "正常" && backup.LastDrillAtUtc is null);
+        BackupStorageSummary = Backups.Count == 0 ?
+            "バックアップはありません。DB変更を行う前にバックアップの有無を確認してください。" :
             $"{Backups.Count}世代 / 合計 {totalBytes / 1024.0 / 1024.0:N1} MB。" +
-            "自動削除はしません。別媒体への保存と定期的な復元確認を行ってください。";
+            $"復元演習未実施 {notDrilledCount}世代。古い世代の自動削除はしません。" +
+            "暗号化と別媒体への複製はアプリでは保証しません。定期的に暗号化された別媒体へコピーし、復元演習を行ってください。";
         OnPropertyChanged(nameof(Backups));
         OnPropertyChanged(nameof(BackupStorageSummary));
     }
