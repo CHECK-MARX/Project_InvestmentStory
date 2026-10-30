@@ -90,19 +90,22 @@ public sealed class AdditionalCsvFormatsTests
     }
 
     [Fact]
-    public void NomuraStandaloneDividend_KnownTickerIsParsedAndUnknownNameIsCounted()
+    public void NomuraStandaloneDividend_KnownTickerIsParsedAndMrfIsHeldWithReason()
     {
         WithCsv("""
             交付日,商品,銘柄コード,銘柄名,配当等の単価,数量,配当等の額,加算対象額,源泉徴収税額,上場株式配当等控除額,元本払戻金（特別分配金）
             2026/08/01,外株,EXMP,Example Corp,1,10,1500,,300,,0
             2026/08/01,外株,,Unknown Corporation,1,10,1500,,300,,0
+            2026/08/31,投信,,野村ＭＲＦ,,,10,,1,,0
             """, path =>
         {
             Assert.True(NomuraDividendCsvParser.LooksLikeNomuraDividendCsv(path));
             var statement = new NomuraDividendCsvParser().Parse(path);
             Assert.Single(statement.Dividends);
-            Assert.Equal(1, statement.IgnoredRowCount);
-            Assert.Single(statement.UnresolvedDividends);
+            Assert.Equal(2, statement.IgnoredRowCount);
+            Assert.Equal(2, statement.UnresolvedDividends.Count);
+            Assert.Contains(statement.UnresolvedDividends, x => x.Name == "野村ＭＲＦ" &&
+                x.Reason.Contains("MRF分配金", StringComparison.Ordinal));
             var record = statement.Dividends[0];
             Assert.Equal("EXMP", record.Ticker);
             Assert.Equal(1200m, record.NetAmountJpy);

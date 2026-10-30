@@ -42,6 +42,12 @@ public sealed class NomuraDividendCsvParser
             var ticker = NomuraTransactionCsvParser.ResolveTicker(row["銘柄コード"], row["銘柄名"]);
             if (string.IsNullOrWhiteSpace(ticker))
             {
+                var isMrf = row["商品"] == "投信" &&
+                    (row["銘柄名"].Contains("ＭＲＦ", StringComparison.OrdinalIgnoreCase) ||
+                     row["銘柄名"].Contains("MRF", StringComparison.OrdinalIgnoreCase));
+                var reason = isMrf
+                    ? "MRF分配金です。銘柄コードと口座が特定できないため、自動加算せず保留します。"
+                    : "銘柄コードを確定できません。";
                 ignored++;
                 unresolved.Add(new BrokerUnresolvedDividend
                     {
@@ -49,9 +55,9 @@ public sealed class NomuraDividendCsvParser
                         Product = row["商品"], Quantity = ParseDecimal(row["数量"]),
                         GrossAmount = ParseDecimal(row["配当等の額"]),
                         TaxAmount = ParseDecimal(row["源泉徴収税額"]),
-                        Source = "野村配当履歴CSV", Reason = "銘柄コードを確定できません。"
+                        Source = "野村配当履歴CSV", Reason = reason
                     });
-                rowAudit.Pending(index + 1, "銘柄コードを確定できません。");
+                rowAudit.Pending(index + 1, reason);
                 continue;
             }
             var gross = ParseDecimal(row["配当等の額"]);
