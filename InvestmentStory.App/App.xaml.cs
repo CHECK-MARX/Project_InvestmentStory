@@ -1,6 +1,7 @@
 ﻿using System.Configuration;
 using System.Data;
 using System.Windows;
+using InvestmentStory.App.ViewModels;
 using InvestmentStory.Data;
 
 namespace InvestmentStory.App;
@@ -25,9 +26,13 @@ public partial class App : Application
             return;
         }
 
+        string? isolatedDatabasePath;
         try
         {
-            new DatabaseRestoreService(DatabasePaths.GetDefaultDatabasePath()).ApplyPendingRestore();
+            isolatedDatabasePath = StartupDatabaseSelection.ResolveIsolatedPath(
+                e.Args, DatabasePaths.GetDefaultDatabasePath());
+            new DatabaseRestoreService(isolatedDatabasePath ?? DatabasePaths.GetDefaultDatabasePath())
+                .ApplyPendingRestore();
         }
         catch (Exception ex)
         {
@@ -38,6 +43,11 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
+        var window = isolatedDatabasePath is null
+            ? new MainWindow()
+            : new MainWindow(new MainViewModel(new InvestmentStoryRepository(isolatedDatabasePath)));
+        MainWindow = window;
+        window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
